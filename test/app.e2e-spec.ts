@@ -20,7 +20,7 @@ describe('AppController (e2e)', () => {
     await app.close();
   });
 
-  it('/health (GET) reports UP with reachable postgres, redis and mongodb', async () => {
+  it('/health (GET) reports UP with reachable postgres, redis, mongodb and minio', async () => {
     const res = await request(app.getHttpServer()).get('/health').expect(200);
     const body = res.body as {
       components: Record<string, { status: string }>;
@@ -30,6 +30,6 @@ describe('AppController (e2e)', () => {
     expect(body.components.postgresql.status).toBe('UP');
     expect(body.components.redis.status).toBe('UP');
     expect(body.components.mongodb.status).toBe('UP');
-    expect(body.components.minio.status).toBe('developing');
+    expect(body.components.minio.status).toBe('UP');
   });
 });

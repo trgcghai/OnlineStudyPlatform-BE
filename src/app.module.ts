@@ -5,11 +5,13 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { RedisModule } from './modules/redis/redis.module';
 import { MongooseModule } from '@nestjs/mongoose';
+import { FileModule } from './modules/file/file.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     RedisModule,
+    FileModule,
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
