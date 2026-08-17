@@ -1,9 +1,13 @@
-import { Inject, Injectable } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { InjectDataSource } from '@nestjs/typeorm';
 import Redis from 'ioredis';
 import * as Minio from 'minio';
-import { Connection } from 'mongoose';
+import { Connection, ConnectionStates } from 'mongoose';
 import { DataSource } from 'typeorm';
 import { MINIO_CLIENT } from './common/constants/file.constant';
 import { REDIS_CLIENT } from './modules/redis/redis.module';
@@ -30,7 +34,7 @@ export class AppService {
       this.checkMinio(),
     ]);
 
-    return {
+    const payload = {
       components: {
         application: { status: 'UP' },
         postgresql,
@@ -39,11 +43,34 @@ export class AppService {
         minio,
       },
     };
+
+    const infraDown = [postgresql, redis, mongodb, minio].some(
+      (component) => component.status !== 'UP',
+    );
+
+    if (infraDown) {
+      throw new ServiceUnavailableException(payload);
+    }
+
+    return payload;
   }
 
-  private async checkPostgres(): Promise<ComponentHealth> {
+  private readonly HEALTH_CHECK_TIMEOUT_MS = 3000;
+
+  private async check(
+    name: string,
+    run: () => Promise<unknown>,
+  ): Promise<ComponentHealth> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${name} health check timed out`)),
+        this.HEALTH_CHECK_TIMEOUT_MS,
+      );
+    });
+
     try {
-      await this.dataSource.query('SELECT 1');
+      await Promise.race([run(), timeout]);
       return { status: 'UP' };
     } catch (error) {
       return {
@@ -52,48 +79,44 @@ export class AppService {
           error: error instanceof Error ? error.message : String(error),
         },
       };
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
     }
   }
 
-  private async checkRedis(): Promise<ComponentHealth> {
-    try {
-      await this.redisClient.ping();
-      return { status: 'UP' };
-    } catch (error) {
-      return {
+  private checkPostgres(): Promise<ComponentHealth> {
+    return this.check('postgresql', () => this.dataSource.query('SELECT 1'));
+  }
+
+  private checkRedis(): Promise<ComponentHealth> {
+    if (this.redisClient.status !== 'ready') {
+      return Promise.resolve({
         status: 'DOWN',
         details: {
-          error: error instanceof Error ? error.message : String(error),
+          error: `redis not connected (status: ${this.redisClient.status})`,
         },
-      };
+      });
     }
+    return this.check('redis', () => this.redisClient.ping());
   }
 
-  private async checkMongo(): Promise<ComponentHealth> {
-    try {
+  private checkMongo(): Promise<ComponentHealth> {
+    if (this.mongooseConnection.readyState !== ConnectionStates.connected) {
+      return Promise.resolve({
+        status: 'DOWN',
+        details: {
+          error: `mongodb not connected (readyState: ${this.mongooseConnection.readyState})`,
+        },
+      });
+    }
+    return this.check('mongodb', async () => {
       await this.mongooseConnection.db?.admin().command({ ping: 1 });
-      return { status: 'UP' };
-    } catch (error) {
-      return {
-        status: 'DOWN',
-        details: {
-          error: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
+    });
   }
 
-  private async checkMinio(): Promise<ComponentHealth> {
-    try {
-      await this.minioClient.listBuckets();
-      return { status: 'UP' };
-    } catch (error) {
-      return {
-        status: 'DOWN',
-        details: {
-          error: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
+  private checkMinio(): Promise<ComponentHealth> {
+    return this.check('minio', () => this.minioClient.listBuckets());
   }
 }
