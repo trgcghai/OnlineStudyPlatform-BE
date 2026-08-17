@@ -47,6 +47,8 @@ File: `src/modules/users/entities/user.entity.ts`, table `users`, registered via
 New deps: `class-validator`, `class-transformer` (BE); `@nestjs/mapped-types` added by the scaffold is **removed** (no update endpoint yet).
 
 - `src/main.ts`: global `app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))`.
+- Shared setup helper `src/common/configure-app.ts` exporting `configureApp(app)` that applies the pipe **and** `app.enableCors({ origin: true, credentials: true })` — used by both `main.ts` and the e2e bootstrap (keeps test config identical to prod; e2e asserts the real pipe config).
+- **CORS is required:** BE has none today, and the FE calls BE cross-origin (`localhost:3001` from `localhost:3010` dev / `localhost:3000` compose). `credentials: true` is needed for the cookie-based auth arriving in T0-06 (credentials preflight requires explicit origin).
 - `src/modules/users/dto/user.dto.ts` — replace with a single `CreateUserDto`:
   - `name`: `@IsString()` + `@Transform(trim)` + `@Length(2, 100)`
   - `email`: `@IsEmail()`
@@ -86,6 +88,8 @@ New deps: `class-validator`, `class-transformer` (BE); `@nestjs/mapped-types` ad
 ## 6. FE wiring (runs in the FE repo)
 
 - Add deps: `react-hook-form`, `zod`, `@hookform/resolvers`.
+- **Fix `services/axios.ts` baseURL:** it is `http://localhost:3001/api`, but the BE has **no global `/api` prefix** — `POST /users` would 404. Change to `http://localhost:3001` (keep `withCredentials`).
+- Landing page `app/page.tsx`: add a "Tạo tài khoản" outline link to `/register` next to the existing "Đăng nhập" CTA (entry point to the page).
 - `app/(auth)/register/page.tsx` — replace EmptyState placeholder with a shadcn Card form (reuse `(auth)` layout):
   - Fields: Họ và tên, Email, Mật khẩu (+ show/hide toggle optional) — zod schema mirrors BE rules (name 2–100, email format, password min 8 + letters + numbers + special)
   - Submit → `axiosClient.post('/users', ...)` (`services/axios.ts`; note `withCredentials` cookie config is harmless for now — no cookies set by register)
