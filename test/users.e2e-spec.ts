@@ -31,7 +31,11 @@ describe('Users (e2e)', () => {
   it('creates a Learner with status Active and never returns the password', async () => {
     const res = await request(app.getHttpServer())
       .post('/users')
-      .send({ name: 'Nguyen Van A', email, password: 'abcd1234!' })
+      .send({
+        name: 'Nguyen Van A',
+        email: `  ${email.toUpperCase()}  `,
+        password: 'abcd1234!',
+      })
       .expect(201);
 
     expect(res.body).toMatchObject({
