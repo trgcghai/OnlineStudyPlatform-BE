@@ -89,7 +89,7 @@ New deps: `class-validator`, `class-transformer` (BE); `@nestjs/mapped-types` ad
 - `app/(auth)/register/page.tsx` — replace EmptyState placeholder with a shadcn Card form (reuse `(auth)` layout):
   - Fields: Họ và tên, Email, Mật khẩu (+ show/hide toggle optional) — zod schema mirrors BE rules (name 2–100, email format, password min 8 + letters + numbers + special)
   - Submit → `axiosClient.post('/users', ...)` (`services/axios.ts`; note `withCredentials` cookie config is harmless for now — no cookies set by register)
-  - Success → success message (alert/toast) + `router.push('/signin?registered=1')` (query param lets T0-06 login show a welcome banner)
+  - Success → inline shadcn `Alert` (success variant) above the form + `router.push('/signin?registered=1')` after a short delay (query param lets T0-06 login show a welcome banner; no Toaster/provider setup needed)
   - 409 → "Email đã được đăng ký" next to the email field
   - 400 → map BE validation messages to fields (email/password), Vietnamese copy
   - Loading state on the submit button; disabled during submit
