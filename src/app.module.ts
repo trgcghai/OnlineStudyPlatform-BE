@@ -6,6 +6,7 @@ import { AppService } from './app.service';
 import { RedisModule } from './modules/redis/redis.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { FileModule } from './modules/file/file.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { FileModule } from './modules/file/file.module';
         synchronize: true,
       }),
     }),
+    UsersModule,
   ],
   controllers: [AppController],
   providers: [AppService],
