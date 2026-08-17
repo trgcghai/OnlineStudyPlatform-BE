@@ -49,12 +49,29 @@ HTTP/1.1 503 Service Unavailable
 - Any infra check failing ⇒ overall `DOWN` ⇒ 503. Partial failures are allowed — the payload still reports the remaining components as `UP`.
 - `application` always `UP`; the app responding is proof of application liveness.
 
+### Fail-fast hardening (approved follow-up)
+
+Observed: stopping redis via `docker compose stop redis` left `/health` hanging with no response. Root cause: ioredis defaults (`enableOfflineQueue: true` + unbounded `retryStrategy`) queue the `ping()` indefinitely while disconnected, so `Promise.all` never settles; mongoose buffers the ping for ~10s (`bufferTimeoutMS`) before failing. Fix — two complementary changes inside `src/app.service.ts` (no client config changes):
+
+1. **Connection-state short-circuits:**
+   - `checkRedis()`: if `this.redisClient.status !== 'ready'` ⇒ return `{ status: 'DOWN', details: { error: 'redis not connected (status: <status>)' } }` immediately — no ping issued.
+   - `checkMongo()`: if `this.mongooseConnection.readyState !== 1` ⇒ return `{ status: 'DOWN', details: { error: 'mongodb not connected (readyState: <n>)' } }` immediately — no ping issued.
+   - Postgres/minio unchanged (`connection refused` already fails fast).
+
+2. **Per-check timeout (safety net so `/health` can never hang):**
+   - Refactor the four near-identical `check*` methods into one private helper `check(name, run)` — same try/catch semantics as today (`{ status: 'UP' }` / `{ status: 'DOWN', details: { error } }`), plus a `Promise.race` against a timer of **`HEALTH_CHECK_TIMEOUT_MS = 3000`**; on timeout the component reports `DOWN` with `details.error: '<name> health check timed out'`. Timer cleared in `finally`.
+   - Payload shape and 503 semantics unchanged regardless of which check fails or times out.
+
 ### Tests
 
 - **New unit test** `src/app.service.spec.ts` (colocated, jest):
   - All clients OK ⇒ `getHealth()` resolves with the full payload, no throw.
   - One client rejects (e.g. minio `listBuckets` throws) ⇒ rejects/throws `ServiceUnavailableException` whose `getResponse()` carries the payload with the `DOWN` component + `details.error`.
+  - Redis client `status: 'reconnecting'` ⇒ fast `DOWN` with `redis not connected` in `details.error` (no ping issued).
+  - Mongoose `readyState: 0` ⇒ fast `DOWN` with `mongodb not connected` in `details.error` (no ping issued).
+  - A check whose promise never settles ⇒ `DOWN` with `health check timed out` in `details.error` (jest fake timers, advance past 3000ms).
 - **e2e** `test/app.e2e-spec.ts`: **unchanged** — all-up ⇒ 200 + exact payload. Verified green with compose infra running (`pnpm test:e2e`).
+- **Real-infra verification:** `docker compose stop redis` ⇒ `/health` responds **503 within ~3s** with `redis: DOWN`; `docker compose start redis` ⇒ back to 200 all UP.
 
 ### DoD verification
 
