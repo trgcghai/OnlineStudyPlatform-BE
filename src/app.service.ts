@@ -1,4 +1,8 @@
-import { Inject, Injectable } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { InjectDataSource } from '@nestjs/typeorm';
 import Redis from 'ioredis';
@@ -30,7 +34,7 @@ export class AppService {
       this.checkMinio(),
     ]);
 
-    return {
+    const payload = {
       components: {
         application: { status: 'UP' },
         postgresql,
@@ -39,6 +43,16 @@ export class AppService {
         minio,
       },
     };
+
+    const infraDown = [postgresql, redis, mongodb, minio].some(
+      (component) => component.status !== 'UP',
+    );
+
+    if (infraDown) {
+      throw new ServiceUnavailableException(payload);
+    }
+
+    return payload;
   }
 
   private async checkPostgres(): Promise<ComponentHealth> {
