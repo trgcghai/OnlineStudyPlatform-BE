@@ -46,9 +46,7 @@ describe('Users (e2e)', () => {
     );
     expect(res.body.password).toBeUndefined();
 
-    const row = await dataSource
-      .getRepository(User)
-      .findOneByOrFail({ email });
+    const row = await dataSource.getRepository(User).findOneByOrFail({ email });
     expect(row.password).not.toBe('abcd1234!');
     expect(row.password).toMatch(/^\$2[ab]\$\d+\$/);
   });
@@ -65,7 +63,11 @@ describe('Users (e2e)', () => {
   it('rejects an invalid email with 400', async () => {
     const res = await request(app.getHttpServer())
       .post('/users')
-      .send({ name: 'Nguyen Van A', email: 'not-an-email', password: 'abcd1234!' })
+      .send({
+        name: 'Nguyen Van A',
+        email: 'not-an-email',
+        password: 'abcd1234!',
+      })
       .expect(400);
 
     expect(Array.isArray(res.body.message)).toBe(true);
@@ -85,7 +87,12 @@ describe('Users (e2e)', () => {
   it('rejects unknown fields with 400 (forbidNonWhitelisted)', async () => {
     const res = await request(app.getHttpServer())
       .post('/users')
-      .send({ name: 'Nguyen Van A', email: `extra-${email}`, password: 'abcd1234!', phone: '123' })
+      .send({
+        name: 'Nguyen Van A',
+        email: `extra-${email}`,
+        password: 'abcd1234!',
+        phone: '123',
+      })
       .expect(400);
 
     expect(JSON.stringify(res.body.message)).toContain('phone');
