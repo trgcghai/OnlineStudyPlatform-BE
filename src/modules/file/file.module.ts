@@ -1,7 +1,7 @@
 import { Global, Module, OnModuleInit, Inject, Logger } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import * as Minio from 'minio';
-import { MINIO_CLIENT } from 'src/common/constants/file.constant';
+import { MINIO_CLIENT } from '../../common/constants/file.constant';
 
 @Global()
 @Module({
