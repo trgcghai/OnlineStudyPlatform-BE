@@ -7,20 +7,24 @@ import { AppService, ComponentHealth } from './app.service';
 
 describe('AppService', () => {
   let dataSource: { query: jest.Mock };
-  let redisClient: { ping: jest.Mock };
-  let mongooseConnection: { db: { admin: jest.Mock } };
+  let redisClient: { ping: jest.Mock; status: string };
+  let mongooseConnection: { db: { admin: jest.Mock }; readyState: number };
   let minioClient: { listBuckets: jest.Mock };
   let service: AppService;
 
   beforeEach(() => {
     dataSource = { query: jest.fn().mockResolvedValue([{ '?column?': 1 }]) };
-    redisClient = { ping: jest.fn().mockResolvedValue('PONG') };
+    redisClient = {
+      ping: jest.fn().mockResolvedValue('PONG'),
+      status: 'ready',
+    };
     mongooseConnection = {
       db: {
         admin: jest.fn().mockReturnValue({
           command: jest.fn().mockResolvedValue({ ok: 1 }),
         }),
       },
+      readyState: 1,
     };
     minioClient = { listBuckets: jest.fn().mockResolvedValue([]) };
 
@@ -56,5 +60,60 @@ describe('AppService', () => {
     expect(payload.components.application.status).toBe('UP');
     expect(payload.components.minio.status).toBe('DOWN');
     expect(payload.components.minio.details?.error).toBe('connection refused');
+  });
+
+  it('reports redis DOWN immediately when the client is not ready', async () => {
+    redisClient.status = 'reconnecting';
+
+    await expect(service.getHealth()).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+    const error = await service.getHealth().catch((e: unknown) => e);
+    const payload = (error as ServiceUnavailableException).getResponse() as {
+      components: Record<string, ComponentHealth>;
+    };
+    expect(payload.components.redis.status).toBe('DOWN');
+    expect(payload.components.redis.details?.error).toContain(
+      'redis not connected',
+    );
+    expect(redisClient.ping).not.toHaveBeenCalled();
+  });
+
+  it('reports mongodb DOWN immediately when the connection is not established', async () => {
+    mongooseConnection.readyState = 0;
+
+    await expect(service.getHealth()).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+    const error = await service.getHealth().catch((e: unknown) => e);
+    const payload = (error as ServiceUnavailableException).getResponse() as {
+      components: Record<string, ComponentHealth>;
+    };
+    expect(payload.components.mongodb.status).toBe('DOWN');
+    expect(payload.components.mongodb.details?.error).toContain(
+      'mongodb not connected',
+    );
+  });
+
+  it('reports DOWN with a timed-out error when a check never settles', async () => {
+    jest.useFakeTimers();
+    try {
+      minioClient.listBuckets.mockReturnValue(new Promise(() => {}));
+
+      const errorPromise = service.getHealth().catch((e: unknown) => e);
+      jest.advanceTimersByTime(3001);
+      const error = await errorPromise;
+
+      expect(error).toBeInstanceOf(ServiceUnavailableException);
+      const payload = (error as ServiceUnavailableException).getResponse() as {
+        components: Record<string, ComponentHealth>;
+      };
+      expect(payload.components.minio.status).toBe('DOWN');
+      expect(payload.components.minio.details?.error).toBe(
+        'minio health check timed out',
+      );
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
