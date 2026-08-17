@@ -61,7 +61,7 @@ describe('UsersService', () => {
   });
 
   it('normalizes email (trim + lowercase) and trims the name', async () => {
-    repo.save.mockResolvedValue({} as User);
+    repo.save.mockResolvedValue({});
 
     await service.create(dto);
 
