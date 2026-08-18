@@ -1,22 +1,12 @@
-import { ConflictException } from '@nestjs/common';
-import { QueryFailedError, Repository } from 'typeorm';
+import { BadRequestException, ConflictException } from '@nestjs/common';
+import { Repository } from 'typeorm';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/user.dto';
 import { User, UserRole, UserStatus } from './entities/user.entity';
 
-function duplicateKeyError(): QueryFailedError {
-  return new QueryFailedError(
-    'INSERT INTO "users"',
-    [],
-    Object.assign(new Error('duplicate key value violates unique constraint'), {
-      code: '23505',
-    }),
-  );
-}
-
 describe('UsersService', () => {
   let service: UsersService;
-  let repo: { create: jest.Mock; save: jest.Mock };
+  let repo: { create: jest.Mock; findOneBy: jest.Mock; save: jest.Mock };
 
   const dto: CreateUserDto = {
     name: '  Nguyen Van A  ',
@@ -27,6 +17,7 @@ describe('UsersService', () => {
   beforeEach(() => {
     repo = {
       create: jest.fn((input: Partial<User>) => input),
+      findOneBy: jest.fn().mockResolvedValue(null),
       save: jest.fn(),
     };
     service = new UsersService(repo as unknown as Repository<User>);
@@ -57,7 +48,16 @@ describe('UsersService', () => {
     );
     const savedInput = repo.create.mock.calls[0][0] as User;
     expect(savedInput.password).not.toBe(dto.password);
-    expect(result).toEqual(saved);
+    expect(result).toEqual({
+      id: saved.id,
+      name: saved.name,
+      email: saved.email,
+      role: saved.role,
+      avatar: saved.avatar,
+      status: saved.status,
+      createdAt: saved.createdAt,
+      updatedAt: saved.updatedAt,
+    });
   });
 
   it('normalizes email (trim + lowercase) and trims the name', async () => {
@@ -70,18 +70,21 @@ describe('UsersService', () => {
     expect(savedInput.name).toBe('Nguyen Van A');
   });
 
-  it('maps a unique-violation error to ConflictException', async () => {
-    repo.save.mockRejectedValue(duplicateKeyError());
+  it('rejects an existing email with ConflictException', async () => {
+    repo.findOneBy.mockResolvedValue({ id: 'existing-user-id' });
 
     await expect(service.create(dto)).rejects.toEqual(
       new ConflictException('Email already registered'),
     );
+    expect(repo.save).not.toHaveBeenCalled();
   });
 
-  it('rethrows unrelated database errors', async () => {
+  it('wraps unrelated database errors in BadRequestException', async () => {
     const error = new Error('connection reset');
     repo.save.mockRejectedValue(error);
 
-    await expect(service.create(dto)).rejects.toBe(error);
+    await expect(service.create(dto)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 });

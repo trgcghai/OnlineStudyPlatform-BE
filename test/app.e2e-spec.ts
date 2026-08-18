@@ -24,12 +24,14 @@ describe('AppController (e2e)', () => {
     const res = await request(app.getHttpServer()).get('/health').expect(200);
     const body = res.body as {
       success: boolean;
+      statusCode: number;
       data: {
         components: Record<string, { status: string }>;
       };
     };
 
     expect(body.success).toBe(true);
+    expect(body.statusCode).toBe(200);
     expect(body.data.components.application.status).toBe('UP');
     expect(body.data.components.postgresql.status).toBe('UP');
     expect(body.data.components.redis.status).toBe('UP');

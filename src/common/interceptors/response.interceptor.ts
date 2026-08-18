@@ -30,6 +30,7 @@ export class ResponseInterceptor<T> implements NestInterceptor<
 
         return {
           success: true,
+          statusCode: response.statusCode,
           data,
           timestamp: new Date().toISOString(),
         };

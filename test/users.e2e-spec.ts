@@ -45,6 +45,7 @@ describe('Users (e2e)', () => {
 
     expect(res.body).toMatchObject({
       success: true,
+      statusCode: 201,
       data: {
         name: 'Nguyen Van A',
         email,
@@ -77,6 +78,7 @@ describe('Users (e2e)', () => {
       .expect(409);
 
     expect(res.body.error.message).toBe('Email already registered');
+    expect(res.body.statusCode).toBe(409);
   });
 
   it('rejects an invalid email with 400', async () => {
@@ -90,6 +92,7 @@ describe('Users (e2e)', () => {
       .expect(400);
 
     expect(Array.isArray(res.body.error.details)).toBe(true);
+    expect(res.body.statusCode).toBe(400);
   });
 
   it('rejects a weak password with 400 and the policy message', async () => {
@@ -101,6 +104,7 @@ describe('Users (e2e)', () => {
     expect(JSON.stringify(res.body.error.details)).toContain(
       'Password must be at least 8 characters and include letters, numbers and a special character',
     );
+    expect(res.body.statusCode).toBe(400);
   });
 
   it('rejects unknown fields with 400 (forbidNonWhitelisted)', async () => {
@@ -115,5 +119,6 @@ describe('Users (e2e)', () => {
       .expect(400);
 
     expect(JSON.stringify(res.body.error.details)).toContain('phone');
+    expect(res.body.statusCode).toBe(400);
   });
 });
