@@ -1,9 +1,8 @@
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 import request from 'supertest';
 import { AppModule } from './../src/app.module';
-import { configureApp } from './../src/common/configure-app';
 import { User } from './../src/modules/users/entities/user.entity';
 
 describe('Users (e2e)', () => {
@@ -17,7 +16,13 @@ describe('Users (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    configureApp(app);
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
     await app.init();
 
     dataSource = app.get(DataSource);
@@ -39,16 +44,26 @@ describe('Users (e2e)', () => {
       .expect(201);
 
     expect(res.body).toMatchObject({
+      success: true,
+      data: {
+        name: 'Nguyen Van A',
+        email,
+        role: 'Learner',
+        status: 'Active',
+        avatar: null,
+      },
+    });
+    expect(res.body.data).toMatchObject({
       name: 'Nguyen Van A',
       email,
       role: 'Learner',
       status: 'Active',
       avatar: null,
     });
-    expect(res.body.id).toMatch(
+    expect(res.body.data.id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
-    expect(res.body.password).toBeUndefined();
+    expect(res.body.data.password).toBeUndefined();
 
     const row = await dataSource.getRepository(User).findOneByOrFail({ email });
     expect(row.password).not.toBe('abcd1234!');
@@ -61,7 +76,7 @@ describe('Users (e2e)', () => {
       .send({ name: 'Another User', email, password: 'xyz98765#' })
       .expect(409);
 
-    expect(res.body.message).toBe('Email already registered');
+    expect(res.body.error.message).toBe('Email already registered');
   });
 
   it('rejects an invalid email with 400', async () => {
@@ -74,7 +89,7 @@ describe('Users (e2e)', () => {
       })
       .expect(400);
 
-    expect(Array.isArray(res.body.message)).toBe(true);
+    expect(Array.isArray(res.body.error.details)).toBe(true);
   });
 
   it('rejects a weak password with 400 and the policy message', async () => {
@@ -83,7 +98,7 @@ describe('Users (e2e)', () => {
       .send({ name: 'Nguyen Van A', email: `weak-${email}`, password: 'abc12' })
       .expect(400);
 
-    expect(JSON.stringify(res.body.message)).toContain(
+    expect(JSON.stringify(res.body.error.details)).toContain(
       'Password must be at least 8 characters and include letters, numbers and a special character',
     );
   });
@@ -99,6 +114,6 @@ describe('Users (e2e)', () => {
       })
       .expect(400);
 
-    expect(JSON.stringify(res.body.message)).toContain('phone');
+    expect(JSON.stringify(res.body.error.details)).toContain('phone');
   });
 });
