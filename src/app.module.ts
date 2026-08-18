@@ -6,6 +6,10 @@ import { AppService } from './app.service';
 import { RedisModule } from './modules/redis/redis.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { FileModule } from './modules/file/file.module';
+import { UsersModule } from './modules/users/users.module';
+import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 @Module({
   imports: [
@@ -32,8 +36,19 @@ import { FileModule } from './modules/file/file.module';
         synchronize: true,
       }),
     }),
+    UsersModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_FILTER,
+      useClass: HttpExceptionFilter,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: ResponseInterceptor,
+    },
+  ],
 })
 export class AppModule {}

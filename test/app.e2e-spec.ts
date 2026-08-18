@@ -23,13 +23,19 @@ describe('AppController (e2e)', () => {
   it('/health (GET) reports UP with reachable postgres, redis, mongodb and minio', async () => {
     const res = await request(app.getHttpServer()).get('/health').expect(200);
     const body = res.body as {
-      components: Record<string, { status: string }>;
+      success: boolean;
+      statusCode: number;
+      data: {
+        components: Record<string, { status: string }>;
+      };
     };
 
-    expect(body.components.application.status).toBe('UP');
-    expect(body.components.postgresql.status).toBe('UP');
-    expect(body.components.redis.status).toBe('UP');
-    expect(body.components.mongodb.status).toBe('UP');
-    expect(body.components.minio.status).toBe('UP');
+    expect(body.success).toBe(true);
+    expect(body.statusCode).toBe(200);
+    expect(body.data.components.application.status).toBe('UP');
+    expect(body.data.components.postgresql.status).toBe('UP');
+    expect(body.data.components.redis.status).toBe('UP');
+    expect(body.data.components.mongodb.status).toBe('UP');
+    expect(body.data.components.minio.status).toBe('UP');
   });
 });
