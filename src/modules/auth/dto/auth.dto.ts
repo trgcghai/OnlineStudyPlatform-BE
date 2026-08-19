@@ -19,6 +19,8 @@ export interface AccessTokenPayload {
   sub: string;
   email: string;
   role: UserRole;
+  jti?: string;
+  exp?: number;
 }
 
 export interface RefreshTokenPayload {

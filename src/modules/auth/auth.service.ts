@@ -15,12 +15,15 @@ import { REDIS_CLIENT } from '../redis/redis.module';
 import { UsersService } from '../users/users.service';
 import { User, UserStatus } from '../users/entities/user.entity';
 import { RegisterUserResponse } from '../users/dto/user.dto';
-import { REFRESH_SESSION_KEY_PREFIX } from '../../common/constants/auth.constant';
+import {
+  ACCESS_TOKEN_BLACKLIST_KEY_PREFIX,
+  REFRESH_SESSION_KEY_PREFIX,
+} from '../../common/constants/auth.constant';
 import {
   AccessTokenPayload,
   LoginDto,
   RefreshTokenPayload,
-} from 'src/modules/auth/dto/auth.dto';
+} from './dto/auth.dto';
 
 export interface AuthTokenResult {
   accessToken: string;
@@ -88,10 +91,13 @@ export class AuthService {
     return this.issueTokens(user);
   }
 
-  async logout(refreshToken: string | undefined): Promise<void> {
-    if (!refreshToken) {
-      return;
-    }
+  async logout(
+    refreshToken: string | undefined,
+    accessToken?: string,
+  ): Promise<void> {
+    await this.blacklistAccessToken(accessToken);
+
+    if (!refreshToken) return;
 
     try {
       const payload = await this.verifyRefreshToken(refreshToken);
@@ -174,6 +180,31 @@ export class AuthService {
     return `${REFRESH_SESSION_KEY_PREFIX}:${userId}:${sessionId}`;
   }
 
+  private getAccessBlacklistKey(jti: string): string {
+    return `${ACCESS_TOKEN_BLACKLIST_KEY_PREFIX}:${jti}`;
+  }
+
+  private async blacklistAccessToken(
+    accessToken: string | undefined,
+  ): Promise<void> {
+    if (!accessToken) return;
+
+    const payload = await this.verifyAccessTokenForBlacklist(accessToken);
+
+    if (!payload?.jti || !payload.exp) return;
+
+    const ttlSeconds = payload.exp - Math.floor(Date.now() / 1000);
+
+    if (ttlSeconds <= 0) return;
+
+    await this.redis.set(
+      this.getAccessBlacklistKey(payload.jti),
+      payload.sub,
+      'EX',
+      ttlSeconds,
+    );
+  }
+
   private parseTtlToSeconds(ttl: string): number {
     const match = ttl.trim().match(/^(\d+)([smhd])$/i);
 
@@ -226,6 +257,24 @@ export class AuthService {
       );
     } catch {
       throw new UnauthorizedException();
+    }
+  }
+
+  private async verifyAccessTokenForBlacklist(
+    accessToken: string,
+  ): Promise<AccessTokenPayload | null> {
+    const accessSecret =
+      this.configService.getOrThrow<string>('JWT_ACCESS_SECRET');
+
+    try {
+      return await this.jwtService.verifyAsync<AccessTokenPayload>(
+        accessToken,
+        {
+          secret: accessSecret,
+        },
+      );
+    } catch {
+      return null;
     }
   }
 }

@@ -281,12 +281,13 @@ describe('Auth (e2e)', () => {
     expect(rotatedCookie).not.toBe(cookie);
   });
 
-  it('POST /auth/logout invalidates refresh session so later refresh with same cookie fails', async () => {
-    const { cookie } = await login(users.learner.email);
+  it('POST /auth/logout invalidates refresh session and blacklists current access token', async () => {
+    const { token, cookie } = await login(users.learner.email);
 
     const logoutRes = await request(app.getHttpServer())
       .post('/auth/logout')
       .set('Cookie', cookie)
+      .set('Authorization', `Bearer ${token}`)
       .expect(200);
     expect(logoutRes.body).toMatchObject({
       success: true,
@@ -301,6 +302,12 @@ describe('Auth (e2e)', () => {
       .set('Cookie', cookie)
       .expect(401);
     expectErrorBody(refreshRes.body as ErrorBody, 401, 'Unauthorized');
+
+    const meRes = await request(app.getHttpServer())
+      .get('/auth/me')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(401);
+    expectErrorBody(meRes.body as ErrorBody, 401, 'Unauthorized');
   });
 
   it('GET /auth/admin allows Admin and rejects Learner', async () => {

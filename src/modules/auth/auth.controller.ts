@@ -19,8 +19,9 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import { LoginDto } from 'src/modules/auth/dto/auth.dto';
-import type { AuthenticatedUser } from 'src/modules/auth/dto/auth.dto';
+import { LoginDto } from './dto/auth.dto';
+import type { AuthenticatedUser } from './dto/auth.dto';
+import { GetToken } from 'src/common/decorators/bearerToken.decorator';
 
 type CookieRequest = Request & {
   cookies: Record<string, string | undefined>;
@@ -41,7 +42,10 @@ export class AuthController {
     const result = await this.authService.login(loginDto);
     this.setRefreshCookie(response, result.refreshToken);
 
-    return this.toAuthResponse(result);
+    return {
+      accessToken: result.accessToken,
+      user: result.user,
+    };
   }
 
   @Post('refresh')
@@ -55,7 +59,10 @@ export class AuthController {
     );
     this.setRefreshCookie(response, result.refreshToken);
 
-    return this.toAuthResponse(result);
+    return {
+      accessToken: result.accessToken,
+      user: result.user,
+    };
   }
 
   @Post('logout')
@@ -63,9 +70,11 @@ export class AuthController {
   async logout(
     @Req() request: CookieRequest,
     @Res({ passthrough: true }) response: Response,
+    @GetToken() accessToken?: string,
   ) {
     await this.authService.logout(
       request.cookies[REFRESH_TOKEN_COOKIE_NAME] as string,
+      accessToken,
     );
     response.clearCookie(REFRESH_TOKEN_COOKIE_NAME, { path: '/auth' });
 
@@ -107,12 +116,5 @@ export class AuthController {
       path: '/auth',
       maxAge: this.authService.getRefreshCookieMaxAgeMs(),
     });
-  }
-
-  private toAuthResponse(result: AuthTokenResult): AuthResponse {
-    return {
-      accessToken: result.accessToken,
-      user: result.user,
-    };
   }
 }

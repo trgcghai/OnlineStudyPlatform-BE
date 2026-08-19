@@ -329,6 +329,58 @@ describe('AuthService', () => {
     expect(redis.del).toHaveBeenCalledWith('auth:refresh:user-id:old');
   });
 
+  it('logout blacklists a valid access token until it expires', async () => {
+    jest.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    jwtService.verifyAsync
+      .mockResolvedValueOnce({
+        sub: user.id,
+        email: user.email,
+        role: user.role,
+        jti: 'access-jti',
+        exp: 1_700_000_900,
+      })
+      .mockResolvedValueOnce({
+        sub: user.id,
+        sessionId: 'old',
+      });
+
+    await expect(
+      service.logout('refresh-token', 'access-token'),
+    ).resolves.toBeUndefined();
+
+    expect(jwtService.verifyAsync).toHaveBeenNthCalledWith(1, 'access-token', {
+      secret: 'access-secret',
+    });
+    expect(redis.set).toHaveBeenCalledWith(
+      'auth:access:blacklist:access-jti',
+      user.id,
+      'EX',
+      900,
+    );
+    expect(redis.del).toHaveBeenCalledWith('auth:refresh:user-id:old');
+  });
+
+  it('logout skips access blacklist when access token is invalid', async () => {
+    jwtService.verifyAsync
+      .mockRejectedValueOnce(new Error('invalid access token'))
+      .mockResolvedValueOnce({
+        sub: user.id,
+        sessionId: 'old',
+      });
+
+    await expect(
+      service.logout('refresh-token', 'bad-access-token'),
+    ).resolves.toBeUndefined();
+
+    expect(redis.set).not.toHaveBeenCalledWith(
+      expect.stringMatching(/^auth:access:blacklist:/),
+      expect.anything(),
+      'EX',
+      expect.any(Number),
+    );
+    expect(redis.del).toHaveBeenCalledWith('auth:refresh:user-id:old');
+  });
+
   it('logout without a token resolves and does not delete', async () => {
     await expect(service.logout(undefined)).resolves.toBeUndefined();
 
