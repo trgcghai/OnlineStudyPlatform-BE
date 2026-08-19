@@ -1,8 +1,8 @@
 import {
-  BadRequestException,
   ConflictException,
   HttpException,
   Injectable,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -16,6 +16,16 @@ export class UsersService {
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
   ) {}
+
+  async findByEmail(email: string): Promise<User | null> {
+    return this.usersRepository.findOneBy({
+      email: email.trim().toLowerCase(),
+    });
+  }
+
+  async findById(id: string): Promise<User | null> {
+    return this.usersRepository.findOneBy({ id });
+  }
 
   async create(createUserDto: CreateUserDto): Promise<RegisterUserResponse> {
     const { name, email, password } = createUserDto;
@@ -52,8 +62,12 @@ export class UsersService {
         throw error;
       }
 
-      console.error('Error creating user:', error);
-      throw new BadRequestException(error);
+      const persistenceError = error as { code?: unknown };
+      if (persistenceError.code === '23505') {
+        throw new ConflictException('Email already registered');
+      }
+
+      throw new InternalServerErrorException('Could not create user');
     }
   }
 }
