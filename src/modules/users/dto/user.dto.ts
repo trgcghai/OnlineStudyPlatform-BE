@@ -1,6 +1,6 @@
 import { Transform } from 'class-transformer';
 import { IsEmail, IsString, Length, Matches } from 'class-validator';
-import { UserRole, UserStatus } from 'src/modules/users/entities/user.entity';
+import { UserRole, UserStatus } from '../entities/user.entity';
 
 export class CreateUserDto {
   @IsString()

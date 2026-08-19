@@ -1,4 +1,7 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  ConflictException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/user.dto';
@@ -70,6 +73,18 @@ describe('UsersService', () => {
     expect(savedInput.name).toBe('Nguyen Van A');
   });
 
+  it('findByEmail normalizes input email before repository lookup', async () => {
+    await service.findByEmail('  USER@Example.COM  ');
+
+    expect(repo.findOneBy).toHaveBeenCalledWith({ email: 'user@example.com' });
+  });
+
+  it('findById looks up by id', async () => {
+    await service.findById('user-id');
+
+    expect(repo.findOneBy).toHaveBeenCalledWith({ id: 'user-id' });
+  });
+
   it('rejects an existing email with ConflictException', async () => {
     repo.findOneBy.mockResolvedValue({ id: 'existing-user-id' });
 
@@ -79,12 +94,20 @@ describe('UsersService', () => {
     expect(repo.save).not.toHaveBeenCalled();
   });
 
-  it('wraps unrelated database errors in BadRequestException', async () => {
+  it('rejects a database unique email violation with ConflictException', async () => {
+    repo.save.mockRejectedValue({ code: '23505' });
+
+    await expect(service.create(dto)).rejects.toEqual(
+      new ConflictException('Email already registered'),
+    );
+  });
+
+  it('wraps unrelated database errors in a generic InternalServerErrorException', async () => {
     const error = new Error('connection reset');
     repo.save.mockRejectedValue(error);
 
-    await expect(service.create(dto)).rejects.toBeInstanceOf(
-      BadRequestException,
+    await expect(service.create(dto)).rejects.toEqual(
+      new InternalServerErrorException('Could not create user'),
     );
   });
 });
