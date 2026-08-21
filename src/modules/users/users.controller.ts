@@ -24,15 +24,11 @@ import {
   UpdateProfileDto,
 } from './dto/user.dto';
 import { UsersService } from './users.service';
-
-const AVATAR_FIELD_NAME = 'avatar';
-const AVATAR_MAX_SIZE_BYTES = 5 * 1024 * 1024;
-const AVATAR_ALLOWED_MIME_TYPES = [
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'image/gif',
-];
+import {
+  AVATAR_ALLOWED_MIME_TYPES,
+  AVATAR_FIELD_NAME,
+  AVATAR_MAX_SIZE_BYTES,
+} from 'src/common/constants/file.constant';
 
 @Controller('users')
 export class UsersController {
@@ -92,7 +88,7 @@ export class UsersController {
       },
     }),
   )
-  async uploadAvatar(
+  uploadAvatar(
     @CurrentUser('id') userId: string,
     @UploadedFile() file?: Express.Multer.File,
   ) {
