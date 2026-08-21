@@ -14,7 +14,7 @@ import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { UsersService } from '../users/users.service';
 import { User, UserStatus } from '../users/entities/user.entity';
-import { RegisterUserResponse } from '../users/dto/user.dto';
+import { UserResponse } from '../users/dto/user.dto';
 import {
   ACCESS_TOKEN_BLACKLIST_KEY_PREFIX,
   REFRESH_SESSION_KEY_PREFIX,
@@ -28,7 +28,7 @@ import {
 export interface AuthTokenResult {
   accessToken: string;
   refreshToken: string;
-  user: RegisterUserResponse;
+  user: UserResponse;
 }
 
 @Injectable()
@@ -229,7 +229,7 @@ export class AuthService {
     return value * multipliers[unit];
   }
 
-  private toAuthUserResponse(user: User): RegisterUserResponse {
+  private toAuthUserResponse(user: User): UserResponse {
     return {
       id: user.id,
       name: user.name,
