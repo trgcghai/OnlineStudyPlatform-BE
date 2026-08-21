@@ -28,7 +28,7 @@ import {
   AVATAR_ALLOWED_MIME_TYPES,
   AVATAR_FIELD_NAME,
   AVATAR_MAX_SIZE_BYTES,
-} from 'src/common/constants/file.constant';
+} from '../../common/constants/file.constant';
 
 @Controller('users')
 export class UsersController {
