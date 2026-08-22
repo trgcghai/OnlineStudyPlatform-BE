@@ -21,7 +21,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { LoginDto } from './dto/auth.dto';
 import type { AuthenticatedUser } from './dto/auth.dto';
-import { GetToken } from 'src/common/decorators/bearerToken.decorator';
+import { GetToken } from '../../common/decorators/bearerToken.decorator';
 
 type CookieRequest = Request & {
   cookies: Record<string, string | undefined>;

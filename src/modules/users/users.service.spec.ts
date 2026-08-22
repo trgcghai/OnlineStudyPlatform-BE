@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
@@ -8,6 +9,12 @@ import type { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcryptjs';
 import { Repository } from 'typeorm';
 import { UsersService } from './users.service';
+import {
+  ADMIN_ASSIGNABLE_ROLES,
+  AdminListUsersQueryDto,
+  CreateAdminUserDto,
+  UpdateAdminUserDto,
+} from './dto/admin-user.dto';
 import {
   ChangePasswordDto,
   CreateUserDto,
@@ -17,9 +24,15 @@ import { User, UserRole, UserStatus } from './entities/user.entity';
 
 describe('UsersService', () => {
   let service: UsersService;
-  let repo: { create: jest.Mock; findOneBy: jest.Mock; save: jest.Mock };
+  let repo: {
+    create: jest.Mock;
+    findOneBy: jest.Mock;
+    save: jest.Mock;
+    createQueryBuilder: jest.Mock;
+  };
   let minioClient: { putObject: jest.Mock; removeObject: jest.Mock };
   let configService: { getOrThrow: jest.Mock };
+  let redis: { keys: jest.Mock; del: jest.Mock };
 
   const makeUser = (): User => ({
     id: 'b7f8c2a0-1111-4a11-9f0a-000000000001',
@@ -49,6 +62,7 @@ describe('UsersService', () => {
         ...makeUser(),
         ...input,
       })),
+      createQueryBuilder: jest.fn(),
     };
     minioClient = {
       putObject: jest.fn().mockResolvedValue({ etag: '"etag"' }),
@@ -61,10 +75,15 @@ describe('UsersService', () => {
         return undefined;
       }),
     };
+    redis = {
+      keys: jest.fn().mockResolvedValue([]),
+      del: jest.fn().mockResolvedValue(0),
+    };
     service = new UsersService(
       repo as unknown as Repository<User>,
       configService as unknown as ConfigService,
       minioClient as never,
+      redis as never,
     );
   });
 
@@ -339,6 +358,255 @@ describe('UsersService', () => {
         new NotFoundException('User not found'),
       );
       expect(minioClient.putObject).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createAsAdmin', () => {
+    const adminDto: CreateAdminUserDto = {
+      name: '  Instructor A  ',
+      email: '  Instructor@Example.COM ',
+      password: 'abcd1234!',
+      role: UserRole.INSTRUCTOR,
+    };
+
+    it('creates an account with the requested assignable role', async () => {
+      repo.save.mockResolvedValue(makeUser());
+
+      await service.createAsAdmin(adminDto);
+
+      expect(repo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'Instructor A',
+          email: 'instructor@example.com',
+          password: expect.stringMatching(/^\$2[ab]\$\d+\$/),
+          role: UserRole.INSTRUCTOR,
+        }),
+      );
+    });
+
+    it('rejects duplicate email with ConflictException', async () => {
+      repo.findOneBy.mockResolvedValue({ id: 'existing-user-id' });
+
+      await expect(service.createAsAdmin(adminDto)).rejects.toEqual(
+        new ConflictException('Email already registered'),
+      );
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('findAllForAdmin', () => {
+    const buildQueryBuilder = (options?: {
+      count?: number;
+      users?: User[];
+    }) => {
+      const qb = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getCount: jest.fn().mockResolvedValue(options?.count ?? 0),
+        getMany: jest.fn().mockResolvedValue(options?.users ?? []),
+      };
+      repo.createQueryBuilder.mockReturnValue(qb);
+      return qb;
+    };
+
+    it('always scopes the list to assignable (non-admin) roles and paginates', async () => {
+      const users = [makeUser()];
+      const qb = buildQueryBuilder({ count: 1, users });
+
+      const result = await service.findAllForAdmin(
+        new AdminListUsersQueryDto(),
+      );
+
+      expect(repo.createQueryBuilder).toHaveBeenCalledWith('user');
+      expect(qb.where).toHaveBeenCalledWith('user.role IN (:...roles)', {
+        roles: ADMIN_ASSIGNABLE_ROLES,
+      });
+      expect(qb.skip).toHaveBeenCalledWith(0);
+      expect(qb.take).toHaveBeenCalledWith(10);
+      expect(result).toEqual({
+        items: [expect.any(Object)],
+        total: 1,
+        page: 1,
+        limit: 10,
+        totalPages: 1,
+      });
+      expect(result.items[0]).not.toHaveProperty('password');
+      expect(result.items[0]).toMatchObject({ id: userId });
+    });
+
+    it('applies role, status and search filters', async () => {
+      const qb = buildQueryBuilder();
+
+      await service.findAllForAdmin({
+        role: UserRole.INSTRUCTOR,
+        status: UserStatus.INACTIVE,
+        q: 'hai',
+        page: 2,
+        limit: 5,
+      });
+
+      expect(qb.andWhere).toHaveBeenCalledWith('user.role = :role', {
+        role: UserRole.INSTRUCTOR,
+      });
+      expect(qb.andWhere).toHaveBeenCalledWith('user.status = :status', {
+        status: UserStatus.INACTIVE,
+      });
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        '(user.name ILIKE :search OR user.email ILIKE :search)',
+        { search: '%hai%' },
+      );
+      expect(qb.skip).toHaveBeenCalledWith(5);
+      expect(qb.take).toHaveBeenCalledWith(5);
+    });
+
+    it('never returns zero total pages even with no rows', async () => {
+      buildQueryBuilder({ count: 0, users: [] });
+
+      const result = await service.findAllForAdmin(
+        new AdminListUsersQueryDto(),
+      );
+
+      expect(result.totalPages).toBe(1);
+    });
+  });
+
+  describe('updateAsAdmin', () => {
+    const baseUpdate: UpdateAdminUserDto = { name: 'Updated Name' };
+
+    it('updates name, role and status of a learner', async () => {
+      repo.findOneBy.mockResolvedValue(makeUser());
+      repo.save.mockImplementation((input: User) => input);
+
+      const result = await service.updateAsAdmin(userId, {
+        name: '  Updated Name  ',
+        role: UserRole.INSTRUCTOR,
+        status: UserStatus.INACTIVE,
+      });
+
+      expect(repo.save).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({
+        name: 'Updated Name',
+        role: UserRole.INSTRUCTOR,
+        status: UserStatus.INACTIVE,
+      });
+    });
+
+    it('resets the password to a fresh hash when provided', async () => {
+      repo.findOneBy.mockResolvedValue(makeUser());
+      repo.save.mockImplementation((input: User) => input);
+
+      await service.updateAsAdmin(userId, {
+        ...baseUpdate,
+        password: 'NewPass@123',
+      });
+
+      const savedInput = repo.save.mock.calls[0][0] as User;
+      await expect(
+        bcrypt.compare('NewPass@123', savedInput.password),
+      ).resolves.toBe(true);
+    });
+
+    it('rejects an empty payload with BadRequestException', async () => {
+      await expect(service.updateAsAdmin(userId, {})).rejects.toEqual(
+        new BadRequestException('No changes provided'),
+      );
+      expect(repo.findOneBy).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when the user does not exist', async () => {
+      await expect(
+        service.updateAsAdmin('missing-id', baseUpdate),
+      ).rejects.toEqual(new NotFoundException('User not found'));
+    });
+
+    it('refuses to manage an Admin account with ForbiddenException', async () => {
+      repo.findOneBy.mockResolvedValue({
+        ...makeUser(),
+        role: UserRole.ADMIN,
+      });
+
+      await expect(service.updateAsAdmin(userId, baseUpdate)).rejects.toEqual(
+        new ForbiddenException('Admin accounts cannot be managed here'),
+      );
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects an email that belongs to another account with ConflictException', async () => {
+      repo.findOneBy
+        .mockResolvedValueOnce(makeUser())
+        .mockResolvedValueOnce({ id: 'other-user-id' });
+
+      await expect(
+        service.updateAsAdmin(userId, { email: 'taken@example.com' }),
+      ).rejects.toEqual(new ConflictException('Email already registered'));
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    it('keeps the same email without conflict check', async () => {
+      const user = makeUser();
+      repo.findOneBy.mockResolvedValue(user);
+      repo.save.mockImplementation((input: User) => input);
+
+      await service.updateAsAdmin(userId, { email: user.email });
+
+      expect(repo.save).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('disableUser', () => {
+    it('sets status Inactive and revokes refresh sessions', async () => {
+      repo.findOneBy.mockResolvedValue(makeUser());
+      redis.keys.mockResolvedValue(['auth:refresh:user-id:s1']);
+      repo.save.mockImplementation((input: User) => input);
+
+      const result = await service.disableUser(userId);
+
+      expect(result.status).toBe(UserStatus.INACTIVE);
+      expect(redis.del).toHaveBeenCalledWith('auth:refresh:user-id:s1');
+    });
+
+    it('is idempotent for an already disabled account', async () => {
+      repo.findOneBy.mockResolvedValue({
+        ...makeUser(),
+        status: UserStatus.INACTIVE,
+      });
+
+      const result = await service.disableUser(userId);
+
+      expect(result.status).toBe(UserStatus.INACTIVE);
+      expect(repo.save).not.toHaveBeenCalled();
+      expect(redis.keys).not.toHaveBeenCalled();
+    });
+
+    it('still succeeds when Redis session cleanup fails', async () => {
+      repo.findOneBy.mockResolvedValue(makeUser());
+      redis.keys.mockRejectedValue(new Error('redis down'));
+      repo.save.mockImplementation((input: User) => input);
+
+      const result = await service.disableUser(userId);
+
+      expect(result.status).toBe(UserStatus.INACTIVE);
+    });
+
+    it('throws NotFoundException when the user does not exist', async () => {
+      await expect(service.disableUser('missing-id')).rejects.toEqual(
+        new NotFoundException('User not found'),
+      );
+    });
+
+    it('refuses to disable an Admin account', async () => {
+      repo.findOneBy.mockResolvedValue({
+        ...makeUser(),
+        role: UserRole.ADMIN,
+      });
+
+      await expect(service.disableUser(userId)).rejects.toEqual(
+        new ForbiddenException('Admin accounts cannot be managed here'),
+      );
+      expect(repo.save).not.toHaveBeenCalled();
     });
   });
 });

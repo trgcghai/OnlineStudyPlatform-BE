@@ -69,8 +69,8 @@ describe('UsersController', () => {
     expect(result).toEqual({ passwordChanged: true });
   });
 
-  it('rejects an avatar request without a file with BadRequestException', async () => {
-    await expect(controller.uploadAvatar('user-id', undefined)).rejects.toThrow(
+  it('rejects an avatar request without a file with BadRequestException', () => {
+    expect(() => controller.uploadAvatar('user-id', undefined)).toThrow(
       'Avatar image is required',
     );
     expect(service.uploadAvatar).not.toHaveBeenCalled();
