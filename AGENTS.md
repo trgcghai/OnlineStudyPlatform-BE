@@ -9,13 +9,14 @@ NestJS 11 + TypeScript backend. Use **pnpm** only; the Dockerfile runs Node 22 w
 - `pnpm build` is the typecheck/emission path (`nest build`, deletes `dist/` via `nest-cli.json`). There is no `typecheck` script.
 - `pnpm lint` runs ESLint with `--fix`, so it can mutate files.
 - `pnpm test` runs unit tests from `src/**/*.spec.ts`; focus with Jest args, e.g. `pnpm test auth.service`.
-- `pnpm test:e2e` runs `test/*.e2e-spec.ts` with `test/setup-e2e-env.ts`; it still needs reachable Postgres, Redis, MongoDB, and MinIO.
+- `pnpm test:e2e` runs `test/*.e2e-spec.ts` with `test/setup-e2e-env.ts`; the setup file only supplies JWT defaults, so Postgres, Redis, MongoDB, and MinIO still need to be reachable.
 
 ## Runtime Wiring
 
-- Entry points: `src/main.ts` bootstraps `AppModule`; `src/app.module.ts` wires global config, Redis, MinIO, MongoDB, TypeORM, users, and auth.
+- Entry points: `src/main.ts` bootstraps `AppModule`; `src/app.module.ts` wires global config, Redis, MinIO, MongoDB, TypeORM, users, auth, and courses.
 - `ConfigModule.forRoot({ isGlobal: true })` has no validation schema; required config is enforced by `getOrThrow`, so missing env fails at boot or first use.
 - Required env keys in `.env.example`: `PORT`, `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME`, `REDIS_HOST`, `REDIS_PORT`, `MONGODB_URI`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `JWT_ACCESS_TTL`, `JWT_REFRESH_TTL`.
+- Local env hints in `.env.example`: Postgres is expected on host port `5433`, MongoDB URI example is `mongodb://localhost:27017/kltn`, and MinIO endpoint example is `http://localhost:9000`.
 - PostgreSQL uses TypeORM with `autoLoadEntities: true` and `synchronize: true`; there are no migrations in this repo.
 - Redis is a global `REDIS_CLIENT` from `src/modules/redis/redis.module.ts`; it calls `quit()` on module destroy so tests can exit.
 - MinIO is a global `MINIO_CLIENT`; `FileModule.onModuleInit()` creates `MINIO_BUCKET` if needed and applies a public read policy. `MINIO_ENDPOINT` must be a full URL such as `http://localhost:9000`.
