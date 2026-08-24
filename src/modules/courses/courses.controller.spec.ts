@@ -16,6 +16,7 @@ describe('CoursesController', () => {
     getOwned: jest.Mock;
     update: jest.Mock;
     remove: jest.Mock;
+    requestPublish: jest.Mock;
     uploadThumbnail: jest.Mock;
   };
 
@@ -29,6 +30,7 @@ describe('CoursesController', () => {
       getOwned: jest.fn(),
       update: jest.fn(),
       remove: jest.fn(),
+      requestPublish: jest.fn(),
       uploadThumbnail: jest.fn(),
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -78,6 +80,12 @@ describe('CoursesController', () => {
       file,
     );
   });
+
+  it('delegates request publish with course id and current Instructor id', async () => {
+    await controller.requestPublish(courseId, instructorId);
+
+    expect(service.requestPublish).toHaveBeenCalledWith(courseId, instructorId);
+  });
 });
 
 describe('CoursesController RBAC', () => {
@@ -87,6 +95,7 @@ describe('CoursesController RBAC', () => {
     | 'getOwned'
     | 'update'
     | 'remove'
+    | 'requestPublish'
     | 'uploadThumbnail';
 
   const handlerOf = (methodName: HandlerName): unknown =>
@@ -121,6 +130,17 @@ describe('CoursesController RBAC', () => {
     expect(runGuard({ id: 'instructor-id', role: UserRole.INSTRUCTOR })).toBe(
       true,
     );
+  });
+
+  it('keeps request publish protected by Instructor role metadata', () => {
+    expect(
+      new RolesGuard(reflector).canActivate(
+        buildContext(handlerOf('requestPublish'), {
+          id: 'instructor-id',
+          role: UserRole.INSTRUCTOR,
+        }) as never,
+      ),
+    ).toBe(true);
   });
 
   it('rejects anonymous requests with UnauthorizedException', () => {

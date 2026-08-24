@@ -9,9 +9,12 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
+import type { Types } from 'mongoose';
 import type { Client as MinioClient } from 'minio';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { MINIO_CLIENT } from '../../common/constants/file.constant';
+import { NotificationQueue } from '../notifications/entities/notification.entity';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   CourseListResult,
   CourseResponse,
@@ -28,6 +31,8 @@ export class CoursesService {
     private readonly coursesRepository: Repository<Course>,
     private readonly configService: ConfigService,
     @Inject(MINIO_CLIENT) private readonly minioClient: MinioClient,
+    private readonly notificationsService: NotificationsService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async create(
@@ -52,7 +57,7 @@ export class CoursesService {
   ): Promise<CourseListResult> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
-    const sortBy = query.sortBy ?? 'createdAt';
+    const sortBy = query.sortBy ?? 'updatedAt';
     const sortOrder = query.sortOrder ?? 'DESC';
 
     const qb = this.coursesRepository
@@ -125,6 +130,11 @@ export class CoursesService {
       course.category = dto.category.trim();
     }
 
+    if (course.status === CourseStatus.REJECTED) {
+      course.status = CourseStatus.DRAFT;
+      course.rejectReason = null;
+    }
+
     const savedCourse = await this.coursesRepository.save(course);
     return this.toCourseResponse(savedCourse);
   }
@@ -133,6 +143,90 @@ export class CoursesService {
     await this.getOwnedCourseEntity(id, instructorId);
     this.assertCourseCanBeDeleted(id);
     await this.coursesRepository.delete(id);
+  }
+
+  async requestPublish(
+    id: string,
+    instructorId: string,
+  ): Promise<CourseResponse> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    let createdNotificationId: Types.ObjectId | string | undefined;
+
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const courseRepository = queryRunner.manager.getRepository(Course);
+      const course = await courseRepository.findOne({
+        where: { id },
+        relations: { instructor: true },
+      });
+
+      if (!course) {
+        throw new NotFoundException('Course not found');
+      }
+
+      if (course.instructorId !== instructorId) {
+        throw new ForbiddenException('You do not own this course');
+      }
+
+      this.assertCourseStatusTransition(course.status, CourseStatus.PENDING);
+
+      course.status = CourseStatus.PENDING;
+      course.rejectReason = null;
+      const savedCourse = await courseRepository.save(course);
+
+      try {
+        const notification =
+          await this.notificationsService.createQueueNotification({
+            queue: NotificationQueue.COURSE_APPROVAL,
+            title: 'Yêu cầu duyệt khóa học',
+            message: `${course.instructor.name} đã gửi yêu cầu xuất bản khóa học "${course.title}".`,
+            actionUrl: '/admin/courses/approvals',
+            metadata: { courseId: course.id, instructorId },
+            sentAt: new Date(),
+          });
+        createdNotificationId = notification._id;
+      } catch {
+        throw new InternalServerErrorException(
+          'Could not queue course approval notification',
+        );
+      }
+
+      try {
+        await queryRunner.commitTransaction();
+      } catch {
+        if (createdNotificationId) {
+          await this.notificationsService.deleteNotification(
+            createdNotificationId,
+          );
+        }
+        throw new InternalServerErrorException(
+          'Could not request course publication',
+        );
+      }
+
+      return this.toCourseResponse(savedCourse);
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  assertCourseStatusTransition(from: CourseStatus, to: CourseStatus): void {
+    const legalTransitions: Partial<Record<CourseStatus, CourseStatus[]>> = {
+      [CourseStatus.DRAFT]: [CourseStatus.PENDING],
+      [CourseStatus.PENDING]: [CourseStatus.PUBLISHED, CourseStatus.REJECTED],
+      [CourseStatus.REJECTED]: [CourseStatus.DRAFT],
+    };
+
+    if (!legalTransitions[from]?.includes(to)) {
+      throw new BadRequestException(
+        `Illegal course status transition: ${from} -> ${to}`,
+      );
+    }
   }
 
   async uploadThumbnail(
@@ -278,6 +372,7 @@ export class CoursesService {
       category: course.category,
       thumbnail: course.thumbnail,
       status: course.status,
+      rejectReason: course.rejectReason,
       instructorId: course.instructorId,
       createdAt: course.createdAt,
       updatedAt: course.updatedAt,

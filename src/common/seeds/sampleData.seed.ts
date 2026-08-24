@@ -15,7 +15,6 @@ import {
 
 const SAMPLE_PASSWORD = 'Abc@1234';
 const SAMPLE_INSTRUCTOR_EMAIL = 'instructor@gmail.com';
-const SAMPLE_COURSE_COUNT = 20;
 
 const SAMPLE_USERS = [
   {
@@ -39,23 +38,38 @@ const SAMPLE_COURSES = [
   ['Next.js Foundations', 'Programming', CourseStatus.PUBLISHED],
   ['NestJS API Design', 'Programming', CourseStatus.PUBLISHED],
   ['TypeScript For Web Apps', 'Programming', CourseStatus.DRAFT],
+  ['React Performance Patterns', 'Programming', CourseStatus.PENDING],
+  ['Advanced JavaScript', 'Programming', CourseStatus.REJECTED],
+  ['Docker For Developers', 'Programming', CourseStatus.PUBLISHED],
+
   ['PostgreSQL Essentials', 'Data', CourseStatus.PUBLISHED],
   ['MongoDB Practical Guide', 'Data', CourseStatus.PENDING],
   ['Redis Caching Patterns', 'Data', CourseStatus.DRAFT],
+  ['SQL Query Optimization', 'Data', CourseStatus.REJECTED],
+  ['Data Visualization Basics', 'Data', CourseStatus.PUBLISHED],
+  ['Introduction To Data Analytics', 'Data', CourseStatus.PENDING],
+
   ['UI Design Fundamentals', 'Design', CourseStatus.PUBLISHED],
   ['Design Systems In Practice', 'Design', CourseStatus.PENDING],
   ['Figma To Frontend Workflow', 'Design', CourseStatus.DRAFT],
+  ['UX Research Essentials', 'Design', CourseStatus.REJECTED],
+  ['Responsive Web Design', 'Design', CourseStatus.PUBLISHED],
+  ['Mobile App Design Basics', 'Design', CourseStatus.DRAFT],
+
   ['Startup Business Basics', 'Business', CourseStatus.PUBLISHED],
   ['Product Management 101', 'Business', CourseStatus.PENDING],
   ['Digital Marketing Launchpad', 'Business', CourseStatus.DRAFT],
+  ['Entrepreneurship Fundamentals', 'Business', CourseStatus.REJECTED],
+
   ['English For Interviews', 'Language', CourseStatus.PUBLISHED],
   ['Business English Writing', 'Language', CourseStatus.PENDING],
   ['IELTS Reading Practice', 'Language', CourseStatus.DRAFT],
-  ['Docker For Developers', 'Programming', CourseStatus.PUBLISHED],
-  ['Cloud Deployment Basics', 'Programming', CourseStatus.PENDING],
-  ['Data Visualization Basics', 'Data', CourseStatus.PUBLISHED],
+  ['English Presentation Skills', 'Language', CourseStatus.REJECTED],
+
   ['Career Planning Workshop', 'Other', CourseStatus.DRAFT],
   ['Learning How To Learn', 'Other', CourseStatus.PUBLISHED],
+  ['Time Management Essentials', 'Other', CourseStatus.PENDING],
+  ['Personal Productivity Basics', 'Other', CourseStatus.REJECTED],
 ] as const;
 
 @Injectable()
@@ -113,7 +127,7 @@ export class SampleDataSeed implements OnApplicationBootstrap {
       where: { instructorId: instructor.id },
     });
 
-    if (existingCourseCount >= SAMPLE_COURSE_COUNT) {
+    if (existingCourseCount >= SAMPLE_COURSES.length) {
       return;
     }
 
@@ -131,6 +145,8 @@ export class SampleDataSeed implements OnApplicationBootstrap {
         thumbnail: `https://picsum.photos/seed/lms-course-${index + 1}/960/540`,
         status,
         instructorId: instructor.id,
+        rejectReason:
+          status === CourseStatus.REJECTED ? 'Sample reject reason' : null,
       }),
     );
 

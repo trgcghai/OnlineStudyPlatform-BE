@@ -94,7 +94,7 @@ export class ListCoursesQueryDto {
 
   @IsOptional()
   @IsIn(COURSE_SORT_FIELDS)
-  sortBy: CourseSortField = 'createdAt';
+  sortBy: CourseSortField = 'updatedAt';
 
   @IsOptional()
   @IsIn(['ASC', 'DESC'])
@@ -108,6 +108,7 @@ export interface CourseResponse {
   category: string;
   thumbnail: string | null;
   status: CourseStatus;
+  rejectReason: string | null;
   instructorId: string;
   createdAt: Date;
   updatedAt: Date;
