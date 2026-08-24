@@ -2,24 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
+  CreatedNotificationRef,
+  CreateQueueNotificationInput,
+} from './dto/notification.dto';
+import {
   Notification,
   NotificationDocument,
-  NotificationQueue,
   NotificationType,
 } from './entities/notification.entity';
-
-export interface CreateQueueNotificationInput {
-  queue: NotificationQueue;
-  title: string;
-  message: string;
-  actionUrl?: string;
-  metadata?: Record<string, unknown>;
-  sentAt?: Date;
-}
-
-export interface CreatedNotificationRef {
-  _id: Types.ObjectId | string;
-}
 
 @Injectable()
 export class NotificationsService {
