@@ -94,7 +94,7 @@ export class ListCoursesQueryDto {
 
   @IsOptional()
   @IsIn(COURSE_SORT_FIELDS)
-  sortBy: CourseSortField = 'createdAt';
+  sortBy: CourseSortField = 'updatedAt';
 
   @IsOptional()
   @IsIn(['ASC', 'DESC'])

@@ -57,7 +57,7 @@ export class CoursesService {
   ): Promise<CourseListResult> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
-    const sortBy = query.sortBy ?? 'createdAt';
+    const sortBy = query.sortBy ?? 'updatedAt';
     const sortOrder = query.sortOrder ?? 'DESC';
 
     const qb = this.coursesRepository
