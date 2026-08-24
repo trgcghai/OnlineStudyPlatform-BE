@@ -65,6 +65,15 @@ export class CoursesController {
     return this.coursesService.getOwned(id, instructorId);
   }
 
+  @Post(':id/request-publish')
+  @HttpCode(HttpStatus.OK)
+  requestPublish(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser('id') instructorId: string,
+  ) {
+    return this.coursesService.requestPublish(id, instructorId);
+  }
+
   @Patch(':id')
   update(
     @Param('id', ParseUUIDPipe) id: string,

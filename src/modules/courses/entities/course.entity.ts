@@ -13,6 +13,7 @@ export enum CourseStatus {
   DRAFT = 'Draft',
   PENDING = 'Pending',
   PUBLISHED = 'Published',
+  REJECTED = 'Rejected',
 }
 
 @Entity('courses')
@@ -34,6 +35,9 @@ export class Course {
 
   @Column({ type: 'enum', enum: CourseStatus, default: CourseStatus.DRAFT })
   status!: CourseStatus;
+
+  @Column({ name: 'reject_reason', type: 'text', nullable: true })
+  rejectReason!: string | null;
 
   @Column({ name: 'instructor_id', type: 'uuid' })
   instructorId!: string;

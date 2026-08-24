@@ -12,6 +12,7 @@ import { CoursesModule } from './modules/courses/courses.module';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
     UsersModule,
     AuthModule,
     CoursesModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [

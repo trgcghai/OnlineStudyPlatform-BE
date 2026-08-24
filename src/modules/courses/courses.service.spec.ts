@@ -4,7 +4,9 @@ import {
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { NotificationQueue } from '../notifications/entities/notification.entity';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CoursesService } from './courses.service';
 import { CreateCourseDto } from './dto/course.dto';
 import { Course, CourseStatus } from './entities/course.entity';
@@ -20,6 +22,19 @@ describe('CoursesService', () => {
   };
   let configService: { getOrThrow: jest.Mock };
   let minioClient: { putObject: jest.Mock; removeObject: jest.Mock };
+  let notificationsService: {
+    createQueueNotification: jest.Mock;
+    deleteNotification: jest.Mock;
+  };
+  let dataSource: { createQueryRunner: jest.Mock };
+  let queryRunner: {
+    connect: jest.Mock;
+    startTransaction: jest.Mock;
+    commitTransaction: jest.Mock;
+    rollbackTransaction: jest.Mock;
+    release: jest.Mock;
+    manager: { getRepository: jest.Mock };
+  };
 
   const instructorId = '11111111-1111-4111-8111-111111111111';
   const otherInstructorId = '22222222-2222-4222-8222-222222222222';
@@ -32,8 +47,12 @@ describe('CoursesService', () => {
     category: 'Backend',
     thumbnail: null,
     status: CourseStatus.DRAFT,
+    rejectReason: null,
     instructorId,
-    instructor: undefined as never,
+    instructor: {
+      id: instructorId,
+      name: 'Nguyen Van A',
+    } as never,
     createdAt: new Date('2026-01-01T00:00:00Z'),
     updatedAt: new Date('2026-01-01T00:00:00Z'),
     ...overrides,
@@ -61,10 +80,27 @@ describe('CoursesService', () => {
       putObject: jest.fn().mockResolvedValue({ etag: 'etag' }),
       removeObject: jest.fn().mockResolvedValue(undefined),
     };
+    notificationsService = {
+      createQueueNotification: jest.fn(),
+      deleteNotification: jest.fn(),
+    };
+    queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      startTransaction: jest.fn().mockResolvedValue(undefined),
+      commitTransaction: jest.fn().mockResolvedValue(undefined),
+      rollbackTransaction: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      manager: { getRepository: jest.fn().mockReturnValue(repo) },
+    };
+    dataSource = {
+      createQueryRunner: jest.fn().mockReturnValue(queryRunner),
+    };
     service = new CoursesService(
       repo as unknown as Repository<Course>,
       configService as never,
       minioClient as never,
+      notificationsService as unknown as NotificationsService,
+      dataSource as unknown as DataSource,
     );
   });
 
@@ -177,6 +213,143 @@ describe('CoursesService', () => {
     });
   });
 
+  describe('course status transitions', () => {
+    it.each([
+      [CourseStatus.DRAFT, CourseStatus.PENDING],
+      [CourseStatus.PENDING, CourseStatus.PUBLISHED],
+      [CourseStatus.PENDING, CourseStatus.REJECTED],
+      [CourseStatus.REJECTED, CourseStatus.DRAFT],
+    ])('allows %s -> %s', (from, to) => {
+      expect(() =>
+        service.assertCourseStatusTransition(from, to),
+      ).not.toThrow();
+    });
+
+    it.each([
+      [CourseStatus.DRAFT, CourseStatus.PUBLISHED],
+      [CourseStatus.DRAFT, CourseStatus.REJECTED],
+      [CourseStatus.PENDING, CourseStatus.DRAFT],
+      [CourseStatus.PUBLISHED, CourseStatus.PENDING],
+      [CourseStatus.PUBLISHED, CourseStatus.REJECTED],
+    ])('rejects %s -> %s', (from, to) => {
+      expect(() => service.assertCourseStatusTransition(from, to)).toThrow(
+        new BadRequestException(
+          `Illegal course status transition: ${from} -> ${to}`,
+        ),
+      );
+    });
+  });
+
+  describe('requestPublish', () => {
+    it('moves an owned Draft course to Pending and creates a course approval queue notification', async () => {
+      repo.findOne.mockResolvedValue(makeCourse());
+      repo.save.mockImplementation((input: Course) => input);
+      notificationsService.createQueueNotification.mockResolvedValue({
+        _id: 'notification-id',
+      });
+
+      const result = await service.requestPublish(courseId, instructorId);
+
+      expect(repo.findOne).toHaveBeenCalledWith({
+        where: { id: courseId },
+        relations: { instructor: true },
+      });
+      expect(repo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: CourseStatus.PENDING,
+          rejectReason: null,
+        }),
+      );
+      expect(notificationsService.createQueueNotification).toHaveBeenCalledWith(
+        {
+          queue: NotificationQueue.COURSE_APPROVAL,
+          title: 'Yêu cầu duyệt khóa học',
+          message:
+            'Nguyen Van A đã gửi yêu cầu xuất bản khóa học "Lap trinh NestJS".',
+          actionUrl: '/admin/courses/approvals',
+          metadata: { courseId, instructorId },
+          sentAt: expect.any(Date),
+        },
+      );
+      expect(queryRunner.commitTransaction).toHaveBeenCalledTimes(1);
+      expect(result.status).toBe(CourseStatus.PENDING);
+    });
+
+    it('rejects request publish when another Instructor owns the course', async () => {
+      repo.findOne.mockResolvedValue(
+        makeCourse({ instructorId: otherInstructorId }),
+      );
+
+      await expect(
+        service.requestPublish(courseId, instructorId),
+      ).rejects.toEqual(new ForbiddenException('You do not own this course'));
+      expect(
+        notificationsService.createQueueNotification,
+      ).not.toHaveBeenCalled();
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects request publish for non-Draft courses', async () => {
+      repo.findOne.mockResolvedValue(
+        makeCourse({ status: CourseStatus.PENDING }),
+      );
+
+      await expect(
+        service.requestPublish(courseId, instructorId),
+      ).rejects.toEqual(
+        new BadRequestException(
+          'Illegal course status transition: Pending -> Pending',
+        ),
+      );
+      expect(
+        notificationsService.createQueueNotification,
+      ).not.toHaveBeenCalled();
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('rolls back the course update when notification creation fails', async () => {
+      repo.findOne.mockResolvedValue(makeCourse());
+      repo.save.mockImplementation((input: Course) => input);
+      notificationsService.createQueueNotification.mockRejectedValue(
+        new Error('mongo down'),
+      );
+
+      await expect(
+        service.requestPublish(courseId, instructorId),
+      ).rejects.toEqual(
+        new InternalServerErrorException(
+          'Could not queue course approval notification',
+        ),
+      );
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalledTimes(1);
+      expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
+    });
+
+    it('deletes the created notification when PostgreSQL commit fails after Mongo creation', async () => {
+      const notificationId = '64b7f8f8f8f8f8f8f8f8f8f8';
+      repo.findOne.mockResolvedValue(makeCourse());
+      repo.save.mockImplementation((input: Course) => input);
+      notificationsService.createQueueNotification.mockResolvedValue({
+        _id: notificationId,
+      });
+      queryRunner.commitTransaction.mockRejectedValue(
+        new Error('commit failed'),
+      );
+
+      await expect(
+        service.requestPublish(courseId, instructorId),
+      ).rejects.toEqual(
+        new InternalServerErrorException(
+          'Could not request course publication',
+        ),
+      );
+      expect(notificationsService.deleteNotification).toHaveBeenCalledWith(
+        notificationId,
+      );
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('getOwned and update', () => {
     it('returns an owned course detail', async () => {
       repo.findOne.mockResolvedValue(makeCourse());
@@ -205,6 +378,22 @@ describe('CoursesService', () => {
       );
     });
 
+    it('includes rejection reason in owned course detail', async () => {
+      repo.findOne.mockResolvedValue(
+        makeCourse({
+          status: CourseStatus.REJECTED,
+          rejectReason: 'Nội dung khóa học chưa đủ rõ.',
+        }),
+      );
+
+      const result = await service.getOwned(courseId, instructorId);
+
+      expect(result).toMatchObject({
+        status: CourseStatus.REJECTED,
+        rejectReason: 'Nội dung khóa học chưa đủ rõ.',
+      });
+    });
+
     it('updates owned course metadata and trims fields', async () => {
       repo.findOne.mockResolvedValue(makeCourse());
       repo.save.mockImplementation((input: Course) => input);
@@ -223,6 +412,30 @@ describe('CoursesService', () => {
         }),
       );
       expect(result.title).toBe('NestJS Nang cao');
+    });
+
+    it('moves a rejected course back to Draft and clears rejectReason when the owner edits metadata', async () => {
+      repo.findOne.mockResolvedValue(
+        makeCourse({
+          status: CourseStatus.REJECTED,
+          rejectReason: 'Cần bổ sung mô tả.',
+        }),
+      );
+      repo.save.mockImplementation((input: Course) => input);
+
+      const result = await service.update(courseId, instructorId, {
+        description: 'Mô tả đã bổ sung',
+      });
+
+      expect(repo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: 'Mô tả đã bổ sung',
+          status: CourseStatus.DRAFT,
+          rejectReason: null,
+        }),
+      );
+      expect(result.status).toBe(CourseStatus.DRAFT);
+      expect(result.rejectReason).toBeNull();
     });
 
     it('rejects an empty update payload', async () => {

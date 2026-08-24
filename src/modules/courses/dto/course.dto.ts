@@ -108,6 +108,7 @@ export interface CourseResponse {
   category: string;
   thumbnail: string | null;
   status: CourseStatus;
+  rejectReason: string | null;
   instructorId: string;
   createdAt: Date;
   updatedAt: Date;
