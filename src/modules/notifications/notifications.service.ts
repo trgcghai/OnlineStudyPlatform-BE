@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
   CreatedNotificationRef,
+  CreateDirectNotificationInput,
   CreateQueueNotificationInput,
 } from './dto/notification.dto';
 import {
@@ -24,6 +25,22 @@ export class NotificationsService {
     const notification = new this.notificationModel({
       type: NotificationType.QUEUE,
       queue: input.queue,
+      title: input.title,
+      message: input.message,
+      actionUrl: input.actionUrl,
+      metadata: input.metadata ?? {},
+      sentAt: input.sentAt ?? new Date(),
+    });
+
+    return notification.save();
+  }
+
+  async createDirectNotification(
+    input: CreateDirectNotificationInput,
+  ): Promise<CreatedNotificationRef> {
+    const notification = new this.notificationModel({
+      type: NotificationType.DIRECT,
+      userId: input.userId,
       title: input.title,
       message: input.message,
       actionUrl: input.actionUrl,

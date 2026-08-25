@@ -13,10 +13,12 @@ describe('CoursesController', () => {
   let service: {
     create: jest.Mock;
     findMine: jest.Mock;
+    findPendingApprovals: jest.Mock;
     getOwned: jest.Mock;
     update: jest.Mock;
     remove: jest.Mock;
     requestPublish: jest.Mock;
+    reviewCourseStatus: jest.Mock;
     uploadThumbnail: jest.Mock;
   };
 
@@ -27,10 +29,12 @@ describe('CoursesController', () => {
     service = {
       create: jest.fn(),
       findMine: jest.fn(),
+      findPendingApprovals: jest.fn(),
       getOwned: jest.fn(),
       update: jest.fn(),
       remove: jest.fn(),
       requestPublish: jest.fn(),
+      reviewCourseStatus: jest.fn(),
       uploadThumbnail: jest.fn(),
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -86,6 +90,29 @@ describe('CoursesController', () => {
 
     expect(service.requestPublish).toHaveBeenCalledWith(courseId, instructorId);
   });
+
+  it('delegates pending approval list with pagination and filters', async () => {
+    const query = {
+      page: 1,
+      limit: 10,
+      q: 'nestjs',
+      category: 'Backend',
+      sortBy: 'updatedAt' as const,
+      sortOrder: 'DESC' as const,
+    };
+
+    await controller.findPendingApprovals(query);
+
+    expect(service.findPendingApprovals).toHaveBeenCalledWith(query);
+  });
+
+  it('delegates course status review', async () => {
+    const dto = { status: CourseStatus.PUBLISHED };
+
+    await controller.reviewCourseStatus(courseId, dto);
+
+    expect(service.reviewCourseStatus).toHaveBeenCalledWith(courseId, dto);
+  });
 });
 
 describe('CoursesController RBAC', () => {
@@ -96,6 +123,8 @@ describe('CoursesController RBAC', () => {
     | 'update'
     | 'remove'
     | 'requestPublish'
+    | 'findPendingApprovals'
+    | 'reviewCourseStatus'
     | 'uploadThumbnail';
 
   const handlerOf = (methodName: HandlerName): unknown =>
@@ -120,11 +149,32 @@ describe('CoursesController RBAC', () => {
       buildContext(handlerOf('findMine'), user) as never,
     );
 
-  it('protects the controller with Instructor role metadata', () => {
-    expect(Reflect.getMetadata(ROLES_KEY, CoursesController)).toEqual([
+  it('does not set a class-level role because endpoints define roles individually', () => {
+    expect(Reflect.getMetadata(ROLES_KEY, CoursesController)).toBeUndefined();
+  });
+
+  it.each<HandlerName>([
+    'create',
+    'findMine',
+    'getOwned',
+    'update',
+    'remove',
+    'requestPublish',
+    'uploadThumbnail',
+  ])('keeps %s restricted to Instructor', (handlerName) => {
+    expect(Reflect.getMetadata(ROLES_KEY, handlerOf(handlerName))).toEqual([
       UserRole.INSTRUCTOR,
     ]);
   });
+
+  it.each<HandlerName>(['findPendingApprovals', 'reviewCourseStatus'])(
+    'keeps %s restricted to Admin',
+    (handlerName) => {
+      expect(Reflect.getMetadata(ROLES_KEY, handlerOf(handlerName))).toEqual([
+        UserRole.ADMIN,
+      ]);
+    },
+  );
 
   it('allows an Instructor through', () => {
     expect(runGuard({ id: 'instructor-id', role: UserRole.INSTRUCTOR })).toBe(

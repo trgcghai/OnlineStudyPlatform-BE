@@ -68,6 +68,41 @@ describe('NotificationsService', () => {
     expect(result).toBe(saved);
   });
 
+  it('creates a direct notification for a user UUID', async () => {
+    const saved = {
+      _id: new Types.ObjectId('64b7f8f8f8f8f8f8f8f8f8f8'),
+      type: NotificationType.DIRECT,
+      userId: '11111111-1111-4111-8111-111111111111',
+      title: 'Khóa học đã được duyệt',
+      message: 'Khóa học "NestJS" đã được xuất bản.',
+      actionUrl: '/instructor/courses/course-id/edit',
+      metadata: { courseId: 'course-id' },
+      sentAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    save.mockResolvedValue(saved);
+
+    const result = await service.createDirectNotification({
+      userId: '11111111-1111-4111-8111-111111111111',
+      title: 'Khóa học đã được duyệt',
+      message: 'Khóa học "NestJS" đã được xuất bản.',
+      actionUrl: '/instructor/courses/course-id/edit',
+      metadata: { courseId: 'course-id' },
+      sentAt: new Date('2026-01-01T00:00:00Z'),
+    });
+
+    expect(notificationModel).toHaveBeenCalledWith({
+      type: NotificationType.DIRECT,
+      userId: '11111111-1111-4111-8111-111111111111',
+      title: 'Khóa học đã được duyệt',
+      message: 'Khóa học "NestJS" đã được xuất bản.',
+      actionUrl: '/instructor/courses/course-id/edit',
+      metadata: { courseId: 'course-id' },
+      sentAt: new Date('2026-01-01T00:00:00Z'),
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(result).toBe(saved);
+  });
+
   it('deletes a notification by id for cross-store compensation', async () => {
     const notificationId = new Types.ObjectId('64b7f8f8f8f8f8f8f8f8f8f8');
     findByIdAndDelete.mockResolvedValue({ _id: notificationId });

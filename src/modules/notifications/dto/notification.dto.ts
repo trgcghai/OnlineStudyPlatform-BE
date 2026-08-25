@@ -15,6 +15,15 @@ export interface CreateQueueNotificationInput {
   sentAt?: Date;
 }
 
+export interface CreateDirectNotificationInput {
+  userId: string;
+  title: string;
+  message: string;
+  actionUrl?: string;
+  metadata?: Record<string, unknown>;
+  sentAt?: Date;
+}
+
 export interface CreatedNotificationRef {
   _id: Types.ObjectId | string;
 }

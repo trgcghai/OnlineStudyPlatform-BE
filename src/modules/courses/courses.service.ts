@@ -16,10 +16,13 @@ import { MINIO_CLIENT } from '../../common/constants/file.constant';
 import { NotificationQueue } from '../notifications/entities/notification.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
+  CourseApprovalListResult,
+  CourseApprovalResponse,
   CourseListResult,
   CourseResponse,
   CreateCourseDto,
   ListCoursesQueryDto,
+  ReviewCourseStatusDto,
   UpdateCourseDto,
 } from './dto/course.dto';
 import { Course, CourseStatus } from './entities/course.entity';
@@ -89,6 +92,47 @@ export class CoursesService {
 
     return {
       items: courses.map((course) => this.toCourseResponse(course)),
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
+  async findPendingApprovals(
+    query: ListCoursesQueryDto,
+  ): Promise<CourseApprovalListResult> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const sortBy = query.sortBy ?? 'updatedAt';
+    const sortOrder = query.sortOrder ?? 'DESC';
+
+    const qb = this.coursesRepository
+      .createQueryBuilder('course')
+      .leftJoinAndSelect('course.instructor', 'instructor')
+      .where('course.status = :status', { status: CourseStatus.PENDING });
+
+    if (query.q) {
+      qb.andWhere(
+        '(course.title ILIKE :search OR course.description ILIKE :search)',
+        { search: `%${query.q}%` },
+      );
+    }
+
+    if (query.category) {
+      qb.andWhere('course.category = :category', { category: query.category });
+    }
+
+    qb.orderBy(`course.${sortBy}`, sortOrder);
+
+    const total = await qb.getCount();
+    const courses = await qb
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getMany();
+
+    return {
+      items: courses.map((course) => this.toCourseApprovalResponse(course)),
       total,
       page,
       limit,
@@ -213,6 +257,62 @@ export class CoursesService {
     } finally {
       await queryRunner.release();
     }
+  }
+
+  async reviewCourseStatus(
+    id: string,
+    dto: ReviewCourseStatusDto,
+  ): Promise<CourseResponse> {
+    const course = await this.coursesRepository.findOne({
+      where: { id },
+      relations: { instructor: true },
+    });
+
+    if (!course) {
+      throw new NotFoundException('Course not found');
+    }
+
+    this.assertCourseStatusTransition(course.status, dto.status);
+
+    if (dto.status === CourseStatus.REJECTED) {
+      const reason = dto.rejectReason?.trim();
+      if (!reason) {
+        throw new BadRequestException('Rejection reason is required');
+      }
+      course.rejectReason = reason;
+    } else {
+      course.rejectReason = null;
+    }
+
+    course.status = dto.status;
+    const savedCourse = await this.coursesRepository.save(course);
+
+    try {
+      await this.notificationsService.createDirectNotification({
+        userId: course.instructorId,
+        title:
+          dto.status === CourseStatus.PUBLISHED
+            ? 'Khóa học đã được duyệt'
+            : 'Khóa học bị từ chối',
+        message:
+          dto.status === CourseStatus.PUBLISHED
+            ? `Khóa học "${course.title}" đã được xuất bản.`
+            : `Khóa học "${course.title}" bị từ chối: ${course.rejectReason}`,
+        actionUrl: `/instructor/courses/${course.id}/edit`,
+        metadata: {
+          courseId: course.id,
+          instructorId: course.instructorId,
+          status: dto.status,
+        },
+        sentAt: new Date(),
+      });
+    } catch {
+      throw new InternalServerErrorException(
+        'Could not create course review notification',
+      );
+    }
+
+    return this.toCourseResponse(savedCourse);
   }
 
   assertCourseStatusTransition(from: CourseStatus, to: CourseStatus): void {
@@ -376,6 +476,17 @@ export class CoursesService {
       instructorId: course.instructorId,
       createdAt: course.createdAt,
       updatedAt: course.updatedAt,
+    };
+  }
+
+  private toCourseApprovalResponse(course: Course): CourseApprovalResponse {
+    return {
+      ...this.toCourseResponse(course),
+      instructor: {
+        id: course.instructor.id,
+        name: course.instructor.name,
+        email: course.instructor.email,
+      },
     };
   }
 }

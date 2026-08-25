@@ -31,17 +31,18 @@ import { CoursesService } from './courses.service';
 import {
   CreateCourseDto,
   ListCoursesQueryDto,
+  ReviewCourseStatusDto,
   UpdateCourseDto,
 } from './dto/course.dto';
 import { ThumbnailUploadExceptionFilter } from './filters/thumbnail-upload-exception.filter';
 
 @Controller('courses')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.INSTRUCTOR)
 export class CoursesController {
   constructor(private readonly coursesService: CoursesService) {}
 
   @Post()
+  @Roles(UserRole.INSTRUCTOR)
   create(
     @CurrentUser('id') instructorId: string,
     @Body() dto: CreateCourseDto,
@@ -50,6 +51,7 @@ export class CoursesController {
   }
 
   @Get('me')
+  @Roles(UserRole.INSTRUCTOR)
   findMine(
     @CurrentUser('id') instructorId: string,
     @Query() query: ListCoursesQueryDto,
@@ -57,7 +59,14 @@ export class CoursesController {
     return this.coursesService.findMine(instructorId, query);
   }
 
+  @Get('approvals')
+  @Roles(UserRole.ADMIN)
+  findPendingApprovals(@Query() query: ListCoursesQueryDto) {
+    return this.coursesService.findPendingApprovals(query);
+  }
+
   @Get(':id')
+  @Roles(UserRole.INSTRUCTOR)
   getOwned(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser('id') instructorId: string,
@@ -66,6 +75,7 @@ export class CoursesController {
   }
 
   @Post(':id/request-publish')
+  @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.OK)
   requestPublish(
     @Param('id', ParseUUIDPipe) id: string,
@@ -74,7 +84,17 @@ export class CoursesController {
     return this.coursesService.requestPublish(id, instructorId);
   }
 
+  @Patch(':id/status')
+  @Roles(UserRole.ADMIN)
+  reviewCourseStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReviewCourseStatusDto,
+  ) {
+    return this.coursesService.reviewCourseStatus(id, dto);
+  }
+
   @Patch(':id')
+  @Roles(UserRole.INSTRUCTOR)
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser('id') instructorId: string,
@@ -84,6 +104,7 @@ export class CoursesController {
   }
 
   @Delete(':id')
+  @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(
     @Param('id', ParseUUIDPipe) id: string,
@@ -93,6 +114,7 @@ export class CoursesController {
   }
 
   @Post(':id/thumbnail')
+  @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.OK)
   @UseFilters(ThumbnailUploadExceptionFilter)
   @UseInterceptors(
