@@ -64,6 +64,13 @@ export class Notification {
   metadata?: Record<string, unknown>;
 
   @Prop({
+    type: Boolean,
+    default: false,
+    index: true,
+  })
+  seen!: boolean;
+
+  @Prop({
     type: Date,
     required: false,
   })

@@ -1,18 +1,45 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { NotificationsController } from './notifications.controller';
+import { NotificationsService } from './notifications.service';
+import { UserRole } from '../users/entities/user.entity';
 
 describe('NotificationsController', () => {
   let controller: NotificationsController;
+  let service: {
+    findMine: jest.Mock;
+    countUnread: jest.Mock;
+    markAsSeen: jest.Mock;
+  };
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      controllers: [NotificationsController],
-    }).compile();
+  const user = { id: 'user-id', role: UserRole.INSTRUCTOR };
 
-    controller = module.get<NotificationsController>(NotificationsController);
+  beforeEach(() => {
+    service = {
+      findMine: jest.fn(),
+      countUnread: jest.fn(),
+      markAsSeen: jest.fn(),
+    };
+    controller = new NotificationsController(
+      service as unknown as NotificationsService,
+    );
   });
 
-  it('should be defined', () => {
-    expect(controller).toBeDefined();
+  it('delegates my notification list with current user and pagination', async () => {
+    const query = { page: 2, limit: 20 };
+
+    await controller.findMine(user, query);
+
+    expect(service.findMine).toHaveBeenCalledWith(user, query);
+  });
+
+  it('delegates unread count with current user', async () => {
+    await controller.countUnread(user);
+
+    expect(service.countUnread).toHaveBeenCalledWith(user);
+  });
+
+  it('delegates mark as seen with id and current user', async () => {
+    await controller.markAsSeen('notification-id', user);
+
+    expect(service.markAsSeen).toHaveBeenCalledWith('notification-id', user);
   });
 });
