@@ -8,6 +8,7 @@ import {
   Length,
   Max,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { CourseStatus } from '../entities/course.entity';
 
@@ -24,6 +25,13 @@ export const COURSE_SORT_FIELDS = [
 
 export type CourseSortField = (typeof COURSE_SORT_FIELDS)[number];
 export type SortOrder = 'ASC' | 'DESC';
+
+export const COURSE_REVIEW_STATUSES = [
+  CourseStatus.PUBLISHED,
+  CourseStatus.REJECTED,
+] as const;
+
+export type CourseReviewStatus = (typeof COURSE_REVIEW_STATUSES)[number];
 
 export class CreateCourseDto {
   @Transform(trimString)
@@ -60,6 +68,17 @@ export class UpdateCourseDto {
   @IsString()
   @Length(1, 80)
   category?: string;
+}
+
+export class ReviewCourseStatusDto {
+  @IsIn(COURSE_REVIEW_STATUSES)
+  status!: CourseReviewStatus;
+
+  @ValidateIf((dto: ReviewCourseStatusDto) => dto.rejectReason !== undefined)
+  @Transform(trimString)
+  @IsString()
+  @Length(1, 1000)
+  rejectReason?: string;
 }
 
 export class ListCoursesQueryDto {
@@ -112,6 +131,24 @@ export interface CourseResponse {
   instructorId: string;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface CourseInstructorSummary {
+  id: string;
+  name: string;
+  email: string;
+}
+
+export interface CourseApprovalResponse extends CourseResponse {
+  instructor: CourseInstructorSummary;
+}
+
+export interface CourseApprovalListResult {
+  items: CourseApprovalResponse[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 }
 
 export interface CourseListResult {

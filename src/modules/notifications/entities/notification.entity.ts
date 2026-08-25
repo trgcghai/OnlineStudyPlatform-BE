@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument, Types } from 'mongoose';
+import { HydratedDocument } from 'mongoose';
 
 export type NotificationDocument = HydratedDocument<Notification>;
 
@@ -25,11 +25,11 @@ export class Notification {
   type!: NotificationType;
 
   @Prop({
-    type: Types.ObjectId,
+    type: String,
     required: false,
     index: true,
   })
-  userId?: Types.ObjectId;
+  userId?: string;
 
   @Prop({
     type: String,
@@ -62,6 +62,13 @@ export class Notification {
     default: {},
   })
   metadata?: Record<string, unknown>;
+
+  @Prop({
+    type: Boolean,
+    default: false,
+    index: true,
+  })
+  seen!: boolean;
 
   @Prop({
     type: Date,
