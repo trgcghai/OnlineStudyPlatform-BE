@@ -107,6 +107,24 @@ describe('CoursesService', () => {
     );
   });
 
+  const buildPublicQueryBuilder = (options?: {
+    count?: number;
+    courses?: Course[];
+  }) => {
+    const qb = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getCount: jest.fn().mockResolvedValue(options?.count ?? 0),
+      getMany: jest.fn().mockResolvedValue(options?.courses ?? []),
+    };
+    repo.createQueryBuilder.mockReturnValue(qb);
+    return qb;
+  };
+
   describe('create', () => {
     it('creates a Draft course owned by the current Instructor', async () => {
       const dto: CreateCourseDto = {
@@ -296,6 +314,167 @@ describe('CoursesService', () => {
         category: 'Backend',
       });
       expect(qb.orderBy).toHaveBeenCalledWith('course.title', 'ASC');
+    });
+  });
+
+  describe('findPublished', () => {
+    it('lists only published courses with instructor data and pagination', async () => {
+      const publishedCourse = makeCourse({ status: CourseStatus.PUBLISHED });
+      const qb = buildPublicQueryBuilder({ count: 1, courses: [publishedCourse] });
+
+      const result = await service.findPublished({
+        page: 2,
+        limit: 5,
+        sortBy: 'updatedAt',
+        sortOrder: 'DESC',
+      });
+
+      expect(qb.leftJoinAndSelect).toHaveBeenCalledWith(
+        'course.instructor',
+        'instructor',
+      );
+      expect(qb.where).toHaveBeenCalledWith('course.status = :status', {
+        status: CourseStatus.PUBLISHED,
+      });
+      expect(qb.skip).toHaveBeenCalledWith(5);
+      expect(qb.take).toHaveBeenCalledWith(5);
+      expect(result).toEqual({
+        items: [
+          expect.objectContaining({
+            id: courseId,
+            instructor: { id: instructorId, name: 'Nguyen Van A' },
+          }),
+        ],
+        total: 1,
+        page: 2,
+        limit: 5,
+        totalPages: 1,
+      });
+      expect(result.items[0]).not.toHaveProperty('status');
+      expect(result.items[0]).not.toHaveProperty('rejectReason');
+      expect(result.items[0].instructor).not.toHaveProperty('email');
+    });
+
+    it('applies q, category, and public sorting filters', async () => {
+      const qb = buildPublicQueryBuilder();
+
+      await service.findPublished({
+        page: 1,
+        limit: 10,
+        q: 'nestjs',
+        category: 'Backend',
+        sortBy: 'title',
+        sortOrder: 'ASC',
+      });
+
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        '(course.title ILIKE :search OR course.description ILIKE :search)',
+        { search: '%nestjs%' },
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith('course.category = :category', {
+        category: 'Backend',
+      });
+      expect(qb.orderBy).toHaveBeenCalledWith('course.title', 'ASC');
+    });
+
+    it('returns totalPages as 1 when no published courses exist', async () => {
+      buildPublicQueryBuilder({ count: 0, courses: [] });
+
+      const result = await service.findPublished({
+        page: 1,
+        limit: 10,
+        sortBy: 'updatedAt',
+        sortOrder: 'DESC',
+      });
+
+      expect(result).toEqual({
+        items: [],
+        total: 0,
+        page: 1,
+        limit: 10,
+        totalPages: 1,
+      });
+    });
+  });
+
+  describe('findLatestPublished and findPublishedSuggestions', () => {
+    it('returns latest published courses ordered by updatedAt DESC with requested limit', async () => {
+      const qb = buildPublicQueryBuilder({
+        courses: [makeCourse({ status: CourseStatus.PUBLISHED })],
+      });
+
+      const result = await service.findLatestPublished({ limit: 5 });
+
+      expect(qb.leftJoinAndSelect).toHaveBeenCalledWith(
+        'course.instructor',
+        'instructor',
+      );
+      expect(qb.where).toHaveBeenCalledWith('course.status = :status', {
+        status: CourseStatus.PUBLISHED,
+      });
+      expect(qb.orderBy).toHaveBeenCalledWith('course.updatedAt', 'DESC');
+      expect(qb.take).toHaveBeenCalledWith(5);
+      expect(result).toEqual([
+        expect.objectContaining({
+          id: courseId,
+          instructor: { id: instructorId, name: 'Nguyen Van A' },
+        }),
+      ]);
+    });
+
+    it('uses default latest limit when limit is missing', async () => {
+      const qb = buildPublicQueryBuilder({ courses: [] });
+
+      await service.findLatestPublished({} as never);
+
+      expect(qb.take).toHaveBeenCalledWith(10);
+    });
+
+    it('uses latest published behavior for suggestions', async () => {
+      const qb = buildPublicQueryBuilder({
+        courses: [makeCourse({ status: CourseStatus.PUBLISHED })],
+      });
+
+      const result = await service.findPublishedSuggestions({ limit: 3 });
+
+      expect(qb.where).toHaveBeenCalledWith('course.status = :status', {
+        status: CourseStatus.PUBLISHED,
+      });
+      expect(qb.orderBy).toHaveBeenCalledWith('course.updatedAt', 'DESC');
+      expect(qb.take).toHaveBeenCalledWith(3);
+      expect(result).toHaveLength(1);
+    });
+  });
+
+  describe('getPublished', () => {
+    it('returns a published course with public instructor data', async () => {
+      repo.findOne.mockResolvedValue(
+        makeCourse({ status: CourseStatus.PUBLISHED }),
+      );
+
+      const result = await service.getPublished(courseId);
+
+      expect(repo.findOne).toHaveBeenCalledWith({
+        where: { id: courseId, status: CourseStatus.PUBLISHED },
+        relations: { instructor: true },
+      });
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: courseId,
+          instructor: { id: instructorId, name: 'Nguyen Van A' },
+        }),
+      );
+      expect(result).not.toHaveProperty('status');
+      expect(result).not.toHaveProperty('rejectReason');
+      expect(result.instructor).not.toHaveProperty('email');
+    });
+
+    it('throws NotFoundException when the course is missing or unpublished', async () => {
+      repo.findOne.mockResolvedValue(null);
+
+      await expect(service.getPublished(courseId)).rejects.toEqual(
+        new NotFoundException('Course not found'),
+      );
     });
   });
 
