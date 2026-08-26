@@ -222,10 +222,10 @@ describe('NotificationsService', () => {
     };
     findOneAndUpdate.mockResolvedValue(updated);
 
-    const result = await service.markAsSeen(
-      '64b7f8f8f8f8f8f8f8f8f8f8',
-      { id: 'user-id', role: UserRole.INSTRUCTOR },
-    );
+    const result = await service.markAsSeen('64b7f8f8f8f8f8f8f8f8f8f8', {
+      id: 'user-id',
+      role: UserRole.INSTRUCTOR,
+    });
 
     expect(findOneAndUpdate).toHaveBeenCalledWith(
       { _id: '64b7f8f8f8f8f8f8f8f8f8f8', userId: 'user-id' },

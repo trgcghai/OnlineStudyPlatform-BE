@@ -439,7 +439,10 @@ describe('CoursesService', () => {
   describe('reviewCourseStatus', () => {
     it('approves a pending course and notifies the Instructor', async () => {
       repo.findOne.mockResolvedValue(
-        makeCourse({ status: CourseStatus.PENDING, rejectReason: 'Old reason' }),
+        makeCourse({
+          status: CourseStatus.PENDING,
+          rejectReason: 'Old reason',
+        }),
       );
       repo.save.mockImplementation((input: Course) => input);
       notificationsService.createDirectNotification.mockResolvedValue({
@@ -460,22 +463,24 @@ describe('CoursesService', () => {
           rejectReason: null,
         }),
       );
-      expect(notificationsService.createDirectNotification).toHaveBeenCalledWith(
-        {
-          userId: instructorId,
-          title: 'Khóa học đã được duyệt',
-          message: 'Khóa học "Lap trinh NestJS" đã được xuất bản.',
-          actionUrl: `/instructor/courses/${courseId}/edit`,
-          metadata: { courseId, instructorId, status: CourseStatus.PUBLISHED },
-          sentAt: expect.any(Date),
-        },
-      );
+      expect(
+        notificationsService.createDirectNotification,
+      ).toHaveBeenCalledWith({
+        userId: instructorId,
+        title: 'Khóa học đã được duyệt',
+        message: 'Khóa học "Lap trinh NestJS" đã được xuất bản.',
+        actionUrl: `/instructor/courses/${courseId}/edit`,
+        metadata: { courseId, instructorId, status: CourseStatus.PUBLISHED },
+        sentAt: expect.any(Date),
+      });
       expect(result.status).toBe(CourseStatus.PUBLISHED);
       expect(result.rejectReason).toBeNull();
     });
 
     it('rejects a pending course with a trimmed reason and notifies the Instructor', async () => {
-      repo.findOne.mockResolvedValue(makeCourse({ status: CourseStatus.PENDING }));
+      repo.findOne.mockResolvedValue(
+        makeCourse({ status: CourseStatus.PENDING }),
+      );
       repo.save.mockImplementation((input: Course) => input);
       notificationsService.createDirectNotification.mockResolvedValue({
         _id: 'notification-id',
@@ -492,27 +497,30 @@ describe('CoursesService', () => {
           rejectReason: 'Nội dung chưa đủ rõ.',
         }),
       );
-      expect(notificationsService.createDirectNotification).toHaveBeenCalledWith(
-        {
-          userId: instructorId,
-          title: 'Khóa học bị từ chối',
-          message:
-            'Khóa học "Lap trinh NestJS" bị từ chối: Nội dung chưa đủ rõ.',
-          actionUrl: `/instructor/courses/${courseId}/edit`,
-          metadata: { courseId, instructorId, status: CourseStatus.REJECTED },
-          sentAt: expect.any(Date),
-        },
-      );
+      expect(
+        notificationsService.createDirectNotification,
+      ).toHaveBeenCalledWith({
+        userId: instructorId,
+        title: 'Khóa học bị từ chối',
+        message: 'Khóa học "Lap trinh NestJS" bị từ chối: Nội dung chưa đủ rõ.',
+        actionUrl: `/instructor/courses/${courseId}/edit`,
+        metadata: { courseId, instructorId, status: CourseStatus.REJECTED },
+        sentAt: expect.any(Date),
+      });
       expect(result.status).toBe(CourseStatus.REJECTED);
       expect(result.rejectReason).toBe('Nội dung chưa đủ rõ.');
     });
 
     it('rejects missing rejection reason before saving', async () => {
-      repo.findOne.mockResolvedValue(makeCourse({ status: CourseStatus.PENDING }));
+      repo.findOne.mockResolvedValue(
+        makeCourse({ status: CourseStatus.PENDING }),
+      );
 
       await expect(
         service.reviewCourseStatus(courseId, { status: CourseStatus.REJECTED }),
-      ).rejects.toEqual(new BadRequestException('Rejection reason is required'));
+      ).rejects.toEqual(
+        new BadRequestException('Rejection reason is required'),
+      );
       expect(repo.save).not.toHaveBeenCalled();
       expect(
         notificationsService.createDirectNotification,
@@ -520,10 +528,14 @@ describe('CoursesService', () => {
     });
 
     it('rejects non-pending approval through the status transition rule', async () => {
-      repo.findOne.mockResolvedValue(makeCourse({ status: CourseStatus.DRAFT }));
+      repo.findOne.mockResolvedValue(
+        makeCourse({ status: CourseStatus.DRAFT }),
+      );
 
       await expect(
-        service.reviewCourseStatus(courseId, { status: CourseStatus.PUBLISHED }),
+        service.reviewCourseStatus(courseId, {
+          status: CourseStatus.PUBLISHED,
+        }),
       ).rejects.toEqual(
         new BadRequestException(
           'Illegal course status transition: Draft -> Published',
@@ -536,19 +548,25 @@ describe('CoursesService', () => {
       repo.findOne.mockResolvedValue(null);
 
       await expect(
-        service.reviewCourseStatus(courseId, { status: CourseStatus.PUBLISHED }),
+        service.reviewCourseStatus(courseId, {
+          status: CourseStatus.PUBLISHED,
+        }),
       ).rejects.toEqual(new NotFoundException('Course not found'));
     });
 
     it('fails the review when Instructor notification creation fails', async () => {
-      repo.findOne.mockResolvedValue(makeCourse({ status: CourseStatus.PENDING }));
+      repo.findOne.mockResolvedValue(
+        makeCourse({ status: CourseStatus.PENDING }),
+      );
       repo.save.mockImplementation((input: Course) => input);
       notificationsService.createDirectNotification.mockRejectedValue(
         new Error('mongo down'),
       );
 
       await expect(
-        service.reviewCourseStatus(courseId, { status: CourseStatus.PUBLISHED }),
+        service.reviewCourseStatus(courseId, {
+          status: CourseStatus.PUBLISHED,
+        }),
       ).rejects.toEqual(
         new InternalServerErrorException(
           'Could not create course review notification',
