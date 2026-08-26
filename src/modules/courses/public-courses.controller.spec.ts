@@ -84,7 +84,9 @@ describe('PublicCoursesController auth metadata', () => {
     )?.value;
 
   it('has no controller-level roles or guards', () => {
-    expect(Reflect.getMetadata(ROLES_KEY, PublicCoursesController)).toBeUndefined();
+    expect(
+      Reflect.getMetadata(ROLES_KEY, PublicCoursesController),
+    ).toBeUndefined();
     expect(
       Reflect.getMetadata(GUARDS_METADATA, PublicCoursesController),
     ).toBeUndefined();
@@ -96,7 +98,9 @@ describe('PublicCoursesController auth metadata', () => {
     'findLatestPublished',
     'getPublished',
   ])('keeps %s public', (handlerName) => {
-    expect(Reflect.getMetadata(ROLES_KEY, handlerOf(handlerName))).toBeUndefined();
+    expect(
+      Reflect.getMetadata(ROLES_KEY, handlerOf(handlerName)),
+    ).toBeUndefined();
     expect(
       Reflect.getMetadata(GUARDS_METADATA, handlerOf(handlerName)),
     ).toBeUndefined();
@@ -104,6 +108,8 @@ describe('PublicCoursesController auth metadata', () => {
 
   it('does not need RolesGuard to pass anonymous users', () => {
     const reflector = new Reflector();
-    expect(reflector.get(ROLES_KEY, handlerOf('findPublished'))).toBeUndefined();
+    expect(
+      reflector.get(ROLES_KEY, handlerOf('findPublished')),
+    ).toBeUndefined();
   });
 });

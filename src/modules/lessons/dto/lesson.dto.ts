@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   IsArray,
   IsInt,
   IsOptional,
@@ -53,6 +54,7 @@ export class UpdateLessonDto {
 
 export class ReorderLessonsDto {
   @IsArray()
+  @ArrayMinSize(1)
   @IsString({ each: true })
   orderedIds!: string[];
 }
