@@ -23,7 +23,16 @@ export const COURSE_SORT_FIELDS = [
   'status',
 ] as const;
 
+export const PUBLIC_COURSE_SORT_FIELDS = [
+  'createdAt',
+  'updatedAt',
+  'title',
+  'category',
+] as const;
+
 export type CourseSortField = (typeof COURSE_SORT_FIELDS)[number];
+export type PublicCourseSortField =
+  (typeof PUBLIC_COURSE_SORT_FIELDS)[number];
 export type SortOrder = 'ASC' | 'DESC';
 
 export const COURSE_REVIEW_STATUSES = [
@@ -120,6 +129,50 @@ export class ListCoursesQueryDto {
   sortOrder: SortOrder = 'DESC';
 }
 
+export class ListPublishedCoursesQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page: number = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit: number = 10;
+
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  @Length(1, 100)
+  q?: string;
+
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  @Length(1, 80)
+  category?: string;
+
+  @IsOptional()
+  @IsIn(PUBLIC_COURSE_SORT_FIELDS)
+  sortBy: PublicCourseSortField = 'updatedAt';
+
+  @IsOptional()
+  @IsIn(['ASC', 'DESC'])
+  sortOrder: SortOrder = 'DESC';
+}
+
+export class PublishedCourseLimitQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  limit: number = 10;
+}
+
 export interface CourseResponse {
   id: string;
   title: string;
@@ -137,6 +190,31 @@ export interface CourseInstructorSummary {
   id: string;
   name: string;
   email: string;
+}
+
+export interface PublicCourseInstructorSummary {
+  id: string;
+  name: string;
+}
+
+export interface PublicCourseResponse {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  thumbnail: string | null;
+  instructorId: string;
+  instructor?: PublicCourseInstructorSummary;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface PublicCourseListResult {
+  items: PublicCourseResponse[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 }
 
 export interface CourseApprovalResponse extends CourseResponse {

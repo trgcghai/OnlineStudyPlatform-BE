@@ -21,7 +21,11 @@ import {
   CourseListResult,
   CourseResponse,
   CreateCourseDto,
+  ListPublishedCoursesQueryDto,
   ListCoursesQueryDto,
+  PublishedCourseLimitQueryDto,
+  PublicCourseListResult,
+  PublicCourseResponse,
   ReviewCourseStatusDto,
   UpdateCourseDto,
 } from './dto/course.dto';
@@ -138,6 +142,82 @@ export class CoursesService {
       limit,
       totalPages: Math.max(1, Math.ceil(total / limit)),
     };
+  }
+
+  async findPublished(
+    query: ListPublishedCoursesQueryDto,
+  ): Promise<PublicCourseListResult> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const sortBy = query.sortBy ?? 'updatedAt';
+    const sortOrder = query.sortOrder ?? 'DESC';
+
+    const qb = this.coursesRepository
+      .createQueryBuilder('course')
+      .leftJoinAndSelect('course.instructor', 'instructor')
+      .where('course.status = :status', { status: CourseStatus.PUBLISHED });
+
+    if (query.q) {
+      qb.andWhere(
+        '(course.title ILIKE :search OR course.description ILIKE :search)',
+        { search: `%${query.q}%` },
+      );
+    }
+
+    if (query.category) {
+      qb.andWhere('course.category = :category', { category: query.category });
+    }
+
+    qb.orderBy(`course.${sortBy}`, sortOrder);
+
+    const total = await qb.getCount();
+    const courses = await qb
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getMany();
+
+    return {
+      items: courses.map((course) => this.toPublicCourseResponse(course)),
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
+  async findPublishedSuggestions(
+    query: PublishedCourseLimitQueryDto,
+  ): Promise<PublicCourseResponse[]> {
+    return this.findLatestPublished(query);
+  }
+
+  async findLatestPublished(
+    query: PublishedCourseLimitQueryDto,
+  ): Promise<PublicCourseResponse[]> {
+    const limit = query.limit ?? 10;
+
+    const courses = await this.coursesRepository
+      .createQueryBuilder('course')
+      .leftJoinAndSelect('course.instructor', 'instructor')
+      .where('course.status = :status', { status: CourseStatus.PUBLISHED })
+      .orderBy('course.updatedAt', 'DESC')
+      .take(limit)
+      .getMany();
+
+    return courses.map((course) => this.toPublicCourseResponse(course));
+  }
+
+  async getPublished(id: string): Promise<PublicCourseResponse> {
+    const course = await this.coursesRepository.findOne({
+      where: { id, status: CourseStatus.PUBLISHED },
+      relations: { instructor: true },
+    });
+
+    if (!course) {
+      throw new NotFoundException('Course not found');
+    }
+
+    return this.toPublicCourseResponse(course);
   }
 
   async getOwned(id: string, instructorId: string): Promise<CourseResponse> {
@@ -474,6 +554,25 @@ export class CoursesService {
       status: course.status,
       rejectReason: course.rejectReason,
       instructorId: course.instructorId,
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+    };
+  }
+
+  private toPublicCourseResponse(course: Course): PublicCourseResponse {
+    return {
+      id: course.id,
+      title: course.title,
+      description: course.description,
+      category: course.category,
+      thumbnail: course.thumbnail,
+      instructorId: course.instructorId,
+      instructor: course.instructor
+        ? {
+            id: course.instructor.id,
+            name: course.instructor.name,
+          }
+        : undefined,
       createdAt: course.createdAt,
       updatedAt: course.updatedAt,
     };
