@@ -12,6 +12,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { lessonFileFilter } from './lessons.controller';
+import { ReorderLessonsDto } from './dto/lesson.dto';
+import { validate } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
 
 const MINIO_CLIENT = 'MINIO_CLIENT';
 
@@ -66,6 +69,14 @@ describe('LessonsService', () => {
   let lessonsRepo: ReturnType<typeof createMockRepository<Lesson>>;
   let coursesRepo: ReturnType<typeof createMockRepository<Course>>;
   let minioClient: Record<string, jest.Mock>;
+  let mockQueryRunner: {
+    manager: { find: jest.Mock; update: jest.Mock };
+    connect: jest.Mock;
+    startTransaction: jest.Mock;
+    commitTransaction: jest.Mock;
+    rollbackTransaction: jest.Mock;
+    release: jest.Mock;
+  };
 
   const courseId = 'course-1';
   const instructorId = 'instructor-1';
@@ -78,6 +89,18 @@ describe('LessonsService', () => {
     minioClient = {
       putObject: jest.fn().mockResolvedValue(undefined),
       removeObject: jest.fn().mockResolvedValue(undefined),
+    };
+
+    mockQueryRunner = {
+      manager: {
+        find: jest.fn().mockResolvedValue([]),
+        update: jest.fn().mockResolvedValue(undefined),
+      },
+      connect: jest.fn().mockResolvedValue(undefined),
+      startTransaction: jest.fn().mockResolvedValue(undefined),
+      commitTransaction: jest.fn().mockResolvedValue(undefined),
+      rollbackTransaction: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -107,7 +130,9 @@ describe('LessonsService', () => {
         },
         {
           provide: DataSource,
-          useValue: {},
+          useValue: {
+            createQueryRunner: jest.fn().mockReturnValue(mockQueryRunner),
+          },
         },
       ],
     }).compile();
@@ -330,6 +355,7 @@ describe('LessonsService', () => {
         materialUrl: `${endpoint}/${bucket}/courses/${courseId}/lessons/lesson-1/materials/test.pdf`,
       });
       lessonsRepo.findOne.mockResolvedValue(lesson);
+      mockQueryRunner.manager.find.mockResolvedValue([]);
 
       await service.remove('lesson-1', instructorId);
 
@@ -341,15 +367,89 @@ describe('LessonsService', () => {
     it('should reindex positions after deletion', async () => {
       const lesson = makeLesson({ id: 'lesson-1', courseId, position: 1 });
       lessonsRepo.findOne.mockResolvedValue(lesson);
-      lessonsRepo.find.mockResolvedValue([
+
+      const remaining = [
         makeLesson({ id: 'lesson-1', courseId, position: 0 }),
         makeLesson({ id: 'lesson-3', courseId, position: 1 }),
+      ];
+      mockQueryRunner.manager.find.mockResolvedValue(remaining);
+
+      await service.remove('lesson-1', instructorId);
+
+      expect(mockQueryRunner.manager.update).toHaveBeenCalledTimes(2);
+      expect(mockQueryRunner.commitTransaction).toHaveBeenCalled();
+    });
+
+    it('should rollback transaction when reindex fails', async () => {
+      const lesson = makeLesson({ id: 'lesson-1', courseId });
+      lessonsRepo.findOne.mockResolvedValue(lesson);
+      mockQueryRunner.manager.find.mockResolvedValue([
+        makeLesson({ id: 'lesson-1', courseId, position: 0 }),
+        makeLesson({ id: 'lesson-2', courseId, position: 1 }),
       ]);
+      mockQueryRunner.manager.update.mockRejectedValue(
+        new Error('DB write failed'),
+      );
+
+      await expect(
+        service.remove('lesson-1', instructorId),
+      ).rejects.toThrow('DB write failed');
+
+      expect(mockQueryRunner.rollbackTransaction).toHaveBeenCalled();
+      expect(mockQueryRunner.release).toHaveBeenCalled();
+    });
+
+    it('should delete lesson without files', async () => {
+      const lesson = makeLesson({
+        id: 'lesson-1',
+        courseId,
+        videoUrl: null,
+        materialUrl: null,
+      });
+      lessonsRepo.findOne.mockResolvedValue(lesson);
+      mockQueryRunner.manager.find.mockResolvedValue([]);
 
       await service.remove('lesson-1', instructorId);
 
       // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(lessonsRepo.update).toHaveBeenCalled();
+      expect(lessonsRepo.remove).toHaveBeenCalledWith(lesson);
+      expect(minioClient.removeObject).not.toHaveBeenCalled();
+    });
+
+    it('should reindex to sequential positions with no gaps', async () => {
+      const lesson = makeLesson({ id: 'lesson-2', courseId, position: 1 });
+      lessonsRepo.findOne.mockResolvedValue(lesson);
+
+      const remaining = [
+        makeLesson({ id: 'lesson-1', courseId, position: 0 }),
+        makeLesson({ id: 'lesson-3', courseId, position: 2 }),
+      ];
+      mockQueryRunner.manager.find.mockResolvedValue(remaining);
+
+      await service.remove('lesson-2', instructorId);
+
+      expect(mockQueryRunner.manager.update).toHaveBeenCalledWith(
+        Lesson,
+        'lesson-1',
+        { position: 0 },
+      );
+      expect(mockQueryRunner.manager.update).toHaveBeenCalledWith(
+        Lesson,
+        'lesson-3',
+        { position: 1 },
+      );
+    });
+
+    it('should handle deleting the last lesson in a course', async () => {
+      const lesson = makeLesson({ id: 'lesson-1', courseId });
+      lessonsRepo.findOne.mockResolvedValue(lesson);
+      mockQueryRunner.manager.find.mockResolvedValue([]);
+
+      await service.remove('lesson-1', instructorId);
+
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(lessonsRepo.remove).toHaveBeenCalledWith(lesson);
+      expect(mockQueryRunner.manager.update).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException for non-existent lesson', async () => {
@@ -379,6 +479,29 @@ describe('LessonsService', () => {
       expect(result).toHaveLength(3);
     });
 
+    it('should assign sequential positions from the new order', async () => {
+      const lessons = [
+        makeLesson({ id: 'l1', courseId, position: 0 }),
+        makeLesson({ id: 'l2', courseId, position: 1 }),
+      ];
+      lessonsRepo.find.mockResolvedValue(lessons);
+
+      await service.reorder(courseId, instructorId, {
+        orderedIds: ['l2', 'l1'],
+      });
+
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(lessonsRepo.update).toHaveBeenCalledWith(
+        { id: 'l2', courseId },
+        { position: 0 },
+      );
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(lessonsRepo.update).toHaveBeenCalledWith(
+        { id: 'l1', courseId },
+        { position: 1 },
+      );
+    });
+
     it('should throw if IDs count does not match', async () => {
       const lessons = [
         makeLesson({ id: 'l1', courseId }),
@@ -403,6 +526,21 @@ describe('LessonsService', () => {
       await expect(
         service.reorder(courseId, instructorId, {
           orderedIds: ['l1', 'foreign-id'],
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw if a lesson is missing from the ordered list', async () => {
+      const lessons = [
+        makeLesson({ id: 'l1', courseId }),
+        makeLesson({ id: 'l2', courseId }),
+        makeLesson({ id: 'l3', courseId }),
+      ];
+      lessonsRepo.find.mockResolvedValue(lessons);
+
+      await expect(
+        service.reorder(courseId, instructorId, {
+          orderedIds: ['l1', 'l2'],
         }),
       ).rejects.toThrow(BadRequestException);
     });
@@ -721,6 +859,33 @@ describe('LessonsService', () => {
       await expect(
         service.update('lesson-1', instructorId, {}, newVideoFile),
       ).rejects.toThrow();
+    });
+  });
+
+  describe('ReorderLessonsDto validation', () => {
+    it('should accept a valid orderedIds array', async () => {
+      const dto = plainToInstance(ReorderLessonsDto, {
+        orderedIds: ['l1', 'l2'],
+      });
+      const errors = await validate(dto);
+      expect(errors.length).toBe(0);
+    });
+
+    it('should reject an empty orderedIds array', async () => {
+      const dto = plainToInstance(ReorderLessonsDto, {
+        orderedIds: [],
+      });
+      const errors = await validate(dto);
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0].constraints).toHaveProperty('arrayMinSize');
+    });
+
+    it('should reject non-string array elements', async () => {
+      const dto = plainToInstance(ReorderLessonsDto, {
+        orderedIds: [123, 456],
+      });
+      const errors = await validate(dto);
+      expect(errors.length).toBeGreaterThan(0);
     });
   });
 });

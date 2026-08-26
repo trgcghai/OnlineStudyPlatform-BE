@@ -326,16 +326,29 @@ export class LessonsService {
   }
 
   private async reindexPositions(courseId: string): Promise<void> {
-    const lessons = await this.lessonsRepository.find({
-      where: { courseId },
-      order: { position: 'ASC', createdAt: 'ASC' },
-    });
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    const updates = lessons.map((lesson, index) =>
-      this.lessonsRepository.update({ id: lesson.id }, { position: index }),
-    );
+    try {
+      const lessons = await queryRunner.manager.find(Lesson, {
+        where: { courseId },
+        order: { position: 'ASC', createdAt: 'ASC' },
+      });
 
-    await Promise.all(updates);
+      for (let index = 0; index < lessons.length; index++) {
+        await queryRunner.manager.update(Lesson, lessons[index].id, {
+          position: index,
+        });
+      }
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   private async uploadFile(

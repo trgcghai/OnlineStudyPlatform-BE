@@ -320,7 +320,10 @@ describe('CoursesService', () => {
   describe('findPublished', () => {
     it('lists only published courses with instructor data and pagination', async () => {
       const publishedCourse = makeCourse({ status: CourseStatus.PUBLISHED });
-      const qb = buildPublicQueryBuilder({ count: 1, courses: [publishedCourse] });
+      const qb = buildPublicQueryBuilder({
+        count: 1,
+        courses: [publishedCourse],
+      });
 
       const result = await service.findPublished({
         page: 2,

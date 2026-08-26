@@ -31,8 +31,7 @@ export const PUBLIC_COURSE_SORT_FIELDS = [
 ] as const;
 
 export type CourseSortField = (typeof COURSE_SORT_FIELDS)[number];
-export type PublicCourseSortField =
-  (typeof PUBLIC_COURSE_SORT_FIELDS)[number];
+export type PublicCourseSortField = (typeof PUBLIC_COURSE_SORT_FIELDS)[number];
 export type SortOrder = 'ASC' | 'DESC';
 
 export const COURSE_REVIEW_STATUSES = [
