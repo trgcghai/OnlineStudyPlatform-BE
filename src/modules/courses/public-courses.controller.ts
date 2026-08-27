@@ -1,4 +1,14 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
+import { AuthenticatedUser } from '../auth/dto/auth.dto';
 import { CoursesService } from './courses.service';
 import {
   ListPublishedCoursesQueryDto,
@@ -25,7 +35,11 @@ export class PublicCoursesController {
   }
 
   @Get(':id')
-  getPublished(@Param('id', ParseUUIDPipe) id: string) {
-    return this.coursesService.getPublished(id);
+  @UseGuards(OptionalJwtAuthGuard)
+  getPublished(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user?: AuthenticatedUser | null,
+  ) {
+    return this.coursesService.getPublished(id, user);
   }
 }

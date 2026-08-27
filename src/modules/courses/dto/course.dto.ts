@@ -206,6 +206,7 @@ export interface PublicCourseResponse {
   instructor?: PublicCourseInstructorSummary;
   createdAt: Date;
   updatedAt: Date;
+  isEnrolled?: boolean;
 }
 
 export interface PublicCourseListResult {
