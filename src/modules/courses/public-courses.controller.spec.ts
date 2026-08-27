@@ -2,6 +2,7 @@ import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Reflector } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ROLES_KEY } from '../../common/constants/auth.constant';
+import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
 import { CoursesService } from './courses.service';
 import { PublicCoursesController } from './public-courses.controller';
 
@@ -63,10 +64,17 @@ describe('PublicCoursesController', () => {
     expect(service.findLatestPublished).toHaveBeenCalledWith(query);
   });
 
-  it('delegates public course detail by id', async () => {
-    await controller.getPublished(courseId);
+  it('delegates public course detail by id with optional current user', async () => {
+    const user = {
+      id: '44444444-4444-4444-8444-444444444444',
+      email: 'learner@example.com',
+      role: 'Learner',
+      status: 'Active',
+    } as never;
 
-    expect(service.getPublished).toHaveBeenCalledWith(courseId);
+    await controller.getPublished(courseId, user);
+
+    expect(service.getPublished).toHaveBeenCalledWith(courseId, user);
   });
 });
 
@@ -96,14 +104,22 @@ describe('PublicCoursesController auth metadata', () => {
     'findPublished',
     'findPublishedSuggestions',
     'findLatestPublished',
-    'getPublished',
-  ])('keeps %s public', (handlerName) => {
+  ])('keeps %s public without guards', (handlerName) => {
     expect(
       Reflect.getMetadata(ROLES_KEY, handlerOf(handlerName)),
     ).toBeUndefined();
     expect(
       Reflect.getMetadata(GUARDS_METADATA, handlerOf(handlerName)),
     ).toBeUndefined();
+  });
+
+  it('uses optional JWT auth only on public course detail', () => {
+    expect(
+      Reflect.getMetadata(ROLES_KEY, handlerOf('getPublished')),
+    ).toBeUndefined();
+    expect(
+      Reflect.getMetadata(GUARDS_METADATA, handlerOf('getPublished')),
+    ).toEqual([OptionalJwtAuthGuard]);
   });
 
   it('does not need RolesGuard to pass anonymous users', () => {

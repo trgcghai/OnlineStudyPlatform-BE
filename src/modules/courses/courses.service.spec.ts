@@ -22,6 +22,7 @@ describe('CoursesService', () => {
   };
   let configService: { getOrThrow: jest.Mock };
   let minioClient: { putObject: jest.Mock; removeObject: jest.Mock };
+  let enrollmentRepo: { exists: jest.Mock };
   let notificationsService: {
     createQueueNotification: jest.Mock;
     createDirectNotification: jest.Mock;
@@ -82,6 +83,7 @@ describe('CoursesService', () => {
       putObject: jest.fn().mockResolvedValue({ etag: 'etag' }),
       removeObject: jest.fn().mockResolvedValue(undefined),
     };
+    enrollmentRepo = { exists: jest.fn() };
     notificationsService = {
       createQueueNotification: jest.fn(),
       createDirectNotification: jest.fn(),
@@ -104,6 +106,7 @@ describe('CoursesService', () => {
       minioClient as never,
       notificationsService as unknown as NotificationsService,
       dataSource as unknown as DataSource,
+      enrollmentRepo as never,
     );
   });
 
@@ -470,6 +473,53 @@ describe('CoursesService', () => {
       expect(result).not.toHaveProperty('status');
       expect(result).not.toHaveProperty('rejectReason');
       expect(result.instructor).not.toHaveProperty('email');
+    });
+
+    it('omits isEnrolled for anonymous public course detail', async () => {
+      repo.findOne.mockResolvedValue(
+        makeCourse({ status: CourseStatus.PUBLISHED }),
+      );
+
+      const result = await service.getPublished(courseId, null);
+
+      expect(result).not.toHaveProperty('isEnrolled');
+      expect(enrollmentRepo.exists).not.toHaveBeenCalled();
+    });
+
+    it('includes isEnrolled for authenticated Learners', async () => {
+      const learnerId = '44444444-4444-4444-8444-444444444444';
+      repo.findOne.mockResolvedValue(
+        makeCourse({ status: CourseStatus.PUBLISHED }),
+      );
+      enrollmentRepo.exists.mockResolvedValue(true);
+
+      const result = await service.getPublished(courseId, {
+        id: learnerId,
+        email: 'learner@example.com',
+        role: 'Learner' as never,
+        status: 'Active' as never,
+      });
+
+      expect(enrollmentRepo.exists).toHaveBeenCalledWith({
+        where: { learnerId, courseId },
+      });
+      expect(result.isEnrolled).toBe(true);
+    });
+
+    it('returns isEnrolled false for authenticated non-Learners', async () => {
+      repo.findOne.mockResolvedValue(
+        makeCourse({ status: CourseStatus.PUBLISHED }),
+      );
+
+      const result = await service.getPublished(courseId, {
+        id: instructorId,
+        email: 'instructor@example.com',
+        role: 'Instructor' as never,
+        status: 'Active' as never,
+      });
+
+      expect(enrollmentRepo.exists).not.toHaveBeenCalled();
+      expect(result.isEnrolled).toBe(false);
     });
 
     it('throws NotFoundException when the course is missing or unpublished', async () => {

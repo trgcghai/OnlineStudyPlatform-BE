@@ -10,6 +10,7 @@ import { UsersModule } from './modules/users/users.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CoursesModule } from './modules/courses/courses.module';
 import { LessonsModule } from './modules/lessons/lessons.module';
+import { EnrollmentsModule } from './modules/enrollments/enrollments.module';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -44,6 +45,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     AuthModule,
     CoursesModule,
     LessonsModule,
+    EnrollmentsModule,
     NotificationsModule,
   ],
   controllers: [AppController],
