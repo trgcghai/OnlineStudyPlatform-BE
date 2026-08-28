@@ -32,7 +32,11 @@ import {
   ReviewCourseStatusDto,
   UpdateCourseDto,
 } from './dto/course.dto';
-import { Course, CourseStatus } from './entities/course.entity';
+import {
+  Course,
+  CourseLearningOrder,
+  CourseStatus,
+} from './entities/course.entity';
 
 @Injectable()
 export class CoursesService {
@@ -56,6 +60,7 @@ export class CoursesService {
       description: dto.description.trim(),
       category: dto.category.trim(),
       status: CourseStatus.DRAFT,
+      learningOrder: dto.learningOrder ?? CourseLearningOrder.FREE,
       instructorId,
     });
 
@@ -255,7 +260,8 @@ export class CoursesService {
     const hasChanges = Boolean(
       dto.title !== undefined ||
       dto.description !== undefined ||
-      dto.category !== undefined,
+      dto.category !== undefined ||
+      dto.learningOrder !== undefined,
     );
 
     if (!hasChanges) {
@@ -274,6 +280,10 @@ export class CoursesService {
 
     if (dto.category !== undefined) {
       course.category = dto.category.trim();
+    }
+
+    if (dto.learningOrder !== undefined) {
+      course.learningOrder = dto.learningOrder;
     }
 
     if (course.status === CourseStatus.REJECTED) {
@@ -575,6 +585,7 @@ export class CoursesService {
       thumbnail: course.thumbnail,
       status: course.status,
       rejectReason: course.rejectReason,
+      learningOrder: course.learningOrder,
       instructorId: course.instructorId,
       createdAt: course.createdAt,
       updatedAt: course.updatedAt,
@@ -588,6 +599,7 @@ export class CoursesService {
       description: course.description,
       category: course.category,
       thumbnail: course.thumbnail,
+      learningOrder: course.learningOrder,
       instructorId: course.instructorId,
       instructor: course.instructor
         ? {

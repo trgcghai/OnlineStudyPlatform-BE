@@ -391,9 +391,9 @@ describe('LessonsService', () => {
         new Error('DB write failed'),
       );
 
-      await expect(
-        service.remove('lesson-1', instructorId),
-      ).rejects.toThrow('DB write failed');
+      await expect(service.remove('lesson-1', instructorId)).rejects.toThrow(
+        'DB write failed',
+      );
 
       expect(mockQueryRunner.rollbackTransaction).toHaveBeenCalled();
       expect(mockQueryRunner.release).toHaveBeenCalled();

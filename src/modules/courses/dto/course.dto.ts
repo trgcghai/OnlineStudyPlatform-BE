@@ -10,7 +10,7 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
-import { CourseStatus } from '../entities/course.entity';
+import { CourseLearningOrder, CourseStatus } from '../entities/course.entity';
 
 const trimString = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
@@ -41,6 +41,13 @@ export const COURSE_REVIEW_STATUSES = [
 
 export type CourseReviewStatus = (typeof COURSE_REVIEW_STATUSES)[number];
 
+export const LEARNING_ORDERS = [
+  CourseLearningOrder.SEQUENTIAL,
+  CourseLearningOrder.FREE,
+] as const;
+
+export type LearningOrder = (typeof LEARNING_ORDERS)[number];
+
 export class CreateCourseDto {
   @Transform(trimString)
   @IsString()
@@ -56,6 +63,10 @@ export class CreateCourseDto {
   @IsString()
   @Length(1, 80)
   category!: string;
+
+  @IsOptional()
+  @IsEnum(CourseLearningOrder)
+  learningOrder?: CourseLearningOrder;
 }
 
 export class UpdateCourseDto {
@@ -76,6 +87,10 @@ export class UpdateCourseDto {
   @IsString()
   @Length(1, 80)
   category?: string;
+
+  @IsOptional()
+  @IsEnum(CourseLearningOrder)
+  learningOrder?: CourseLearningOrder;
 }
 
 export class ReviewCourseStatusDto {
@@ -180,6 +195,7 @@ export interface CourseResponse {
   thumbnail: string | null;
   status: CourseStatus;
   rejectReason: string | null;
+  learningOrder: LearningOrder;
   instructorId: string;
   createdAt: Date;
   updatedAt: Date;
@@ -202,6 +218,7 @@ export interface PublicCourseResponse {
   description: string;
   category: string;
   thumbnail: string | null;
+  learningOrder: LearningOrder;
   instructorId: string;
   instructor?: PublicCourseInstructorSummary;
   createdAt: Date;
