@@ -5,11 +5,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 import { NotificationQueue } from '../notifications/entities/notification.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CoursesService } from './courses.service';
-import { CreateCourseDto } from './dto/course.dto';
-import { Course, CourseStatus } from './entities/course.entity';
+import { CreateCourseDto, UpdateCourseDto } from './dto/course.dto';
+import { Course, CourseStatus, LearningOrder } from './entities/course.entity';
 
 describe('CoursesService', () => {
   let service: CoursesService;
@@ -48,6 +50,7 @@ describe('CoursesService', () => {
     category: 'Backend',
     thumbnail: null,
     status: CourseStatus.DRAFT,
+    learningOrder: LearningOrder.SEQUENTIAL,
     rejectReason: null,
     instructorId,
     instructor: {
@@ -140,6 +143,7 @@ describe('CoursesService', () => {
         description: 'Khoa hoc nhap mon NestJS',
         category: 'Backend',
         status: CourseStatus.DRAFT,
+        learningOrder: LearningOrder.SEQUENTIAL,
         instructorId,
       });
       expect(repo.save).toHaveBeenCalledTimes(1);
@@ -148,6 +152,21 @@ describe('CoursesService', () => {
         status: CourseStatus.DRAFT,
         instructorId,
       });
+    });
+
+    it('respects an explicit learning order when provided', async () => {
+      const dto: CreateCourseDto = {
+        title: 'Khoa hoc tu do',
+        description: 'Hoc tu do theo nhip cua ban',
+        category: 'Other',
+        learningOrder: LearningOrder.FREE,
+      };
+
+      await service.create(instructorId, dto);
+
+      expect(repo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ learningOrder: LearningOrder.FREE }),
+      );
     });
   });
 
@@ -821,6 +840,20 @@ describe('CoursesService', () => {
       expect(result.title).toBe('NestJS Nang cao');
     });
 
+    it('updates the learning order of an owned course', async () => {
+      repo.findOne.mockResolvedValue(makeCourse());
+      repo.save.mockImplementation((input: Course) => input);
+
+      const result = await service.update(courseId, instructorId, {
+        learningOrder: LearningOrder.FREE,
+      });
+
+      expect(repo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ learningOrder: LearningOrder.FREE }),
+      );
+      expect(result.learningOrder).toBe(LearningOrder.FREE);
+    });
+
     it('moves a rejected course back to Draft and clears rejectReason when the owner edits metadata', async () => {
       repo.findOne.mockResolvedValue(
         makeCourse({
@@ -949,5 +982,145 @@ describe('CoursesService', () => {
       );
       expect(repo.save).not.toHaveBeenCalled();
     });
+  });
+
+  describe('resolveAccessibleLessonIds (API-level gating)', () => {
+    const lessons = [
+      { id: 'lesson-1', position: 0 },
+      { id: 'lesson-2', position: 1 },
+      { id: 'lesson-3', position: 2 },
+    ];
+
+    it('exposes every lesson in free mode regardless of progress', () => {
+      const accessible = service.resolveAccessibleLessonIds(
+        LearningOrder.FREE,
+        lessons,
+        [],
+      );
+
+      expect(accessible).toEqual(['lesson-1', 'lesson-2', 'lesson-3']);
+    });
+
+    it('always unlocks the first lesson in sequential mode', () => {
+      const accessible = service.resolveAccessibleLessonIds(
+        LearningOrder.SEQUENTIAL,
+        lessons,
+        [],
+      );
+
+      expect(accessible).toEqual(['lesson-1']);
+    });
+
+    it('blocks lesson N+1 until lesson N is completed (sequential)', () => {
+      let accessible = service.resolveAccessibleLessonIds(
+        LearningOrder.SEQUENTIAL,
+        lessons,
+        [],
+      );
+      expect(accessible).toEqual(['lesson-1']);
+
+      accessible = service.resolveAccessibleLessonIds(
+        LearningOrder.SEQUENTIAL,
+        lessons,
+        ['lesson-1'],
+      );
+      expect(accessible).toEqual(['lesson-1', 'lesson-2']);
+
+      accessible = service.resolveAccessibleLessonIds(
+        LearningOrder.SEQUENTIAL,
+        lessons,
+        ['lesson-1', 'lesson-2'],
+      );
+      expect(accessible).toEqual(['lesson-1', 'lesson-2', 'lesson-3']);
+    });
+
+    it('does not skip ahead when an earlier lesson is missing from progress', () => {
+      const accessible = service.resolveAccessibleLessonIds(
+        LearningOrder.SEQUENTIAL,
+        lessons,
+        ['lesson-2'],
+      );
+
+      expect(accessible).toEqual(['lesson-1']);
+    });
+
+    it('sorts lessons by position before applying sequential gating', () => {
+      const shuffled = [
+        { id: 'lesson-3', position: 2 },
+        { id: 'lesson-1', position: 0 },
+        { id: 'lesson-2', position: 1 },
+      ];
+
+      const accessible = service.resolveAccessibleLessonIds(
+        LearningOrder.SEQUENTIAL,
+        shuffled,
+        ['lesson-1'],
+      );
+
+      expect(accessible).toEqual(['lesson-1', 'lesson-2']);
+    });
+
+    it('accepts a completed set when provided', () => {
+      const accessible = service.resolveAccessibleLessonIds(
+        LearningOrder.SEQUENTIAL,
+        lessons,
+        new Set(['lesson-1', 'lesson-2']),
+      );
+
+      expect(accessible).toEqual(['lesson-1', 'lesson-2', 'lesson-3']);
+    });
+  });
+});
+
+describe('Course learning order DTO validation', () => {
+  it('accepts a valid learningOrder of Sequential or Free', async () => {
+    for (const learningOrder of [
+      LearningOrder.SEQUENTIAL,
+      LearningOrder.FREE,
+    ]) {
+      const dto = plainToInstance(CreateCourseDto, {
+        title: 'Khoa hoc',
+        description: 'Mo ta',
+        category: 'Backend',
+        learningOrder,
+      });
+
+      const errors = await validate(dto);
+      expect(errors.length).toBe(0);
+    }
+  });
+
+  it('rejects an invalid learningOrder value', async () => {
+    const dto = plainToInstance(CreateCourseDto, {
+      title: 'Khoa hoc',
+      description: 'Mo ta',
+      category: 'Backend',
+      learningOrder: 'Random',
+    });
+
+    const errors = await validate(dto);
+    expect(errors.some((e) => e.property === 'learningOrder')).toBe(true);
+  });
+
+  it('omits learningOrder in create when not provided', async () => {
+    const dto = plainToInstance(CreateCourseDto, {
+      title: 'Khoa hoc',
+      description: 'Mo ta',
+      category: 'Backend',
+    });
+
+    const errors = await validate(dto);
+    expect(errors.length).toBe(0);
+    expect(dto.learningOrder).toBeUndefined();
+  });
+
+  it('accepts and passes through learningOrder on update', async () => {
+    const dto = plainToInstance(UpdateCourseDto, {
+      learningOrder: LearningOrder.FREE,
+    });
+
+    const errors = await validate(dto);
+    expect(errors.length).toBe(0);
+    expect(dto.learningOrder).toBe(LearningOrder.FREE);
   });
 });

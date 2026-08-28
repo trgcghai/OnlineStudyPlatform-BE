@@ -16,6 +16,11 @@ export enum CourseStatus {
   REJECTED = 'Rejected',
 }
 
+export enum LearningOrder {
+  SEQUENTIAL = 'Sequential',
+  FREE = 'Free',
+}
+
 @Entity('courses')
 export class Course {
   @PrimaryGeneratedColumn('uuid')
@@ -35,6 +40,14 @@ export class Course {
 
   @Column({ type: 'enum', enum: CourseStatus, default: CourseStatus.DRAFT })
   status!: CourseStatus;
+
+  @Column({
+    name: 'learning_order',
+    type: 'enum',
+    enum: LearningOrder,
+    default: LearningOrder.SEQUENTIAL,
+  })
+  learningOrder!: LearningOrder;
 
   @Column({ name: 'reject_reason', type: 'text', nullable: true })
   rejectReason!: string | null;

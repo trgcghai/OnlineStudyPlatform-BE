@@ -10,7 +10,7 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
-import { CourseStatus } from '../entities/course.entity';
+import { CourseStatus, LearningOrder } from '../entities/course.entity';
 
 const trimString = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
@@ -56,6 +56,10 @@ export class CreateCourseDto {
   @IsString()
   @Length(1, 80)
   category!: string;
+
+  @IsOptional()
+  @IsEnum(LearningOrder)
+  learningOrder?: LearningOrder;
 }
 
 export class UpdateCourseDto {
@@ -76,6 +80,10 @@ export class UpdateCourseDto {
   @IsString()
   @Length(1, 80)
   category?: string;
+
+  @IsOptional()
+  @IsEnum(LearningOrder)
+  learningOrder?: LearningOrder;
 }
 
 export class ReviewCourseStatusDto {
@@ -179,6 +187,7 @@ export interface CourseResponse {
   category: string;
   thumbnail: string | null;
   status: CourseStatus;
+  learningOrder: LearningOrder;
   rejectReason: string | null;
   instructorId: string;
   createdAt: Date;
@@ -202,6 +211,7 @@ export interface PublicCourseResponse {
   description: string;
   category: string;
   thumbnail: string | null;
+  learningOrder: LearningOrder;
   instructorId: string;
   instructor?: PublicCourseInstructorSummary;
   createdAt: Date;

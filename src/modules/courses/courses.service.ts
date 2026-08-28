@@ -29,7 +29,7 @@ import {
   ReviewCourseStatusDto,
   UpdateCourseDto,
 } from './dto/course.dto';
-import { Course, CourseStatus } from './entities/course.entity';
+import { Course, CourseStatus, LearningOrder } from './entities/course.entity';
 
 @Injectable()
 export class CoursesService {
@@ -51,6 +51,7 @@ export class CoursesService {
       description: dto.description.trim(),
       category: dto.category.trim(),
       status: CourseStatus.DRAFT,
+      learningOrder: dto.learningOrder ?? LearningOrder.SEQUENTIAL,
       instructorId,
     });
 
@@ -233,7 +234,8 @@ export class CoursesService {
     const hasChanges = Boolean(
       dto.title !== undefined ||
       dto.description !== undefined ||
-      dto.category !== undefined,
+      dto.category !== undefined ||
+      dto.learningOrder !== undefined,
     );
 
     if (!hasChanges) {
@@ -254,6 +256,10 @@ export class CoursesService {
       course.category = dto.category.trim();
     }
 
+    if (dto.learningOrder !== undefined) {
+      course.learningOrder = dto.learningOrder;
+    }
+
     if (course.status === CourseStatus.REJECTED) {
       course.status = CourseStatus.DRAFT;
       course.rejectReason = null;
@@ -261,6 +267,43 @@ export class CoursesService {
 
     const savedCourse = await this.coursesRepository.save(course);
     return this.toCourseResponse(savedCourse);
+  }
+
+  /**
+   * Resolves which lesson ids a Learner may open under a course's learning
+   * order. This is the API-level gating rule consumed by the learner lesson
+   * player (T1-10/11); it is intentionally pure and aggregation-agnostic so it
+   * can be fed lesson progress from any source once T1-11 exists.
+   *
+   * - FREE: every lesson is accessible regardless of progress.
+   * - SEQUENTIAL: a lesson is accessible when it is the first lesson, or every
+   *   lesson before it (by position) has been completed. Because positions are
+   *   contiguous with no gaps, this guarantees the learner cannot jump ahead to
+   *   lesson N+1 before completing lesson N.
+   */
+  resolveAccessibleLessonIds(
+    learningOrder: LearningOrder,
+    lessons: { id: string; position: number }[],
+    completedLessonIds: string[] | Set<string>,
+  ): string[] {
+    const completed = new Set(completedLessonIds);
+    const ordered = [...lessons].sort((a, b) => a.position - b.position);
+
+    if (learningOrder === LearningOrder.FREE) {
+      return ordered.map((lesson) => lesson.id);
+    }
+
+    const accessible: string[] = [];
+    for (let index = 0; index < ordered.length; index++) {
+      const previousAllDone = ordered
+        .slice(0, index)
+        .every((lesson) => completed.has(lesson.id));
+
+      if (index === 0 || previousAllDone) {
+        accessible.push(ordered[index].id);
+      }
+    }
+    return accessible;
   }
 
   async remove(id: string, instructorId: string): Promise<void> {
@@ -552,6 +595,7 @@ export class CoursesService {
       category: course.category,
       thumbnail: course.thumbnail,
       status: course.status,
+      learningOrder: course.learningOrder,
       rejectReason: course.rejectReason,
       instructorId: course.instructorId,
       createdAt: course.createdAt,
@@ -566,6 +610,7 @@ export class CoursesService {
       description: course.description,
       category: course.category,
       thumbnail: course.thumbnail,
+      learningOrder: course.learningOrder,
       instructorId: course.instructorId,
       instructor: course.instructor
         ? {
