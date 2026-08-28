@@ -9,7 +9,11 @@ import { NotificationQueue } from '../notifications/entities/notification.entity
 import { NotificationsService } from '../notifications/notifications.service';
 import { CoursesService } from './courses.service';
 import { CreateCourseDto } from './dto/course.dto';
-import { Course, CourseStatus } from './entities/course.entity';
+import {
+  Course,
+  CourseLearningOrder,
+  CourseStatus,
+} from './entities/course.entity';
 
 describe('CoursesService', () => {
   let service: CoursesService;
@@ -50,6 +54,7 @@ describe('CoursesService', () => {
     thumbnail: null,
     status: CourseStatus.DRAFT,
     rejectReason: null,
+    learningOrder: CourseLearningOrder.FREE,
     instructorId,
     instructor: {
       id: instructorId,
@@ -143,6 +148,7 @@ describe('CoursesService', () => {
         description: 'Khoa hoc nhap mon NestJS',
         category: 'Backend',
         status: CourseStatus.DRAFT,
+        learningOrder: CourseLearningOrder.FREE,
         instructorId,
       });
       expect(repo.save).toHaveBeenCalledTimes(1);
@@ -151,6 +157,23 @@ describe('CoursesService', () => {
         status: CourseStatus.DRAFT,
         instructorId,
       });
+    });
+
+    it('persists an explicit learning order on create', async () => {
+      const dto: CreateCourseDto = {
+        title: 'Sequential Course',
+        description: 'Desc',
+        category: 'Other',
+        learningOrder: CourseLearningOrder.SEQUENTIAL,
+      };
+
+      await service.create(instructorId, dto);
+
+      expect(repo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          learningOrder: CourseLearningOrder.SEQUENTIAL,
+        }),
+      );
     });
   });
 
@@ -893,6 +916,24 @@ describe('CoursesService', () => {
       );
       expect(result.status).toBe(CourseStatus.DRAFT);
       expect(result.rejectReason).toBeNull();
+    });
+
+    it('updates the course learning order', async () => {
+      repo.findOne.mockResolvedValue(
+        makeCourse({ learningOrder: CourseLearningOrder.FREE }),
+      );
+      repo.save.mockImplementation((input: Course) => input);
+
+      const result = await service.update(courseId, instructorId, {
+        learningOrder: CourseLearningOrder.SEQUENTIAL,
+      });
+
+      expect(repo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          learningOrder: CourseLearningOrder.SEQUENTIAL,
+        }),
+      );
+      expect(result.learningOrder).toBe(CourseLearningOrder.SEQUENTIAL);
     });
 
     it('rejects an empty update payload', async () => {
