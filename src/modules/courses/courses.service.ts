@@ -13,8 +13,11 @@ import type { Types } from 'mongoose';
 import type { Client as MinioClient } from 'minio';
 import { DataSource, Repository } from 'typeorm';
 import { MINIO_CLIENT } from '../../common/constants/file.constant';
+import { AuthenticatedUser } from '../auth/dto/auth.dto';
+import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { NotificationQueue } from '../notifications/entities/notification.entity';
 import { NotificationsService } from '../notifications/notifications.service';
+import { UserRole } from '../users/entities/user.entity';
 import {
   CourseApprovalListResult,
   CourseApprovalResponse,
@@ -40,6 +43,8 @@ export class CoursesService {
     @Inject(MINIO_CLIENT) private readonly minioClient: MinioClient,
     private readonly notificationsService: NotificationsService,
     private readonly dataSource: DataSource,
+    @InjectRepository(Enrollment)
+    private readonly enrollmentsRepository: Repository<Enrollment>,
   ) {}
 
   async create(
@@ -208,7 +213,10 @@ export class CoursesService {
     return courses.map((course) => this.toPublicCourseResponse(course));
   }
 
-  async getPublished(id: string): Promise<PublicCourseResponse> {
+  async getPublished(
+    id: string,
+    currentUser?: AuthenticatedUser | null,
+  ): Promise<PublicCourseResponse> {
     const course = await this.coursesRepository.findOne({
       where: { id, status: CourseStatus.PUBLISHED },
       relations: { instructor: true },
@@ -218,7 +226,21 @@ export class CoursesService {
       throw new NotFoundException('Course not found');
     }
 
-    return this.toPublicCourseResponse(course);
+    const response = this.toPublicCourseResponse(course);
+
+    if (!currentUser) {
+      return response;
+    }
+
+    if (currentUser.role !== UserRole.LEARNER) {
+      return { ...response, isEnrolled: false };
+    }
+
+    const isEnrolled = await this.enrollmentsRepository.exists({
+      where: { learnerId: currentUser.id, courseId: id },
+    });
+
+    return { ...response, isEnrolled };
   }
 
   async getOwned(id: string, instructorId: string): Promise<CourseResponse> {
