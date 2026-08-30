@@ -16,6 +16,7 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { LearningModule } from './modules/learning/learning.module';
+import { QuizzesModule } from './modules/quizzes/quizzes.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { LearningModule } from './modules/learning/learning.module';
     EnrollmentsModule,
     LearningModule,
     NotificationsModule,
+    QuizzesModule,
   ],
   controllers: [AppController],
   providers: [

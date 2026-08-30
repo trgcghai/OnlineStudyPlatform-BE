@@ -4,7 +4,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { Course, CourseStatus } from '../courses/entities/course.entity';
+import {
+  Course,
+  CourseLearningOrder,
+  CourseStatus,
+} from '../courses/entities/course.entity';
 import { Enrollment } from './entities/enrollment.entity';
 import { EnrollmentsService } from './enrollments.service';
 
@@ -33,6 +37,7 @@ describe('EnrollmentsService', () => {
     thumbnail: null,
     status: CourseStatus.PUBLISHED,
     rejectReason: null,
+    learningOrder: CourseLearningOrder.FREE,
     instructorId,
     instructor: {
       id: instructorId,
@@ -44,9 +49,7 @@ describe('EnrollmentsService', () => {
     ...overrides,
   });
 
-  const makeEnrollment = (
-    overrides: Partial<Enrollment> = {},
-  ): Enrollment => ({
+  const makeEnrollment = (overrides: Partial<Enrollment> = {}): Enrollment => ({
     id: '44444444-4444-4444-8444-444444444444',
     learnerId,
     learner: { id: learnerId } as never,
@@ -62,8 +65,8 @@ describe('EnrollmentsService', () => {
   beforeEach(() => {
     enrollmentsRepository = {
       create: jest.fn((input: Partial<Enrollment>) => input),
-      save: jest.fn(async (input: Partial<Enrollment>) =>
-        makeEnrollment(input),
+      save: jest.fn((input: Partial<Enrollment>) =>
+        Promise.resolve(makeEnrollment(input)),
       ),
       findOne: jest.fn(),
       find: jest.fn(),
@@ -105,18 +108,17 @@ describe('EnrollmentsService', () => {
       );
     });
 
-    it.each([
-      CourseStatus.DRAFT,
-      CourseStatus.PENDING,
-      CourseStatus.REJECTED,
-    ])('rejects enrollment for %s courses', async (status) => {
-      coursesRepository.findOne.mockResolvedValue(makeCourse({ status }));
+    it.each([CourseStatus.DRAFT, CourseStatus.PENDING, CourseStatus.REJECTED])(
+      'rejects enrollment for %s courses',
+      async (status) => {
+        coursesRepository.findOne.mockResolvedValue(makeCourse({ status }));
 
-      await expect(service.enroll(learnerId, courseId)).rejects.toEqual(
-        new BadRequestException('Chỉ có thể đăng ký khóa học đã xuất bản'),
-      );
-      expect(enrollmentsRepository.save).not.toHaveBeenCalled();
-    });
+        await expect(service.enroll(learnerId, courseId)).rejects.toEqual(
+          new BadRequestException('Chỉ có thể đăng ký khóa học đã xuất bản'),
+        );
+        expect(enrollmentsRepository.save).not.toHaveBeenCalled();
+      },
+    );
 
     it('throws NotFoundException when the course does not exist', async () => {
       coursesRepository.findOne.mockResolvedValue(null);
