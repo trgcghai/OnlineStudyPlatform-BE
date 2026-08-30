@@ -367,7 +367,7 @@ export class LessonsService {
       file.buffer,
       file.size,
       {
-        contentType: file.mimetype,
+        'Content-Type': file.mimetype,
       },
     );
 

@@ -7,6 +7,7 @@ import {
 import { DataSource, Repository } from 'typeorm';
 import { NotificationQueue } from '../notifications/entities/notification.entity';
 import { NotificationsService } from '../notifications/notifications.service';
+import { Lesson } from '../lessons/entities/lesson.entity';
 import { CoursesService } from './courses.service';
 import { CreateCourseDto } from './dto/course.dto';
 import {
@@ -27,6 +28,7 @@ describe('CoursesService', () => {
   let configService: { getOrThrow: jest.Mock };
   let minioClient: { putObject: jest.Mock; removeObject: jest.Mock };
   let enrollmentRepo: { exists: jest.Mock };
+  let lessonsRepo: { find: jest.Mock };
   let notificationsService: {
     createQueueNotification: jest.Mock;
     createDirectNotification: jest.Mock;
@@ -66,6 +68,21 @@ describe('CoursesService', () => {
     ...overrides,
   });
 
+  const makeLesson = (overrides: Partial<Lesson> = {}): Lesson => ({
+    id: '55555555-5555-4555-8555-555555555555',
+    title: 'Mo dau khoa hoc',
+    description: '',
+    videoUrl: null,
+    materialUrl: null,
+    duration: 0,
+    position: 0,
+    courseId,
+    course: makeCourse(),
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    updatedAt: new Date('2026-01-01T00:00:00Z'),
+    ...overrides,
+  });
+
   beforeEach(() => {
     repo = {
       create: jest.fn((input: Partial<Course>) => input),
@@ -89,6 +106,7 @@ describe('CoursesService', () => {
       removeObject: jest.fn().mockResolvedValue(undefined),
     };
     enrollmentRepo = { exists: jest.fn() };
+    lessonsRepo = { find: jest.fn().mockResolvedValue([]) };
     notificationsService = {
       createQueueNotification: jest.fn(),
       createDirectNotification: jest.fn(),
@@ -112,6 +130,7 @@ describe('CoursesService', () => {
       notificationsService as unknown as NotificationsService,
       dataSource as unknown as DataSource,
       enrollmentRepo as never,
+      lessonsRepo as unknown as Repository<Lesson>,
     );
   });
 
@@ -496,6 +515,30 @@ describe('CoursesService', () => {
       expect(result).not.toHaveProperty('status');
       expect(result).not.toHaveProperty('rejectReason');
       expect(result.instructor).not.toHaveProperty('email');
+    });
+
+    it('returns public lesson titles ordered by position on published course detail', async () => {
+      const lessonB = makeLesson({
+        id: '66666666-6666-4666-8666-666666666666',
+        title: 'Bai 2',
+        position: 1,
+      });
+      const lessonA = makeLesson({ title: 'Bai 1', position: 0 });
+      repo.findOne.mockResolvedValue(
+        makeCourse({ status: CourseStatus.PUBLISHED }),
+      );
+      lessonsRepo.find.mockResolvedValue([lessonA, lessonB]);
+
+      const result = await service.getPublished(courseId);
+
+      expect(lessonsRepo.find).toHaveBeenCalledWith({
+        where: { courseId },
+        order: { position: 'ASC' },
+      });
+      expect(result.lessons).toEqual([
+        { id: lessonA.id, title: 'Bai 1', position: 0 },
+        { id: lessonB.id, title: 'Bai 2', position: 1 },
+      ]);
     });
 
     it('omits isEnrolled for anonymous public course detail', async () => {
