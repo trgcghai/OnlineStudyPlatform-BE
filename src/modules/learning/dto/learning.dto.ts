@@ -38,3 +38,18 @@ export interface LearningLessonDetailResponse extends LearningLessonSummaryRespo
   videoUrl: string | null;
   materialUrl: string | null;
 }
+
+export interface LearningLessonProgressResponse {
+  lessonId: string;
+  watchedSeconds: number;
+  lastPositionSeconds: number;
+  watchRatio: number;
+  isWatchComplete: boolean;
+  isLessonComplete: boolean;
+  completedAt: Date | null;
+}
+
+export interface LearningWatchEventResponse {
+  lessonProgress: LearningLessonProgressResponse;
+  enrollment: LearningEnrollmentResponse;
+}

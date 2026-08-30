@@ -11,6 +11,7 @@ import {
   LearningAccessService,
   SEQUENTIAL_BLOCK_MESSAGE,
 } from '../lessons/learning-access.service';
+import { LearningProgressService } from './learning-progress.service';
 import { LearningService } from './learning.service';
 
 describe('LearningService', () => {
@@ -18,6 +19,7 @@ describe('LearningService', () => {
   let coursesRepository: { findOne: jest.Mock };
   let lessonsRepository: { find: jest.Mock; findOne: jest.Mock };
   let enrollmentsRepository: { findOne: jest.Mock };
+  let progressService: { getCompletedLessonIds: jest.Mock };
 
   const learnerId = '11111111-1111-4111-8111-111111111111';
   const courseId = '22222222-2222-4222-8222-222222222222';
@@ -34,6 +36,7 @@ describe('LearningService', () => {
     thumbnail: null,
     status: CourseStatus.PUBLISHED,
     learningOrder: CourseLearningOrder.FREE,
+    completionThresholdPercent: '90.00',
     rejectReason: null,
     instructorId: '55555555-5555-4555-8555-555555555555',
     instructor: undefined as never,
@@ -74,11 +77,15 @@ describe('LearningService', () => {
     coursesRepository = { findOne: jest.fn() };
     lessonsRepository = { find: jest.fn(), findOne: jest.fn() };
     enrollmentsRepository = { findOne: jest.fn() };
+    progressService = {
+      getCompletedLessonIds: jest.fn().mockResolvedValue(new Set<string>()),
+    };
     service = new LearningService(
       coursesRepository as unknown as Repository<Course>,
       lessonsRepository as unknown as Repository<Lesson>,
       enrollmentsRepository as unknown as Repository<Enrollment>,
       new LearningAccessService(),
+      progressService as unknown as LearningProgressService,
     );
   });
 
@@ -173,6 +180,36 @@ describe('LearningService', () => {
         }),
       ]);
       expect(result.firstAccessibleLessonId).toBe('lesson-0');
+    });
+
+    it('marks completed lessons and unlocks the next sequential lesson', async () => {
+      const lesson0 = makeLesson({ id: 'lesson-0', position: 0 });
+      const lesson1 = makeLesson({ id: 'lesson-1', position: 1 });
+      coursesRepository.findOne.mockResolvedValue(
+        makeCourse({ learningOrder: CourseLearningOrder.SEQUENTIAL }),
+      );
+      enrollmentsRepository.findOne.mockResolvedValue(
+        makeEnrollment({ progress: '50.00' }),
+      );
+      lessonsRepository.find.mockResolvedValue([lesson0, lesson1]);
+      progressService.getCompletedLessonIds.mockResolvedValue(
+        new Set(['lesson-0']),
+      );
+
+      const result = await service.getCourseLearning(learnerId, courseId);
+
+      expect(result.lessons).toEqual([
+        expect.objectContaining({
+          id: 'lesson-0',
+          isCompleted: true,
+          isAccessible: true,
+        }),
+        expect.objectContaining({
+          id: 'lesson-1',
+          isCompleted: false,
+          isAccessible: true,
+        }),
+      ]);
     });
   });
 

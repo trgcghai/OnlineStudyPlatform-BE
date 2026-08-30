@@ -250,7 +250,7 @@ describe('LessonsService', () => {
         expect.stringContaining(`courses/${courseId}/lessons/`),
         videoFile.buffer,
         videoFile.size,
-        { contentType: 'video/mp4' },
+        { 'Content-Type': 'video/mp4' },
       );
       expect(result.videoUrl).toContain(endpoint);
     });
@@ -567,6 +567,35 @@ describe('LessonsService', () => {
       );
 
       expect(result.videoUrl).toBeDefined();
+    });
+
+    it('should store file content type metadata for inline previews', async () => {
+      lessonsRepo.maximum.mockResolvedValue(null);
+      const savedLesson = makeLesson({ courseId, position: 0 });
+      lessonsRepo.save.mockResolvedValue(savedLesson);
+
+      const pdfFile = {
+        buffer: Buffer.from('pdf'),
+        size: 1000,
+        originalname: 'material.pdf',
+        mimetype: 'application/pdf',
+      } as Express.Multer.File;
+
+      await service.create(
+        courseId,
+        instructorId,
+        { title: 'PDF material' },
+        undefined,
+        pdfFile,
+      );
+
+      expect(minioClient.putObject).toHaveBeenCalledWith(
+        bucket,
+        expect.stringContaining('/materials/'),
+        pdfFile.buffer,
+        pdfFile.size,
+        { 'Content-Type': 'application/pdf' },
+      );
     });
   });
 

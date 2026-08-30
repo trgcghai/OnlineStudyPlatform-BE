@@ -15,6 +15,7 @@ import { DataSource, Repository } from 'typeorm';
 import { MINIO_CLIENT } from '../../common/constants/file.constant';
 import { AuthenticatedUser } from '../auth/dto/auth.dto';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
+import { Lesson } from '../lessons/entities/lesson.entity';
 import { NotificationQueue } from '../notifications/entities/notification.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { UserRole } from '../users/entities/user.entity';
@@ -28,6 +29,7 @@ import {
   ListCoursesQueryDto,
   PublishedCourseLimitQueryDto,
   PublicCourseListResult,
+  PublicCourseLessonSummary,
   PublicCourseResponse,
   ReviewCourseStatusDto,
   UpdateCourseDto,
@@ -49,6 +51,8 @@ export class CoursesService {
     private readonly dataSource: DataSource,
     @InjectRepository(Enrollment)
     private readonly enrollmentsRepository: Repository<Enrollment>,
+    @InjectRepository(Lesson)
+    private readonly lessonsRepository: Repository<Lesson>,
   ) {}
 
   async create(
@@ -230,7 +234,16 @@ export class CoursesService {
       throw new NotFoundException('Course not found');
     }
 
-    const response = this.toPublicCourseResponse(course);
+    const lessons = await this.lessonsRepository.find({
+      where: { courseId: id },
+      order: { position: 'ASC' },
+    });
+    const response = {
+      ...this.toPublicCourseResponse(course),
+      lessons: lessons.map((lesson) =>
+        this.toPublicCourseLessonSummary(lesson),
+      ),
+    };
 
     if (!currentUser) {
       return response;
@@ -609,6 +622,16 @@ export class CoursesService {
         : undefined,
       createdAt: course.createdAt,
       updatedAt: course.updatedAt,
+    };
+  }
+
+  private toPublicCourseLessonSummary(
+    lesson: Lesson,
+  ): PublicCourseLessonSummary {
+    return {
+      id: lesson.id,
+      title: lesson.title,
+      position: lesson.position,
     };
   }
 

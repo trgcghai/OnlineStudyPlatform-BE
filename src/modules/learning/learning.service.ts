@@ -16,6 +16,7 @@ import {
   LearningLessonDetailResponse,
   LearningLessonSummaryResponse,
 } from './dto/learning.dto';
+import { LearningProgressService } from './learning-progress.service';
 
 export const LEARNING_ENROLLMENT_REQUIRED_MESSAGE =
   'Bạn cần đăng ký khóa học để học nội dung này';
@@ -30,6 +31,7 @@ export class LearningService {
     @InjectRepository(Enrollment)
     private readonly enrollmentsRepository: Repository<Enrollment>,
     private readonly learningAccessService: LearningAccessService,
+    private readonly learningProgressService: LearningProgressService,
   ) {}
 
   async getCourseLearning(
@@ -40,7 +42,16 @@ export class LearningService {
       learnerId,
       courseId,
     );
-    const lessonSummaries = this.toLessonSummaries(course, lessons);
+    const completedLessonIds =
+      await this.learningProgressService.getCompletedLessonIds(
+        learnerId,
+        courseId,
+      );
+    const lessonSummaries = this.toLessonSummaries(
+      course,
+      lessons,
+      completedLessonIds,
+    );
 
     return {
       course: this.toCourseSummary(course),
@@ -68,11 +79,17 @@ export class LearningService {
       throw new NotFoundException('Lesson not found');
     }
 
+    const completedLessonIds =
+      await this.learningProgressService.getCompletedLessonIds(
+        learnerId,
+        courseId,
+      );
+
     const decision = this.learningAccessService.determineLessonAccess(
       course.learningOrder,
       lesson,
       lessons,
-      this.getCompletedLessonIds(),
+      completedLessonIds,
     );
 
     if (!decision.allowed) {
@@ -80,7 +97,7 @@ export class LearningService {
     }
 
     return {
-      ...this.toLessonSummary(course, lesson, lessons),
+      ...this.toLessonSummary(course, lesson, lessons, completedLessonIds),
       courseId: lesson.courseId,
       videoUrl: lesson.videoUrl,
       materialUrl: lesson.materialUrl,
@@ -115,9 +132,10 @@ export class LearningService {
   private toLessonSummaries(
     course: Course,
     lessons: Lesson[],
+    completedLessonIds: ReadonlySet<string>,
   ): LearningLessonSummaryResponse[] {
     return lessons.map((lesson) =>
-      this.toLessonSummary(course, lesson, lessons),
+      this.toLessonSummary(course, lesson, lessons, completedLessonIds),
     );
   }
 
@@ -125,12 +143,13 @@ export class LearningService {
     course: Course,
     lesson: Lesson,
     lessons: Lesson[],
+    completedLessonIds: ReadonlySet<string>,
   ): LearningLessonSummaryResponse {
     const decision = this.learningAccessService.determineLessonAccess(
       course.learningOrder,
       lesson,
       lessons,
-      this.getCompletedLessonIds(),
+      completedLessonIds,
     );
 
     return {
@@ -140,13 +159,9 @@ export class LearningService {
       duration: lesson.duration,
       position: lesson.position,
       isAccessible: decision.allowed,
-      isCompleted: false,
+      isCompleted: completedLessonIds.has(lesson.id),
       blockedReason: decision.allowed ? null : decision.message,
     };
-  }
-
-  private getCompletedLessonIds(): ReadonlySet<string> {
-    return new Set<string>();
   }
 
   private toCourseSummary(course: Course): LearningCourseSummaryResponse {

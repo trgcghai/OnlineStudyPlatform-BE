@@ -49,6 +49,15 @@ export class Course {
   })
   learningOrder!: CourseLearningOrder;
 
+  @Column({
+    name: 'completion_threshold_percent',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    default: 90,
+  })
+  completionThresholdPercent!: string;
+
   @Column({ name: 'reject_reason', type: 'text', nullable: true })
   rejectReason!: string | null;
 

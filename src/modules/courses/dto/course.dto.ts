@@ -212,6 +212,12 @@ export interface PublicCourseInstructorSummary {
   name: string;
 }
 
+export interface PublicCourseLessonSummary {
+  id: string;
+  title: string;
+  position: number;
+}
+
 export interface PublicCourseResponse {
   id: string;
   title: string;
@@ -224,6 +230,7 @@ export interface PublicCourseResponse {
   createdAt: Date;
   updatedAt: Date;
   isEnrolled?: boolean;
+  lessons?: PublicCourseLessonSummary[];
 }
 
 export interface PublicCourseListResult {

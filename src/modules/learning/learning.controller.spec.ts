@@ -1,11 +1,16 @@
 import { LearningController } from './learning.controller';
+import { LearningProgressService } from './learning-progress.service';
 import { LearningService } from './learning.service';
+import { LessonWatchEventType } from './entities/lesson-watch-event.entity';
 
 describe('LearningController', () => {
   let controller: LearningController;
   let learningService: {
     getCourseLearning: jest.Mock;
     getLessonLearning: jest.Mock;
+  };
+  let progressService: {
+    recordWatchEvent: jest.Mock;
   };
 
   const learnerId = '11111111-1111-4111-8111-111111111111';
@@ -17,8 +22,12 @@ describe('LearningController', () => {
       getCourseLearning: jest.fn(),
       getLessonLearning: jest.fn(),
     };
+    progressService = {
+      recordWatchEvent: jest.fn(),
+    };
     controller = new LearningController(
       learningService as unknown as LearningService,
+      progressService as unknown as LearningProgressService,
     );
   });
 
@@ -46,6 +55,31 @@ describe('LearningController', () => {
       learnerId,
       courseId,
       lessonId,
+    );
+  });
+
+  it('delegates watch-event recording to LearningProgressService', async () => {
+    const dto = {
+      idempotencyKey: 'course:lesson:session:heartbeat:120',
+      eventType: LessonWatchEventType.HEARTBEAT,
+      positionSeconds: 120,
+      watchedSeconds: 120,
+      durationSeconds: 600,
+      clientCreatedAt: '2026-08-29T00:00:00.000Z',
+    };
+    const response = {
+      lessonProgress: { lessonId, isLessonComplete: false },
+    };
+    progressService.recordWatchEvent.mockResolvedValue(response);
+
+    await expect(
+      controller.recordWatchEvent(courseId, lessonId, learnerId, dto),
+    ).resolves.toBe(response);
+    expect(progressService.recordWatchEvent).toHaveBeenCalledWith(
+      learnerId,
+      courseId,
+      lessonId,
+      dto,
     );
   });
 });
