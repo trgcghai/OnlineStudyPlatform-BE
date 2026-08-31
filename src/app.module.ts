@@ -17,6 +17,7 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { LearningModule } from './modules/learning/learning.module';
 import { QuizzesModule } from './modules/quizzes/quizzes.module';
+import { SeedsModule } from './common/seeds/seeds.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { QuizzesModule } from './modules/quizzes/quizzes.module';
     LearningModule,
     NotificationsModule,
     QuizzesModule,
+    SeedsModule,
   ],
   controllers: [AppController],
   providers: [
