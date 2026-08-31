@@ -8,6 +8,9 @@ import {
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { Lesson } from '../lessons/entities/lesson.entity';
 import { LearningAccessService } from '../lessons/learning-access.service';
+import { QuizAttemptStatus } from '../quizzes/dto/quiz-attempt.dto';
+import { QuizAttempt } from '../quizzes/entities/quiz-attempt.entity';
+import { Quiz } from '../quizzes/entities/quiz.entity';
 import { LearningAnalyticsEvent } from './entities/learning-analytics-event.entity';
 import { LessonProgress } from './entities/lesson-progress.entity';
 import {
@@ -25,6 +28,8 @@ describe('LearningProgressService', () => {
     count: jest.Mock;
   };
   let enrollmentsRepository: { findOne: jest.Mock; save: jest.Mock };
+  let quizzesRepository: { findOne: jest.Mock };
+  let quizAttemptsRepository: { count: jest.Mock };
   let progressRepository: {
     find: jest.Mock;
     findOne: jest.Mock;
@@ -108,6 +113,8 @@ describe('LearningProgressService', () => {
       count: jest.fn(),
     };
     enrollmentsRepository = { findOne: jest.fn(), save: jest.fn() };
+    quizzesRepository = { findOne: jest.fn() };
+    quizAttemptsRepository = { count: jest.fn() };
     progressRepository = {
       find: jest.fn(),
       findOne: jest.fn(),
@@ -129,6 +136,8 @@ describe('LearningProgressService', () => {
       coursesRepository as unknown as Repository<Course>,
       lessonsRepository as unknown as Repository<Lesson>,
       enrollmentsRepository as unknown as Repository<Enrollment>,
+      quizzesRepository as unknown as Repository<Quiz>,
+      quizAttemptsRepository as unknown as Repository<QuizAttempt>,
       progressRepository as unknown as Repository<LessonProgress>,
       watchEventsRepository as unknown as Repository<LessonWatchEvent>,
       analyticsEventsRepository as unknown as Repository<LearningAnalyticsEvent>,
@@ -145,6 +154,8 @@ describe('LearningProgressService', () => {
     lessonsRepository.findOne.mockResolvedValue(lesson);
     lessonsRepository.find.mockResolvedValue([lesson]);
     lessonsRepository.count.mockResolvedValue(2);
+    quizzesRepository.findOne.mockResolvedValue(null);
+    quizAttemptsRepository.count.mockResolvedValue(0);
     progressRepository.find.mockResolvedValue([]);
     progressRepository.findOne.mockResolvedValue(null);
     watchEventsRepository.findOne.mockResolvedValue(null);
@@ -241,6 +252,84 @@ describe('LearningProgressService', () => {
 
     expect(result.lessonProgress.isLessonComplete).toBe(false);
     expect(enrollmentsRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('does not complete a lesson with a quiz from watch completion alone', async () => {
+    arrangeValidContext();
+    quizzesRepository.findOne.mockResolvedValue({
+      id: '55555555-5555-4555-8555-555555555555',
+      lessonId,
+    });
+    quizAttemptsRepository.count.mockResolvedValue(0);
+
+    const result = await service.recordWatchEvent(
+      learnerId,
+      courseId,
+      lessonId,
+      dto,
+    );
+
+    expect(result.lessonProgress.isWatchComplete).toBe(true);
+    expect(result.lessonProgress.isLessonComplete).toBe(false);
+    expect(quizAttemptsRepository.count).toHaveBeenCalledWith({
+      where: {
+        learnerId,
+        quizId: '55555555-5555-4555-8555-555555555555',
+        passed: true,
+        status: QuizAttemptStatus.PASSED,
+        submittedAt: Not(IsNull()),
+      },
+    });
+  });
+
+  it('completes a lesson when watch threshold is met and a passed quiz attempt exists', async () => {
+    arrangeValidContext();
+    quizzesRepository.findOne.mockResolvedValue({
+      id: '55555555-5555-4555-8555-555555555555',
+      lessonId,
+    });
+    quizAttemptsRepository.count.mockResolvedValue(1);
+
+    const result = await service.recordWatchEvent(
+      learnerId,
+      courseId,
+      lessonId,
+      dto,
+    );
+
+    expect(result.lessonProgress.isLessonComplete).toBe(true);
+    expect(enrollmentsRepository.save).toHaveBeenCalled();
+  });
+
+  it('completes a watched lesson when a later quiz pass is recorded', async () => {
+    arrangeValidContext();
+    const existingProgress = {
+      learnerId,
+      courseId,
+      lessonId,
+      watchedSeconds: 540,
+      lastPositionSeconds: 540,
+      watchRatio: '0.9000',
+      watchCompletedAt: now,
+      lessonCompletedAt: null,
+    };
+    progressRepository.findOne.mockResolvedValue(existingProgress);
+    quizzesRepository.findOne.mockResolvedValue({
+      id: '55555555-5555-4555-8555-555555555555',
+      lessonId,
+    });
+    quizAttemptsRepository.count.mockResolvedValue(1);
+
+    await service.recomputeLessonAndEnrollmentProgress(
+      learnerId,
+      courseId,
+      lessonId,
+    );
+
+    expect(progressRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({ lessonCompletedAt: now }),
+    );
+    expect(enrollmentsRepository.save).toHaveBeenCalled();
   });
 
   it('rejects non-enrolled learners', async () => {
