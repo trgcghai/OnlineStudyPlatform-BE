@@ -31,6 +31,7 @@ import { computePassScorePoints } from './quizzes.service';
 const LEARNING_ENROLLMENT_REQUIRED_MESSAGE =
   'Bạn cần đăng ký khóa học để học nội dung này';
 const ATTEMPT_EXPIRY_BUFFER_HOURS = 48;
+const QUIZ_MAX_ATTEMPTS = 3;
 const MILLISECONDS_PER_MINUTE = 60 * 1000;
 const MILLISECONDS_PER_HOUR = 60 * MILLISECONDS_PER_MINUTE;
 
@@ -114,6 +115,8 @@ export class QuizAttemptsService {
     if (!quiz) {
       throw new NotFoundException('Quiz not found');
     }
+
+    await this.assertAttemptLimitNotReached(learnerId, quizId);
 
     const learnerQuiz = this.toLearnerQuizResponse(quiz);
     const startedAt = new Date();
@@ -263,6 +266,23 @@ export class QuizAttemptsService {
     });
 
     return attempts.map((attempt) => this.toAttemptResult(attempt));
+  }
+
+  private async assertAttemptLimitNotReached(
+    learnerId: string,
+    quizId: string,
+  ): Promise<void> {
+    const submittedAttempts = await this.attemptsRepository.count({
+      where: {
+        learnerId,
+        quizId,
+        submittedAt: Not(IsNull()),
+      },
+    });
+
+    if (submittedAttempts >= QUIZ_MAX_ATTEMPTS) {
+      throw new ConflictException('Quiz attempt limit reached');
+    }
   }
 
   private async loadAccessibleQuizContext(
