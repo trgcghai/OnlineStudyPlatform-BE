@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { RedisModule } from './modules/redis/redis.module';
@@ -17,10 +18,12 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { LearningModule } from './modules/learning/learning.module';
 import { QuizzesModule } from './modules/quizzes/quizzes.module';
+import { SeedsModule } from './common/seeds/seeds.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ScheduleModule.forRoot(),
     RedisModule,
     FileModule,
     MongooseModule.forRootAsync({
@@ -51,6 +54,7 @@ import { QuizzesModule } from './modules/quizzes/quizzes.module';
     LearningModule,
     NotificationsModule,
     QuizzesModule,
+    SeedsModule,
   ],
   controllers: [AppController],
   providers: [
