@@ -337,6 +337,10 @@ export class QuizAttemptsService {
         isMultipleChoice:
           question.type === QuestionType.MCQ &&
           (question.correctAnswers?.length ?? 0) > 1,
+        maxSelectableOptions:
+          question.type === QuestionType.MCQ
+            ? Math.max(1, question.correctAnswers?.length ?? 0)
+            : null,
         points: question.points,
         position: question.position,
       })),
@@ -447,6 +451,15 @@ export class QuizAttemptsService {
     }
 
     const correctAnswers = new Set(question.correctAnswers ?? []);
+    if (
+      correctAnswers.size > 0 &&
+      selectedOptionIndexes.length > correctAnswers.size
+    ) {
+      throw new BadRequestException(
+        'Selected option count exceeds the allowed answer count',
+      );
+    }
+
     const selectedCorrectCount = selectedOptionIndexes.filter((index) =>
       correctAnswers.has(index),
     ).length;

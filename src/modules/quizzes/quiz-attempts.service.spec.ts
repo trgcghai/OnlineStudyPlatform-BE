@@ -263,6 +263,7 @@ describe('QuizAttemptsService', () => {
 
     expect(result.quiz?.questions[0]).not.toHaveProperty('correctAnswers');
     expect(result.quiz?.questions[0]).toHaveProperty('isMultipleChoice', false);
+    expect(result.quiz?.questions[0]).toHaveProperty('maxSelectableOptions', 1);
     expect(result.quiz?.totalPoints).toBe(10);
     expect(result.quiz?.passScorePoints).toBe(7);
   });
@@ -277,6 +278,7 @@ describe('QuizAttemptsService', () => {
     const result = await service.loadLearnerQuiz(learnerId, courseId, lessonId);
 
     expect(result.quiz?.questions[0]).toHaveProperty('isMultipleChoice', true);
+    expect(result.quiz?.questions[0]).toHaveProperty('maxSelectableOptions', 2);
     expect(result.quiz?.questions[0]).not.toHaveProperty('correctAnswers');
   });
 
@@ -355,6 +357,18 @@ describe('QuizAttemptsService', () => {
     await expect(
       service.submitAttempt(learnerId, courseId, lessonId, quizId, attemptId, {
         answers: [{ questionId, selectedOptionIndexes: [4] }],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects selecting more MCQ options than there are correct answers', async () => {
+    arrangeSubmitContext({
+      questions: [makeMcqQuestion({ correctAnswers: [0, 2] })],
+    });
+
+    await expect(
+      service.submitAttempt(learnerId, courseId, lessonId, quizId, attemptId, {
+        answers: [{ questionId, selectedOptionIndexes: [0, 1, 2] }],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
