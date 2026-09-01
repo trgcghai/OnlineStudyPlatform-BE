@@ -262,8 +262,22 @@ describe('QuizAttemptsService', () => {
     const result = await service.loadLearnerQuiz(learnerId, courseId, lessonId);
 
     expect(result.quiz?.questions[0]).not.toHaveProperty('correctAnswers');
+    expect(result.quiz?.questions[0]).toHaveProperty('isMultipleChoice', false);
     expect(result.quiz?.totalPoints).toBe(10);
     expect(result.quiz?.passScorePoints).toBe(7);
+  });
+
+  it('marks learner-safe MCQ questions as multiple choice when multiple answers are correct', async () => {
+    arrangeValidContext(
+      makeQuiz({
+        questions: [makeMcqQuestion({ correctAnswers: [0, 2] })],
+      }),
+    );
+
+    const result = await service.loadLearnerQuiz(learnerId, courseId, lessonId);
+
+    expect(result.quiz?.questions[0]).toHaveProperty('isMultipleChoice', true);
+    expect(result.quiz?.questions[0]).not.toHaveProperty('correctAnswers');
   });
 
   it('returns null when the lesson has no quiz', async () => {

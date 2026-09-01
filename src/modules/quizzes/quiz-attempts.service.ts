@@ -334,6 +334,9 @@ export class QuizAttemptsService {
         type: question.type,
         content: question.content,
         options: question.options ?? [],
+        isMultipleChoice:
+          question.type === QuestionType.MCQ &&
+          (question.correctAnswers?.length ?? 0) > 1,
         points: question.points,
         position: question.position,
       })),

@@ -50,6 +50,7 @@ export interface LearnerQuizQuestionResponse {
   type: QuestionType;
   content: string;
   options: string[];
+  isMultipleChoice: boolean;
   points: number;
   position: number;
 }
