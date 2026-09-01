@@ -9,6 +9,7 @@ import {
   QuizzesController,
 } from './quizzes.controller';
 import { Question } from './entities/question.entity';
+import { QuizAttemptCleanupService } from './quiz-attempt-cleanup.service';
 import { QuizAttempt } from './entities/quiz-attempt.entity';
 import { Quiz } from './entities/quiz.entity';
 import { QuizzesService } from './quizzes.service';
@@ -23,7 +24,7 @@ import { QuizzesService } from './quizzes.service';
     QuizManageController,
     QuestionManageController,
   ],
-  providers: [QuizzesService],
+  providers: [QuizzesService, QuizAttemptCleanupService],
   exports: [QuizzesService],
 })
 export class QuizzesModule {}

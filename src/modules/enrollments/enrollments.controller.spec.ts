@@ -42,16 +42,13 @@ describe('EnrollmentsController auth metadata', () => {
   type HandlerName = 'enroll' | 'findMine';
 
   const handlerOf = (methodName: HandlerName): unknown =>
-    Object.getOwnPropertyDescriptor(
-      EnrollmentsController.prototype,
-      methodName,
-    )?.value;
+    Object.getOwnPropertyDescriptor(EnrollmentsController.prototype, methodName)
+      ?.value;
 
   it('uses strict auth and roles guards at controller level', () => {
-    expect(Reflect.getMetadata(GUARDS_METADATA, EnrollmentsController)).toEqual([
-      JwtAuthGuard,
-      RolesGuard,
-    ]);
+    expect(Reflect.getMetadata(GUARDS_METADATA, EnrollmentsController)).toEqual(
+      [JwtAuthGuard, RolesGuard],
+    );
   });
 
   it.each<HandlerName>(['enroll', 'findMine'])(

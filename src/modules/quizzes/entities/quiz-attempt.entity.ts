@@ -77,6 +77,9 @@ export class QuizAttempt {
   @Column({ name: 'time_limit_minutes', type: 'int', nullable: true })
   timeLimitMinutes!: number | null;
 
+  @Column({ name: 'expires_at', type: 'timestamptz', nullable: true })
+  expiresAt!: Date | null;
+
   @Column({ name: 'is_late', type: 'boolean', default: false })
   isLate!: boolean;
 

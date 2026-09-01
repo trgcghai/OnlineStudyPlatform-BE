@@ -1,7 +1,6 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
-  ArrayMinSize,
   IsArray,
   IsInt,
   IsOptional,
@@ -17,6 +16,7 @@ export enum QuizAttemptStatus {
   IN_PROGRESS = 'in_progress',
   PASSED = 'passed',
   NOT_PASSED = 'not_passed',
+  ABANDONED = 'abandoned',
 }
 
 export class SubmitQuizAnswerDto {
@@ -38,7 +38,6 @@ export class SubmitQuizAnswerDto {
 
 export class SubmitQuizAttemptDto {
   @IsArray()
-  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => SubmitQuizAnswerDto)
   answers!: SubmitQuizAnswerDto[];

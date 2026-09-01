@@ -37,6 +37,7 @@ function mockRepository() {
     create: jest.fn((value) => value),
     save: jest.fn((value) => value),
     count: jest.fn().mockResolvedValue(0),
+    update: jest.fn().mockResolvedValue({ affected: 0 }),
   };
 }
 
@@ -156,6 +157,7 @@ function makeAttempt(overrides: Partial<QuizAttempt> = {}): QuizAttempt {
     startedAt: now,
     submittedAt: null,
     timeLimitMinutes: 30,
+    expiresAt: new Date('2026-09-02T10:30:00.000Z'),
     isLate: false,
     lateSeconds: 0,
     createdAt: now,
@@ -312,6 +314,34 @@ describe('QuizAttemptsService', () => {
     expect(result.quiz.questions[0]).not.toHaveProperty('correctAnswers');
   });
 
+  it('stores expiry 48 hours after the timed quiz deadline', async () => {
+    arrangeValidContext(makeQuiz({ timeLimitMinutes: 30 }));
+
+    await service.startAttempt(learnerId, courseId, lessonId, quizId);
+
+    expect(attemptsRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        startedAt: now,
+        timeLimitMinutes: 30,
+        expiresAt: new Date('2026-09-02T10:30:00.000Z'),
+      }),
+    );
+  });
+
+  it('stores expiry 48 hours after start for no-time-limit quiz', async () => {
+    arrangeValidContext(makeQuiz({ timeLimitMinutes: null }));
+
+    await service.startAttempt(learnerId, courseId, lessonId, quizId);
+
+    expect(attemptsRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        startedAt: now,
+        timeLimitMinutes: null,
+        expiresAt: new Date('2026-09-02T10:00:00.000Z'),
+      }),
+    );
+  });
+
   it('gives partial MCQ score based on selected correct answers and ignores wrong selections', async () => {
     arrangeSubmitContext({
       questions: [makeMcqQuestion({ points: 10, correctAnswers: [1, 3] })],
@@ -431,6 +461,52 @@ describe('QuizAttemptsService', () => {
     expect(result.lateSeconds).toBe(60);
   });
 
+  it('rejects submission after the attempt expiry time', async () => {
+    arrangeSubmitContext({
+      attempt: makeAttempt({
+        expiresAt: new Date('2026-08-31T09:59:59.000Z'),
+      }),
+    });
+
+    await expect(
+      service.submitAttempt(learnerId, courseId, lessonId, quizId, attemptId, {
+        answers: [{ questionId, selectedOptionIndexes: [0] }],
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('allows submission exactly at the attempt expiry time', async () => {
+    arrangeSubmitContext({
+      attempt: makeAttempt({ expiresAt: now }),
+    });
+
+    const result = await service.submitAttempt(
+      learnerId,
+      courseId,
+      lessonId,
+      quizId,
+      attemptId,
+      { answers: [{ questionId, selectedOptionIndexes: [0] }] },
+    );
+
+    expect(result.totalScore).toBe(10);
+  });
+
+  it('rejects legacy attempts without stored expiry after computed expiry', async () => {
+    arrangeSubmitContext({
+      attempt: makeAttempt({
+        startedAt: new Date('2026-08-29T09:29:59.000Z'),
+        expiresAt: null,
+      }),
+    });
+
+    await expect(
+      service.submitAttempt(learnerId, courseId, lessonId, quizId, attemptId, {
+        answers: [{ questionId, selectedOptionIndexes: [0] }],
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
   it('does not mark no-time-limit attempts late', async () => {
     arrangeSubmitContext({
       quiz: makeQuiz({ timeLimitMinutes: null }),
@@ -517,6 +593,54 @@ describe('QuizAttemptsService', () => {
     await expect(
       service.startAttempt(learnerId, courseId, lessonId, quizId),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('accepts missing MCQ answers and grades them wrong with zero score', async () => {
+    arrangeSubmitContext({ questions: [makeMcqQuestion()] });
+
+    const result = await service.submitAttempt(
+      learnerId,
+      courseId,
+      lessonId,
+      quizId,
+      attemptId,
+      { answers: [] },
+    );
+
+    expect(result.totalScore).toBe(0);
+    expect(result.wrongCount).toBe(1);
+    expect(result.questions).toEqual([
+      expect.objectContaining({
+        questionId,
+        selectedOptionIndexes: [],
+        score: 0,
+        status: 'wrong',
+      }),
+    ]);
+  });
+
+  it('accepts missing essay answers and records empty pending grading', async () => {
+    arrangeSubmitContext({ questions: [makeEssayQuestion()] });
+
+    const result = await service.submitAttempt(
+      learnerId,
+      courseId,
+      lessonId,
+      quizId,
+      attemptId,
+      { answers: [] },
+    );
+
+    expect(result.totalScore).toBe(0);
+    expect(result.pendingEssayCount).toBe(1);
+    expect(result.questions).toEqual([
+      expect.objectContaining({
+        questionId: essayQuestionId,
+        text: '',
+        score: 0,
+        status: 'pending_grading',
+      }),
+    ]);
   });
 
   it('rejects answers for questions that do not belong to the quiz', async () => {

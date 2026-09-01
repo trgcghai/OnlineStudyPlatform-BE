@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Not, IsNull, Repository } from 'typeorm';
+import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import { Course, CourseStatus } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { LearningAnalyticsEvent } from '../learning/entities/learning-analytics-event.entity';
@@ -30,6 +30,9 @@ import { computePassScorePoints } from './quizzes.service';
 
 const LEARNING_ENROLLMENT_REQUIRED_MESSAGE =
   'Bạn cần đăng ký khóa học để học nội dung này';
+const ATTEMPT_EXPIRY_BUFFER_HOURS = 48;
+const MILLISECONDS_PER_MINUTE = 60 * 1000;
+const MILLISECONDS_PER_HOUR = 60 * MILLISECONDS_PER_MINUTE;
 
 type LearningProgressWithQuizRecompute = LearningProgressService & {
   recomputeLessonAndEnrollmentProgress?: (
@@ -114,6 +117,7 @@ export class QuizAttemptsService {
 
     const learnerQuiz = this.toLearnerQuizResponse(quiz);
     const startedAt = new Date();
+    const expiresAt = this.computeExpiresAt(startedAt, quiz.timeLimitMinutes);
     const attempt = await this.attemptsRepository.save(
       this.attemptsRepository.create({
         learnerId,
@@ -132,6 +136,7 @@ export class QuizAttemptsService {
         wrongCount: 0,
         pendingEssayCount: 0,
         timeLimitMinutes: quiz.timeLimitMinutes,
+        expiresAt,
         isLate: false,
         lateSeconds: 0,
       }),
@@ -190,6 +195,11 @@ export class QuizAttemptsService {
       }
 
       const submittedAt = new Date();
+      const expiresAt = this.getAttemptExpiresAt(attempt, submittedAt);
+      if (submittedAt.getTime() > expiresAt.getTime()) {
+        throw new ConflictException('Quiz attempt has expired');
+      }
+
       const grading = this.gradeQuiz(
         quiz,
         dto.answers,
@@ -369,12 +379,10 @@ export class QuizAttemptsService {
     const totalPoints = this.getTotalPoints(orderedQuestions);
     const passScorePoints = computePassScorePoints(totalPoints, quiz.passScore);
     const questions = orderedQuestions.map((question) => {
-      const answer = answerByQuestionId.get(question.id);
-      if (!answer) {
-        throw new BadRequestException(
-          `Missing answer for question ${question.id}`,
-        );
-      }
+      const answer =
+        answerByQuestionId.get(question.id) ??
+        this.createMissingAnswer(question);
+
       return this.gradeQuestion(question, answer);
     });
     const totalScore = Number(
@@ -421,6 +429,14 @@ export class QuizAttemptsService {
       answerByQuestionId.set(answer.questionId, answer);
     }
     return answerByQuestionId;
+  }
+
+  private createMissingAnswer(question: Question): SubmitQuizAnswerDto {
+    if (question.type === QuestionType.ESSAY) {
+      return { questionId: question.id, text: '' };
+    }
+
+    return { questionId: question.id, selectedOptionIndexes: [] };
   }
 
   private gradeQuestion(
@@ -505,6 +521,30 @@ export class QuizAttemptsService {
       isLate: true,
       lateSeconds: Math.floor(lateMilliseconds / 1000),
     };
+  }
+
+  private computeExpiresAt(
+    startedAt: Date,
+    timeLimitMinutes: number | null,
+  ): Date {
+    const timeLimitMilliseconds =
+      (timeLimitMinutes ?? 0) * MILLISECONDS_PER_MINUTE;
+    const expiryBufferMilliseconds =
+      ATTEMPT_EXPIRY_BUFFER_HOURS * MILLISECONDS_PER_HOUR;
+
+    return new Date(
+      startedAt.getTime() + timeLimitMilliseconds + expiryBufferMilliseconds,
+    );
+  }
+
+  private getAttemptExpiresAt(attempt: QuizAttempt, fallbackStart: Date): Date {
+    return (
+      attempt.expiresAt ??
+      this.computeExpiresAt(
+        attempt.startedAt ?? fallbackStart,
+        attempt.timeLimitMinutes,
+      )
+    );
   }
 
   private toAttemptResult(attempt: QuizAttempt): QuizAttemptResultResponse {
