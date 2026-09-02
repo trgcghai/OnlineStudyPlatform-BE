@@ -267,24 +267,30 @@ describe('EssayGradingService', () => {
       },
     );
 
-    expect(result).toEqual([
-      expect.objectContaining({
-        attemptId,
-        learner: {
-          id: learnerId,
-          name: 'Learner',
-          email: 'learner@example.com',
-        },
-        pendingEssayCount: 1,
-        essays: [
-          expect.objectContaining({
-            questionId: essayQuestionId,
-            content: 'Explain',
-            status: 'pending_grading',
-          }),
-        ],
-      }),
-    ]);
+    expect(result).toEqual({
+      items: [
+        expect.objectContaining({
+          attemptId,
+          learner: {
+            id: learnerId,
+            name: 'Learner',
+            email: 'learner@example.com',
+          },
+          pendingEssayCount: 1,
+          essays: [
+            expect.objectContaining({
+              questionId: essayQuestionId,
+              content: 'Explain',
+              status: 'pending_grading',
+            }),
+          ],
+        }),
+      ],
+      total: 1,
+      page: 1,
+      limit: 10,
+      totalPages: 1,
+    });
   });
 
   it('filters graded essay submissions', async () => {
@@ -313,8 +319,39 @@ describe('EssayGradingService', () => {
       },
     );
 
-    expect(result).toHaveLength(1);
-    expect(result[0].attemptId).toBe('99999999-9999-4999-8999-999999999999');
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].attemptId).toBe(
+      '99999999-9999-4999-8999-999999999999',
+    );
+  });
+
+  it('paginates filtered essay submissions', async () => {
+    attemptsRepository.find.mockResolvedValue([
+      makeAttempt({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }),
+      makeAttempt({ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }),
+      makeAttempt({ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' }),
+    ]);
+
+    const result = await service.listSubmissions(
+      instructorId,
+      courseId,
+      quizId,
+      {
+        status: EssayGradingStatusFilter.PENDING,
+        page: 2,
+        limit: 2,
+      },
+    );
+
+    expect(result.items.map((item) => item.attemptId)).toEqual([
+      'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    ]);
+    expect(result).toMatchObject({
+      total: 3,
+      page: 2,
+      limit: 2,
+      totalPages: 2,
+    });
   });
 
   it('rejects queue access for non-owner instructors', async () => {

@@ -12,6 +12,7 @@ import { LearningProgressService } from '../learning/learning-progress.service';
 import { User } from '../users/entities/user.entity';
 import {
   EssayGradingQuestionResponse,
+  EssayGradingSubmissionListResponse,
   EssayGradingStatusFilter,
   EssayGradingSubmissionResponse,
   GradeEssayAnswerDto,
@@ -52,7 +53,7 @@ export class EssayGradingService {
     courseId: string,
     quizId: string,
     query: ListEssayGradingSubmissionsQueryDto,
-  ): Promise<EssayGradingSubmissionResponse[]> {
+  ): Promise<EssayGradingSubmissionListResponse> {
     const { quiz, questions } = await this.loadInstructorQuizContext(
       instructorId,
       courseId,
@@ -72,7 +73,9 @@ export class EssayGradingService {
     );
     const filter = query.status ?? EssayGradingStatusFilter.PENDING;
 
-    return attempts
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const filtered = attempts
       .map((attempt) =>
         this.toSubmissionResponse(attempt, quiz, questions, learnerById),
       )
@@ -90,6 +93,17 @@ export class EssayGradingService {
           ? hasPending
           : !hasPending;
       });
+
+    const total = filtered.length;
+    const items = filtered.slice((page - 1) * limit, page * limit);
+
+    return {
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
   }
 
   async gradeEssay(

@@ -1,10 +1,12 @@
 import { Type } from 'class-transformer';
 import {
   IsEnum,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
   Length,
+  Max,
   Min,
 } from 'class-validator';
 import {
@@ -22,6 +24,19 @@ export class ListEssayGradingSubmissionsQueryDto {
   @IsOptional()
   @IsEnum(EssayGradingStatusFilter)
   status?: EssayGradingStatusFilter;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page: number = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit: number = 10;
 }
 
 export class GradeEssayAnswerDto {
@@ -67,4 +82,12 @@ export interface EssayGradingSubmissionResponse {
   status: QuizAttemptStatus;
   pendingEssayCount: number;
   essays: EssayGradingQuestionResponse[];
+}
+
+export interface EssayGradingSubmissionListResponse {
+  items: EssayGradingSubmissionResponse[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 }
