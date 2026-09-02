@@ -4,7 +4,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import {
   Course,
   CourseLearningOrder,
@@ -314,6 +314,38 @@ describe('QuizAttemptsService', () => {
     expect(result.quiz.questions[0]).not.toHaveProperty('correctAnswers');
   });
 
+  it('allows starting an attempt when submitted attempts are below the limit', async () => {
+    arrangeValidContext(makeQuiz({ questions: [makeMcqQuestion()] }));
+    attemptsRepository.count.mockResolvedValue(2);
+
+    await service.startAttempt(learnerId, courseId, lessonId, quizId);
+
+    expect(attemptsRepository.count).toHaveBeenCalledWith({
+      where: { learnerId, quizId, submittedAt: Not(IsNull()) },
+    });
+    expect(attemptsRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        learnerId,
+        quizId,
+        status: QuizAttemptStatus.IN_PROGRESS,
+      }),
+    );
+  });
+
+  it('rejects starting an attempt when submitted attempts reached the limit', async () => {
+    arrangeValidContext(makeQuiz({ questions: [makeMcqQuestion()] }));
+    attemptsRepository.count.mockResolvedValue(3);
+
+    await expect(
+      service.startAttempt(learnerId, courseId, lessonId, quizId),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(attemptsRepository.count).toHaveBeenCalledWith({
+      where: { learnerId, quizId, submittedAt: Not(IsNull()) },
+    });
+    expect(attemptsRepository.create).not.toHaveBeenCalled();
+  });
+
   it('stores expiry 48 hours after the timed quiz deadline', async () => {
     arrangeValidContext(makeQuiz({ timeLimitMinutes: 30 }));
 
@@ -437,6 +469,48 @@ describe('QuizAttemptsService', () => {
     expect(result.passScorePoints).toBe(5);
     expect(result.passed).toBe(true);
     expect(result.status).toBe(QuizAttemptStatus.PASSED);
+  });
+
+  it('does not recompute progress when submitted attempt fails', async () => {
+    arrangeSubmitContext({
+      quiz: makeQuiz({ passScore: 70, questions: [makeMcqQuestion()] }),
+    });
+
+    const result = await service.submitAttempt(
+      learnerId,
+      courseId,
+      lessonId,
+      quizId,
+      attemptId,
+      { answers: [{ questionId, selectedOptionIndexes: [1] }] },
+    );
+
+    expect(result.passed).toBe(false);
+    expect(result.status).toBe(QuizAttemptStatus.NOT_PASSED);
+    expect(
+      learningProgressService.recomputeLessonAndEnrollmentProgress,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('recomputes progress when submitted attempt passes', async () => {
+    arrangeSubmitContext({
+      quiz: makeQuiz({ passScore: 70, questions: [makeMcqQuestion()] }),
+    });
+
+    const result = await service.submitAttempt(
+      learnerId,
+      courseId,
+      lessonId,
+      quizId,
+      attemptId,
+      { answers: [{ questionId, selectedOptionIndexes: [0] }] },
+    );
+
+    expect(result.passed).toBe(true);
+    expect(result.status).toBe(QuizAttemptStatus.PASSED);
+    expect(
+      learningProgressService.recomputeLessonAndEnrollmentProgress,
+    ).toHaveBeenCalledWith(learnerId, courseId, lessonId);
   });
 
   it('accepts late submission and records late seconds', async () => {
