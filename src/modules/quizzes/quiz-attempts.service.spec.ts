@@ -452,6 +452,41 @@ describe('QuizAttemptsService', () => {
     expect(result.questions[0].status).toBe('pending_grading');
   });
 
+  it('does not pass while essay answers are pending even when MCQ score reaches the threshold', async () => {
+    arrangeSubmitContext({
+      quiz: makeQuiz({
+        passScore: 50,
+        questions: [
+          makeMcqQuestion({ points: 10 }),
+          makeEssayQuestion({ points: 10 }),
+        ],
+      }),
+    });
+
+    const result = await service.submitAttempt(
+      learnerId,
+      courseId,
+      lessonId,
+      quizId,
+      attemptId,
+      {
+        answers: [
+          { questionId, selectedOptionIndexes: [0] },
+          { questionId: essayQuestionId, text: 'Pending essay' },
+        ],
+      },
+    );
+
+    expect(result.totalScore).toBe(10);
+    expect(result.passScorePoints).toBe(10);
+    expect(result.pendingEssayCount).toBe(1);
+    expect(result.passed).toBe(false);
+    expect(result.status).toBe(QuizAttemptStatus.NOT_PASSED);
+    expect(
+      learningProgressService.recomputeLessonAndEnrollmentProgress,
+    ).not.toHaveBeenCalled();
+  });
+
   it('passes when score equals pass score boundary', async () => {
     arrangeSubmitContext({
       quiz: makeQuiz({ passScore: 50, questions: [makeMcqQuestion()] }),
