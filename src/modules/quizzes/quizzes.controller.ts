@@ -49,7 +49,7 @@ export class QuizzesController {
     @Param('lessonId', ParseUUIDPipe) lessonId: string,
     @CurrentUser('id') instructorId: string,
   ) {
-    return this.quizzesService.listByLesson(courseId, lessonId, instructorId);
+    return this.quizzesService.findByLesson(courseId, lessonId, instructorId);
   }
 }
 

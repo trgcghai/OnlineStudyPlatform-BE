@@ -228,7 +228,7 @@ describe('QuizzesService', () => {
         points: 10,
       };
 
-      quizzesRepo.findOne.mockResolvedValue(
+      quizzesRepo.findOne.mockResolvedValueOnce(null).mockResolvedValueOnce(
         makeQuiz({
           id: 'quiz-1',
           title: 'Scenario quiz',
@@ -282,7 +282,9 @@ describe('QuizzesService', () => {
     });
 
     it('should apply defaults (passScore 70, no time limit, empty description)', async () => {
-      quizzesRepo.findOne.mockResolvedValue(makeQuiz({ id: 'quiz-1' }));
+      quizzesRepo.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(makeQuiz({ id: 'quiz-1' }));
 
       await service.create(courseId, lessonId, instructorId, {
         title: 'Default quiz',
@@ -299,7 +301,38 @@ describe('QuizzesService', () => {
       );
     });
 
+    it('should reject creating a second quiz for the same lesson', async () => {
+      quizzesRepo.findOne.mockResolvedValueOnce(
+        makeQuiz({ id: 'existing-quiz' }),
+      );
+
+      await expect(
+        service.create(courseId, lessonId, instructorId, {
+          title: 'Duplicate quiz',
+          passScore: 70,
+        }),
+      ).rejects.toThrow(ConflictException);
+
+      expect(quizzesRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('should map lesson unique index violations to conflict', async () => {
+      quizzesRepo.findOne.mockResolvedValueOnce(null);
+      quizzesRepo.save.mockRejectedValueOnce({ code: '23505' });
+
+      await expect(
+        service.create(courseId, lessonId, instructorId, {
+          title: 'Concurrent duplicate quiz',
+          passScore: 70,
+        }),
+      ).rejects.toThrow(ConflictException);
+
+      expect(questionsRepo.save).not.toHaveBeenCalled();
+    });
+
     it('should reject an MCQ question without options', async () => {
+      quizzesRepo.findOne.mockResolvedValueOnce(null);
+
       await expect(
         service.create(courseId, lessonId, instructorId, {
           title: 'Bad quiz',
@@ -315,34 +348,45 @@ describe('QuizzesService', () => {
     });
   });
 
-  describe('listByLesson', () => {
-    it('should return summaries with counts and total points', async () => {
-      quizzesRepo.find.mockResolvedValue([
-        makeQuiz({ id: 'quiz-1' }),
-        makeQuiz({ id: 'quiz-2', title: 'Second quiz' }),
-      ]);
-      questionsRepo.find.mockResolvedValue([
-        makeQuestion({ quizId: 'quiz-1', points: 5 }),
-        makeQuestion({ quizId: 'quiz-1', points: 10 }),
-      ]);
+  describe('findByLesson', () => {
+    it('should return null when the lesson has no quiz', async () => {
+      quizzesRepo.findOne.mockResolvedValue(null);
 
-      const result = await service.listByLesson(
+      const result = await service.findByLesson(
         courseId,
         lessonId,
         instructorId,
       );
 
-      expect(result).toHaveLength(2);
-      expect(result[0]).toMatchObject({
-        courseId,
-        questionCount: 2,
-        totalPoints: 15,
-        passScorePoints: 11,
-      });
-      expect(result[1]).toMatchObject({ questionCount: 0, totalPoints: 0 });
+      expect(result).toBeNull();
+      expect(quizzesRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { lessonId } }),
+      );
+      expect(questionsRepo.find).not.toHaveBeenCalled();
+    });
 
+    it('should return the lesson quiz summary with question totals', async () => {
+      quizzesRepo.findOne.mockResolvedValue(makeQuiz({ id: 'quiz-1' }));
+      questionsRepo.find.mockResolvedValue([
+        makeQuestion({ quizId: 'quiz-1', points: 5 }),
+        makeQuestion({ quizId: 'quiz-1', points: 10 }),
+      ]);
+
+      const result = await service.findByLesson(
+        courseId,
+        lessonId,
+        instructorId,
+      );
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: 'quiz-1',
+          questionCount: 2,
+          totalPoints: 15,
+        }),
+      );
       expect(questionsRepo.find).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { quizId: expect.anything() } }),
+        expect.objectContaining({ where: { quizId: 'quiz-1' } }),
       );
     });
   });

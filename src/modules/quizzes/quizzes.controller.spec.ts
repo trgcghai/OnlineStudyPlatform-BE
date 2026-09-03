@@ -20,7 +20,7 @@ describe('QuizzesController', () => {
   let questionManageController: QuestionManageController;
   let service: {
     create: jest.Mock;
-    listByLesson: jest.Mock;
+    findByLesson: jest.Mock;
     addQuestion: jest.Mock;
     reorderQuestions: jest.Mock;
     findOne: jest.Mock;
@@ -39,7 +39,7 @@ describe('QuizzesController', () => {
   beforeEach(async () => {
     service = {
       create: jest.fn(),
-      listByLesson: jest.fn(),
+      findByLesson: jest.fn(),
       addQuestion: jest.fn(),
       reorderQuestions: jest.fn(),
       findOne: jest.fn(),
@@ -78,10 +78,10 @@ describe('QuizzesController', () => {
     );
   });
 
-  it('delegates quiz listing for a lesson', async () => {
+  it('delegates quiz retrieval for a lesson', async () => {
     await quizzesController.list(courseId, lessonId, instructorId);
 
-    expect(service.listByLesson).toHaveBeenCalledWith(
+    expect(service.findByLesson).toHaveBeenCalledWith(
       courseId,
       lessonId,
       instructorId,

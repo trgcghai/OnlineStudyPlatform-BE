@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   OneToMany,
@@ -16,6 +17,7 @@ export class Quiz {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
+  @Index('IDX_quizzes_lesson_id_unique', { unique: true })
   @Column({ name: 'lesson_id', type: 'uuid' })
   lessonId!: string;
 
