@@ -19,6 +19,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { LearningModule } from './modules/learning/learning.module';
 import { QuizzesModule } from './modules/quizzes/quizzes.module';
 import { SeedsModule } from './common/seeds/seeds.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { SeedsModule } from './common/seeds/seeds.module';
     LessonsModule,
     EnrollmentsModule,
     LearningModule,
+    DashboardModule,
     NotificationsModule,
     QuizzesModule,
     SeedsModule,
