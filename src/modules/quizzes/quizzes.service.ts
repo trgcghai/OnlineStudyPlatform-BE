@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { Course } from '../courses/entities/course.entity';
 import { Lesson } from '../lessons/entities/lesson.entity';
 import {
@@ -29,6 +29,7 @@ export const ATTEMPTS_BLOCKED_QUESTION_MESSAGE =
   'Quiz has attempts and questions cannot be modified';
 export const ATTEMPTS_BLOCKED_PASS_SCORE_MESSAGE =
   'pass_score cannot be changed after attempts exist';
+export const LESSON_ALREADY_HAS_QUIZ_MESSAGE = 'Lesson already has a quiz';
 
 function computePassScorePoints(
   totalPoints: number,
@@ -38,6 +39,15 @@ function computePassScorePoints(
     return 0;
   }
   return Math.ceil((totalPoints * passScore) / 100);
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === '23505'
+  );
 }
 
 @Injectable()
@@ -64,6 +74,15 @@ export class QuizzesService {
   ): Promise<QuizResponse> {
     await this.assertLessonOwnership(courseId, lessonId, instructorId);
 
+    const existingQuiz = await this.quizzesRepository.findOne({
+      where: { lessonId },
+      select: { id: true },
+    });
+
+    if (existingQuiz) {
+      throw new ConflictException(LESSON_ALREADY_HAS_QUIZ_MESSAGE);
+    }
+
     const quiz = this.quizzesRepository.create({
       lessonId,
       title: dto.title.trim(),
@@ -72,7 +91,15 @@ export class QuizzesService {
       passScore: dto.passScore ?? 70,
     });
 
-    const savedQuiz = await this.quizzesRepository.save(quiz);
+    let savedQuiz: Quiz;
+    try {
+      savedQuiz = await this.quizzesRepository.save(quiz);
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictException(LESSON_ALREADY_HAS_QUIZ_MESSAGE);
+      }
+      throw error;
+    }
 
     if (dto.questions?.length) {
       const questions = dto.questions.map((questionDto, index) => {
@@ -94,49 +121,40 @@ export class QuizzesService {
     return this.findOne(savedQuiz.id, instructorId);
   }
 
-  async listByLesson(
+  async findByLesson(
     courseId: string,
     lessonId: string,
     instructorId: string,
-  ): Promise<QuizSummaryResponse[]> {
+  ): Promise<QuizSummaryResponse | null> {
     const lesson = await this.assertLessonOwnership(
       courseId,
       lessonId,
       instructorId,
     );
 
-    const quizzes = await this.quizzesRepository.find({
+    const quiz = await this.quizzesRepository.findOne({
       where: { lessonId },
       order: { createdAt: 'ASC' },
     });
 
-    const quizIds = quizzes.map((quiz) => quiz.id);
-    const questions = quizIds.length
-      ? await this.questionsRepository.find({
-          where: { quizId: In(quizIds) },
-          order: { position: 'ASC', createdAt: 'ASC' },
-        })
-      : [];
-
-    const questionCounts = new Map<string, number>();
-    const totalPointsByQuiz = new Map<string, number>();
-    for (const question of questions) {
-      questionCounts.set(
-        question.quizId,
-        (questionCounts.get(question.quizId) ?? 0) + 1,
-      );
-      totalPointsByQuiz.set(
-        question.quizId,
-        (totalPointsByQuiz.get(question.quizId) ?? 0) + question.points,
-      );
+    if (!quiz) {
+      return null;
     }
 
-    return quizzes.map((quiz) =>
-      this.toQuizSummaryResponse(quiz, lesson.courseId, {
-        questionCount: questionCounts.get(quiz.id) ?? 0,
-        totalPoints: totalPointsByQuiz.get(quiz.id) ?? 0,
-      }),
+    const questions = await this.questionsRepository.find({
+      where: { quizId: quiz.id },
+      order: { position: 'ASC', createdAt: 'ASC' },
+    });
+
+    const totalPoints = questions.reduce(
+      (sum, question) => sum + question.points,
+      0,
     );
+
+    return this.toQuizSummaryResponse(quiz, lesson.courseId, {
+      questionCount: questions.length,
+      totalPoints,
+    });
   }
 
   async findOne(quizId: string, instructorId: string): Promise<QuizResponse> {

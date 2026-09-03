@@ -408,7 +408,10 @@ export class QuizAttemptsService {
     const totalScore = Number(
       questions.reduce((sum, question) => sum + question.score, 0).toFixed(2),
     );
-    const passed = totalScore >= passScorePoints;
+    const pendingEssayCount = questions.filter(
+      (question) => question.status === 'pending_grading',
+    ).length;
+    const passed = totalScore >= passScorePoints && pendingEssayCount === 0;
     const { isLate, lateSeconds } = this.computeLateness(
       startedAt,
       submittedAt,
@@ -430,9 +433,7 @@ export class QuizAttemptsService {
         (question) =>
           question.type === QuestionType.MCQ && question.status !== 'correct',
       ).length,
-      pendingEssayCount: questions.filter(
-        (question) => question.status === 'pending_grading',
-      ).length,
+      pendingEssayCount,
       isLate,
       lateSeconds,
     };
