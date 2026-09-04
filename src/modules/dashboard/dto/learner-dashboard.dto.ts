@@ -21,7 +21,6 @@ export interface LearnerDashboardCourseResponse {
   category: string;
   instructorName: string | null;
   progressPercent: number;
-  completionRatePercent: number;
   status: LearnerDashboardCourseStatus;
   bestQuizScorePercent: number | null;
   bestQuizAttempt: LearnerDashboardBestQuizAttemptResponse | null;

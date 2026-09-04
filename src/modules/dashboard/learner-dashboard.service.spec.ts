@@ -231,7 +231,6 @@ describe('LearnerDashboardService', () => {
         category: 'Programming',
         instructorName: 'Instructor A',
         progressPercent: 25,
-        completionRatePercent: 50,
         status: 'in_progress',
         continueLearning: {
           courseId: courseAId,
@@ -247,7 +246,6 @@ describe('LearnerDashboardService', () => {
         category: 'Data',
         instructorName: 'Instructor B',
         progressPercent: 100,
-        completionRatePercent: 100,
         status: 'completed',
         continueLearning: {
           courseId: courseBId,
@@ -283,6 +281,25 @@ describe('LearnerDashboardService', () => {
       order: { createdAt: 'DESC' },
       take: 5,
     });
+  });
+
+  it('uses enrollment progress instead of recalculating dashboard progress from completed lesson rows', async () => {
+    enrollmentsRepository.find.mockResolvedValue([
+      makeEnrollment({ id: 'enrollment-a', progress: '25.00' }),
+    ]);
+    lessonsRepository.find.mockResolvedValue([
+      makeLesson(lessonA1Id, courseAId, 1),
+      makeLesson(lessonA2Id, courseAId, 2),
+    ]);
+    lessonProgressRepository.find.mockResolvedValue([
+      makeCompletedProgress(lessonA1Id, courseAId),
+      makeCompletedProgress(lessonA2Id, courseAId),
+    ]);
+
+    const result = await service.getDashboard(learnerId);
+
+    expect(result.courses[0].progressPercent).toBe(25);
+    expect(result.courses[0]).not.toHaveProperty('completionRatePercent');
   });
 
   it('selects the highest submitted quiz score per enrolled course', async () => {

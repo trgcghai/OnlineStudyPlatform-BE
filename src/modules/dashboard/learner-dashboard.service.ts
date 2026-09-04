@@ -125,10 +125,6 @@ export class LearnerDashboardService {
     bestAttempt: LearnerDashboardBestQuizAttemptResponse | null,
   ): LearnerDashboardCourseResponse {
     const progressPercent = this.toPercent(enrollment.progress);
-    const completionRatePercent =
-      lessons.length > 0
-        ? this.roundPercent((completedLessonIds.size / lessons.length) * 100)
-        : 0;
     const firstIncompleteLesson = lessons.find(
       (lesson) => !completedLessonIds.has(lesson.id),
     );
@@ -143,7 +139,6 @@ export class LearnerDashboardService {
       category: enrollment.course.category,
       instructorName: enrollment.course.instructor?.name ?? null,
       progressPercent,
-      completionRatePercent,
       status:
         enrollment.completedAt || progressPercent >= 100
           ? 'completed'

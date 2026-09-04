@@ -11,6 +11,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Course, CourseStatus } from '../courses/entities/course.entity';
+import { CourseProgressService } from '../learning/course-progress.service';
 import { Lesson } from '../lessons/entities/lesson.entity';
 import {
   CreateQuestionDto,
@@ -112,6 +113,10 @@ describe('QuizzesService', () => {
   let questionsRepo: ReturnType<typeof createMockRepository<Question>>;
   let attemptsRepo: ReturnType<typeof createMockRepository<QuizAttempt>>;
   let lessonsRepo: ReturnType<typeof createMockRepository<Lesson>>;
+  let courseProgressService: {
+    refreshLessonCompletionsForLesson: jest.Mock;
+    recomputeCourseEnrollmentsProgress: jest.Mock;
+  };
   let mockQueryRunner: {
     manager: { find: jest.Mock; update: jest.Mock };
     connect: jest.Mock;
@@ -131,6 +136,12 @@ describe('QuizzesService', () => {
     attemptsRepo = createMockRepository();
     lessonsRepo = createMockRepository();
     const coursesRepo = createMockRepository<Course>();
+    courseProgressService = {
+      refreshLessonCompletionsForLesson: jest.fn().mockResolvedValue(undefined),
+      recomputeCourseEnrollmentsProgress: jest
+        .fn()
+        .mockResolvedValue(undefined),
+    };
 
     mockQueryRunner = {
       manager: {
@@ -157,6 +168,10 @@ describe('QuizzesService', () => {
           useValue: {
             createQueryRunner: jest.fn().mockReturnValue(mockQueryRunner),
           },
+        },
+        {
+          provide: CourseProgressService,
+          useValue: courseProgressService,
         },
       ],
     }).compile();
@@ -279,6 +294,12 @@ describe('QuizzesService', () => {
         options: [],
         correctAnswers: [],
       });
+      expect(
+        courseProgressService.refreshLessonCompletionsForLesson,
+      ).toHaveBeenCalledWith(lessonId);
+      expect(
+        courseProgressService.recomputeCourseEnrollmentsProgress,
+      ).toHaveBeenCalledWith(courseId);
     });
 
     it('should apply defaults (passScore 70, no time limit, empty description)', async () => {
@@ -299,6 +320,9 @@ describe('QuizzesService', () => {
           passScore: 70,
         }),
       );
+      expect(
+        courseProgressService.refreshLessonCompletionsForLesson,
+      ).toHaveBeenCalledWith(lessonId);
     });
 
     it('should reject creating a second quiz for the same lesson', async () => {
@@ -457,6 +481,31 @@ describe('QuizzesService', () => {
       expect(quizzesRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({ passScore: 80 }),
       );
+      expect(
+        courseProgressService.refreshLessonCompletionsForLesson,
+      ).toHaveBeenCalledWith(lessonId);
+      expect(
+        courseProgressService.recomputeCourseEnrollmentsProgress,
+      ).toHaveBeenCalledWith(courseId);
+    });
+
+    it('should not recompute progress when updating quiz metadata only', async () => {
+      quizzesRepo.findOne.mockResolvedValue(
+        makeQuiz({ id: 'quiz-1', title: 'Updated metadata' }),
+      );
+
+      await service.update('quiz-1', instructorId, {
+        title: 'Updated metadata',
+        description: 'New description',
+        timeLimitMinutes: 45,
+      });
+
+      expect(
+        courseProgressService.refreshLessonCompletionsForLesson,
+      ).not.toHaveBeenCalled();
+      expect(
+        courseProgressService.recomputeCourseEnrollmentsProgress,
+      ).not.toHaveBeenCalled();
     });
 
     it('should block pass_score changes when attempts exist', async () => {
@@ -477,6 +526,12 @@ describe('QuizzesService', () => {
       expect(quizzesRepo.remove).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'quiz-1' }),
       );
+      expect(
+        courseProgressService.refreshLessonCompletionsForLesson,
+      ).toHaveBeenCalledWith(lessonId);
+      expect(
+        courseProgressService.recomputeCourseEnrollmentsProgress,
+      ).toHaveBeenCalledWith(courseId);
     });
 
     it('should block deleting a quiz that has attempts', async () => {
@@ -518,6 +573,12 @@ describe('QuizzesService', () => {
         expect.objectContaining({ position: 3, quizId: 'quiz-1' }),
       );
       expect(result.points).toBe(3);
+      expect(
+        courseProgressService.refreshLessonCompletionsForLesson,
+      ).toHaveBeenCalledWith(lessonId);
+      expect(
+        courseProgressService.recomputeCourseEnrollmentsProgress,
+      ).toHaveBeenCalledWith(courseId);
     });
 
     it('should block adding questions when attempts exist', async () => {
@@ -570,6 +631,12 @@ describe('QuizzesService', () => {
           options: expect.arrayContaining(['A', 'B', 'C', 'D']),
         }),
       );
+      expect(
+        courseProgressService.refreshLessonCompletionsForLesson,
+      ).toHaveBeenCalledWith(lessonId);
+      expect(
+        courseProgressService.recomputeCourseEnrollmentsProgress,
+      ).toHaveBeenCalledWith(courseId);
     });
 
     it('should switch an MCQ to essay and clear options', async () => {
@@ -580,6 +647,9 @@ describe('QuizzesService', () => {
       expect(result.type).toBe(QuestionType.ESSAY);
       expect(result.options).toEqual([]);
       expect(result.correctAnswers).toEqual([]);
+      expect(
+        courseProgressService.refreshLessonCompletionsForLesson,
+      ).toHaveBeenCalledWith(lessonId);
     });
 
     it('should reject an essay question with options', async () => {
@@ -614,6 +684,12 @@ describe('QuizzesService', () => {
         'remaining',
         { position: 0 },
       );
+      expect(
+        courseProgressService.refreshLessonCompletionsForLesson,
+      ).toHaveBeenCalledWith(lessonId);
+      expect(
+        courseProgressService.recomputeCourseEnrollmentsProgress,
+      ).toHaveBeenCalledWith(courseId);
     });
 
     it('should block removing questions when attempts exist', async () => {
@@ -652,6 +728,12 @@ describe('QuizzesService', () => {
         { id: 'q2', quizId: 'quiz-1' },
         { position: 0 },
       );
+      expect(
+        courseProgressService.refreshLessonCompletionsForLesson,
+      ).not.toHaveBeenCalled();
+      expect(
+        courseProgressService.recomputeCourseEnrollmentsProgress,
+      ).not.toHaveBeenCalled();
     });
 
     it('should reject an ordered list that does not cover every question', async () => {

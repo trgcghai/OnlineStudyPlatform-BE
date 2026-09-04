@@ -8,6 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Course } from '../courses/entities/course.entity';
+import { CourseProgressService } from '../learning/course-progress.service';
 import { Lesson } from '../lessons/entities/lesson.entity';
 import {
   CreateQuestionDto,
@@ -64,6 +65,7 @@ export class QuizzesService {
     @InjectRepository(Course)
     private readonly coursesRepository: Repository<Course>,
     private readonly dataSource: DataSource,
+    private readonly courseProgressService: CourseProgressService,
   ) {}
 
   async create(
@@ -72,7 +74,11 @@ export class QuizzesService {
     instructorId: string,
     dto: CreateQuizDto,
   ): Promise<QuizResponse> {
-    await this.assertLessonOwnership(courseId, lessonId, instructorId);
+    const lesson = await this.assertLessonOwnership(
+      courseId,
+      lessonId,
+      instructorId,
+    );
 
     const existingQuiz = await this.quizzesRepository.findOne({
       where: { lessonId },
@@ -117,6 +123,10 @@ export class QuizzesService {
 
       await this.questionsRepository.save(questions);
     }
+
+    await this.refreshProgressForQuizRuleChange(
+      Object.assign(savedQuiz, { lesson }),
+    );
 
     return this.findOne(savedQuiz.id, instructorId);
   }
@@ -181,12 +191,18 @@ export class QuizzesService {
       quiz.timeLimitMinutes = dto.timeLimitMinutes;
     }
 
-    if (dto.passScore !== undefined) {
+    const nextPassScore = dto.passScore;
+    const passScoreChanged = nextPassScore !== undefined;
+
+    if (passScoreChanged) {
       await this.assertNoAttempts(quizId, ATTEMPTS_BLOCKED_PASS_SCORE_MESSAGE);
-      quiz.passScore = dto.passScore;
+      quiz.passScore = nextPassScore;
     }
 
     const savedQuiz = await this.quizzesRepository.save(quiz);
+    if (passScoreChanged) {
+      await this.refreshProgressForQuizRuleChange(savedQuiz);
+    }
     return this.findOwnedWithQuestions(savedQuiz.id, instructorId);
   }
 
@@ -206,6 +222,8 @@ export class QuizzesService {
       }
       throw error;
     }
+
+    await this.refreshProgressForQuizRuleChange(quiz);
   }
 
   async addQuestion(
@@ -232,6 +250,7 @@ export class QuizzesService {
     });
 
     const savedQuestion = await this.questionsRepository.save(question);
+    await this.refreshProgressForQuizRuleChange(quiz);
     return this.toQuestionResponse(savedQuestion);
   }
 
@@ -278,6 +297,7 @@ export class QuizzesService {
     question.correctAnswers = normalized.correctAnswers;
 
     const savedQuestion = await this.questionsRepository.save(question);
+    await this.refreshProgressForQuizRuleChange(question.quiz);
     return this.toQuestionResponse(savedQuestion);
   }
 
@@ -296,6 +316,7 @@ export class QuizzesService {
 
     await this.questionsRepository.remove(question);
     await this.reindexQuestionPositions(question.quizId);
+    await this.refreshProgressForQuizRuleChange(question.quiz);
   }
 
   async reorderQuestions(
@@ -438,6 +459,15 @@ export class QuizzesService {
     if (attemptCount > 0) {
       throw new ConflictException(message);
     }
+  }
+
+  private async refreshProgressForQuizRuleChange(quiz: Quiz): Promise<void> {
+    await this.courseProgressService.refreshLessonCompletionsForLesson(
+      quiz.lessonId,
+    );
+    await this.courseProgressService.recomputeCourseEnrollmentsProgress(
+      quiz.lesson.courseId,
+    );
   }
 
   private async reindexQuestionPositions(quizId: string): Promise<void> {

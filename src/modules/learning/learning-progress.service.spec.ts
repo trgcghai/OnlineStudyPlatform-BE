@@ -17,6 +17,7 @@ import {
   LessonWatchEvent,
   LessonWatchEventType,
 } from './entities/lesson-watch-event.entity';
+import { CourseProgressService } from './course-progress.service';
 import { LearningProgressService } from './learning-progress.service';
 
 describe('LearningProgressService', () => {
@@ -43,6 +44,10 @@ describe('LearningProgressService', () => {
     save: jest.Mock;
   };
   let analyticsEventsRepository: { create: jest.Mock; save: jest.Mock };
+  let courseProgressService: {
+    refreshLessonCompletion: jest.Mock;
+    recomputeEnrollmentProgress: jest.Mock;
+  };
 
   const learnerId = '11111111-1111-4111-8111-111111111111';
   const courseId = '22222222-2222-4222-8222-222222222222';
@@ -131,6 +136,12 @@ describe('LearningProgressService', () => {
       create: jest.fn((value) => value),
       save: jest.fn((value) => value),
     };
+    courseProgressService = {
+      refreshLessonCompletion: jest.fn(),
+      recomputeEnrollmentProgress: jest.fn(() =>
+        Promise.resolve(makeEnrollment({ progress: '50.00' })),
+      ),
+    };
 
     service = new LearningProgressService(
       coursesRepository as unknown as Repository<Course>,
@@ -142,6 +153,7 @@ describe('LearningProgressService', () => {
       watchEventsRepository as unknown as Repository<LessonWatchEvent>,
       analyticsEventsRepository as unknown as Repository<LearningAnalyticsEvent>,
       new LearningAccessService(),
+      courseProgressService as unknown as CourseProgressService,
     );
   });
 
@@ -188,13 +200,9 @@ describe('LearningProgressService', () => {
         lessonCompletedAt: now,
       }),
     );
-    expect(progressRepository.count).toHaveBeenCalledWith({
-      where: {
-        learnerId,
-        courseId,
-        lessonCompletedAt: Not(IsNull()),
-      },
-    });
+    expect(
+      courseProgressService.recomputeEnrollmentProgress,
+    ).toHaveBeenCalledWith(learnerId, courseId);
     expect(analyticsEventsRepository.save).toHaveBeenCalledWith(
       expect.objectContaining({
         learnerId,
@@ -251,7 +259,9 @@ describe('LearningProgressService', () => {
     );
 
     expect(result.lessonProgress.isLessonComplete).toBe(false);
-    expect(enrollmentsRepository.save).not.toHaveBeenCalled();
+    expect(
+      courseProgressService.recomputeEnrollmentProgress,
+    ).not.toHaveBeenCalled();
   });
 
   it('does not complete a lesson with a quiz from watch completion alone', async () => {
@@ -298,27 +308,17 @@ describe('LearningProgressService', () => {
     );
 
     expect(result.lessonProgress.isLessonComplete).toBe(true);
-    expect(enrollmentsRepository.save).toHaveBeenCalled();
+    expect(
+      courseProgressService.recomputeEnrollmentProgress,
+    ).toHaveBeenCalledWith(learnerId, courseId);
   });
 
-  it('completes a watched lesson when a later quiz pass is recorded', async () => {
+  it('refreshes lesson completion before recomputing enrollment progress after quiz pass', async () => {
     arrangeValidContext();
-    const existingProgress = {
-      learnerId,
-      courseId,
+    courseProgressService.refreshLessonCompletion.mockResolvedValue({
       lessonId,
-      watchedSeconds: 540,
-      lastPositionSeconds: 540,
-      watchRatio: '0.9000',
-      watchCompletedAt: now,
-      lessonCompletedAt: null,
-    };
-    progressRepository.findOne.mockResolvedValue(existingProgress);
-    quizzesRepository.findOne.mockResolvedValue({
-      id: '55555555-5555-4555-8555-555555555555',
-      lessonId,
+      lessonCompletedAt: new Date('2026-09-02T00:00:00.000Z'),
     });
-    quizAttemptsRepository.count.mockResolvedValue(1);
 
     await service.recomputeLessonAndEnrollmentProgress(
       learnerId,
@@ -326,10 +326,13 @@ describe('LearningProgressService', () => {
       lessonId,
     );
 
-    expect(progressRepository.save).toHaveBeenCalledWith(
-      expect.objectContaining({ lessonCompletedAt: now }),
+    expect(courseProgressService.refreshLessonCompletion).toHaveBeenCalledWith(
+      learnerId,
+      lessonId,
     );
-    expect(enrollmentsRepository.save).toHaveBeenCalled();
+    expect(
+      courseProgressService.recomputeEnrollmentProgress,
+    ).toHaveBeenCalledWith(learnerId, courseId);
   });
 
   it('rejects non-enrolled learners', async () => {
