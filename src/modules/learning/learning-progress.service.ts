@@ -17,6 +17,7 @@ import { CreateWatchEventDto } from './dto/watch-event.dto';
 import { LearningAnalyticsEvent } from './entities/learning-analytics-event.entity';
 import { LessonProgress } from './entities/lesson-progress.entity';
 import { LessonWatchEvent } from './entities/lesson-watch-event.entity';
+import { CourseProgressService } from './course-progress.service';
 
 const LEARNING_ENROLLMENT_REQUIRED_MESSAGE =
   'Bạn cần đăng ký khóa học để học nội dung này';
@@ -41,6 +42,7 @@ export class LearningProgressService {
     @InjectRepository(LearningAnalyticsEvent)
     private readonly analyticsEventsRepository: Repository<LearningAnalyticsEvent>,
     private readonly learningAccessService: LearningAccessService,
+    private readonly courseProgressService: CourseProgressService,
   ) {}
 
   async recordWatchEvent(
@@ -130,11 +132,17 @@ export class LearningProgressService {
       }),
     );
 
+    let responseEnrollment = enrollment;
+
     if (!wasComplete && updatedProgress.lessonCompletedAt) {
-      await this.recomputeEnrollmentProgress(enrollment, courseId, learnerId);
+      responseEnrollment =
+        await this.courseProgressService.recomputeEnrollmentProgress(
+          learnerId,
+          courseId,
+        );
     }
 
-    return this.toResponse(updatedProgress, enrollment, lessonId);
+    return this.toResponse(updatedProgress, responseEnrollment, lessonId);
   }
 
   async getCompletedLessonIds(
@@ -201,24 +209,17 @@ export class LearningProgressService {
     courseId: string,
     lessonId: string,
   ): Promise<void> {
-    const enrollment = await this.enrollmentsRepository.findOne({
-      where: { learnerId, courseId },
-    });
-    const progress = await this.findProgress(learnerId, lessonId);
+    const progress = await this.courseProgressService.refreshLessonCompletion(
+      learnerId,
+      lessonId,
+    );
 
-    if (
-      !enrollment ||
-      !progress?.watchCompletedAt ||
-      progress.lessonCompletedAt
-    ) {
-      return;
-    }
+    if (!progress) return;
 
-    if (await this.areRequiredActivitiesComplete(learnerId, lessonId)) {
-      progress.lessonCompletedAt = new Date();
-      await this.progressRepository.save(progress);
-      await this.recomputeEnrollmentProgress(enrollment, courseId, learnerId);
-    }
+    await this.courseProgressService.recomputeEnrollmentProgress(
+      learnerId,
+      courseId,
+    );
   }
 
   private async saveProgress(input: {
@@ -292,30 +293,6 @@ export class LearningProgressService {
     });
 
     return passedAttempts > 0;
-  }
-
-  private async recomputeEnrollmentProgress(
-    enrollment: Enrollment,
-    courseId: string,
-    learnerId: string,
-  ): Promise<void> {
-    const totalLessons = await this.lessonsRepository.count({
-      where: { courseId },
-    });
-    const completedLessons = await this.progressRepository.count({
-      where: {
-        learnerId,
-        courseId,
-        lessonCompletedAt: Not(IsNull()),
-      },
-    });
-    const progress =
-      totalLessons > 0 ? (completedLessons / totalLessons) * 100 : 0;
-
-    enrollment.progress = progress.toFixed(2);
-    enrollment.completedAt =
-      progress >= 100 ? (enrollment.completedAt ?? new Date()) : null;
-    await this.enrollmentsRepository.save(enrollment);
   }
 
   private clamp(value: number, max: number): number {

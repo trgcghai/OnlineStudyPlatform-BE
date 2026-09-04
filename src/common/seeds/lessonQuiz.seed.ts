@@ -36,66 +36,67 @@ interface QuizTemplate {
 
 const LESSONS_PER_COURSE = 10;
 const SAMPLE_VIDEO_URL = 'https://samplelib.com/lib/preview/mp4/sample-30s.mp4';
+const SAMPLE_VIDEO_DURATION_SECONDS = 30;
 
 const LESSON_TEMPLATES: LessonTemplate[] = [
   {
     title: 'Overview And Learning Path',
     description: 'Understand the goals, prerequisites, and final outcomes.',
-    duration: 420,
+    duration: SAMPLE_VIDEO_DURATION_SECONDS,
     videoUrl: SAMPLE_VIDEO_URL,
   },
   {
     title: 'Core Concepts',
     description: 'Learn the vocabulary and mental model for the topic.',
-    duration: 720,
+    duration: SAMPLE_VIDEO_DURATION_SECONDS,
     videoUrl: SAMPLE_VIDEO_URL,
   },
   {
     title: 'Hands-On Setup',
     description: 'Prepare the tools and workspace used throughout the course.',
-    duration: 840,
+    duration: SAMPLE_VIDEO_DURATION_SECONDS,
     videoUrl: SAMPLE_VIDEO_URL,
   },
   {
     title: 'Guided Practice',
     description: 'Follow a complete worked example from start to finish.',
-    duration: 960,
+    duration: SAMPLE_VIDEO_DURATION_SECONDS,
     videoUrl: SAMPLE_VIDEO_URL,
   },
   {
     title: 'Common Mistakes',
     description: 'Review common mistakes and learn how to avoid them.',
-    duration: 600,
+    duration: SAMPLE_VIDEO_DURATION_SECONDS,
     videoUrl: SAMPLE_VIDEO_URL,
   },
   {
     title: 'Applied Workflow',
     description: 'Apply the lesson content in a practical workflow.',
-    duration: 1020,
+    duration: SAMPLE_VIDEO_DURATION_SECONDS,
     videoUrl: SAMPLE_VIDEO_URL,
   },
   {
     title: 'Problem Solving Lab',
     description: 'Practice solving realistic problems with structured steps.',
-    duration: 1140,
+    duration: SAMPLE_VIDEO_DURATION_SECONDS,
     videoUrl: SAMPLE_VIDEO_URL,
   },
   {
     title: 'Review And Refinement',
     description: 'Improve your solution and review key trade-offs.',
-    duration: 780,
+    duration: SAMPLE_VIDEO_DURATION_SECONDS,
     videoUrl: SAMPLE_VIDEO_URL,
   },
   {
     title: 'Mini Project',
     description: 'Build a small outcome that combines previous lessons.',
-    duration: 1320,
+    duration: SAMPLE_VIDEO_DURATION_SECONDS,
     videoUrl: SAMPLE_VIDEO_URL,
   },
   {
     title: 'Final Review',
     description: 'Summarize the course and plan the next practice steps.',
-    duration: 540,
+    duration: SAMPLE_VIDEO_DURATION_SECONDS,
     videoUrl: SAMPLE_VIDEO_URL,
   },
 ];
@@ -316,7 +317,7 @@ export class LessonQuizSeed {
             description: `${lessonTemplate.description} Course: ${course.title}.`,
             videoUrl: lessonTemplate.videoUrl,
             materialUrl: null,
-            duration: lessonTemplate.duration + courseIndex * 15,
+            duration: lessonTemplate.duration,
             position: lessonIndex,
             courseId: course.id,
           }),

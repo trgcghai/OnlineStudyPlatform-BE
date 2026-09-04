@@ -11,6 +11,7 @@ import { QuizAttemptsService } from '../quizzes/quiz-attempts.service';
 import { LearningAnalyticsEvent } from './entities/learning-analytics-event.entity';
 import { LessonProgress } from './entities/lesson-progress.entity';
 import { LessonWatchEvent } from './entities/lesson-watch-event.entity';
+import { CourseProgressModule } from './course-progress.module';
 import { LearningController } from './learning.controller';
 import { LearningProgressService } from './learning-progress.service';
 import { LearningService } from './learning.service';
@@ -28,6 +29,7 @@ import { LearningService } from './learning.service';
       LearningAnalyticsEvent,
     ]),
     LessonsModule,
+    CourseProgressModule,
   ],
   controllers: [LearningController, LearnerQuizzesController],
   providers: [LearningService, LearningProgressService, QuizAttemptsService],

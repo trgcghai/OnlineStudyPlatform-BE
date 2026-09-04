@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Course } from '../courses/entities/course.entity';
+import { CourseProgressModule } from '../learning/course-progress.module';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { LearningAnalyticsEvent } from '../learning/entities/learning-analytics-event.entity';
 import { LessonProgress } from '../learning/entities/lesson-progress.entity';
@@ -38,6 +39,7 @@ import { QuizzesService } from './quizzes.service';
       User,
     ]),
     LessonsModule,
+    CourseProgressModule,
   ],
   controllers: [
     QuizzesController,

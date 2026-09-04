@@ -12,6 +12,7 @@ import type { Client as MinioClient } from 'minio';
 import { DataSource, Repository } from 'typeorm';
 import { MINIO_CLIENT } from '../../common/constants/file.constant';
 import { Course } from '../courses/entities/course.entity';
+import { CourseProgressService } from '../learning/course-progress.service';
 import {
   CreateLessonDto,
   LessonListResult,
@@ -32,6 +33,7 @@ export class LessonsService {
     private readonly configService: ConfigService,
     @Inject(MINIO_CLIENT) private readonly minioClient: MinioClient,
     private readonly dataSource: DataSource,
+    private readonly courseProgressService: CourseProgressService,
   ) {}
 
   async listByCourse(
@@ -128,6 +130,9 @@ export class LessonsService {
       }
 
       await this.lessonsRepository.save(savedLesson);
+      await this.courseProgressService.recomputeCourseEnrollmentsProgress(
+        courseId,
+      );
       return this.toLessonResponse(savedLesson);
     } catch (error) {
       await this.cleanupUploadedFiles(uploadedKeys);
@@ -237,6 +242,9 @@ export class LessonsService {
     await this.deleteObjectsQuietly(keysToDelete);
 
     await this.reindexPositions(lesson.courseId);
+    await this.courseProgressService.recomputeCourseEnrollmentsProgress(
+      lesson.courseId,
+    );
   }
 
   async reorder(

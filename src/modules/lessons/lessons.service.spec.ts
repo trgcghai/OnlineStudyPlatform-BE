@@ -15,6 +15,7 @@ import { lessonFileFilter } from './lessons.controller';
 import { ReorderLessonsDto } from './dto/lesson.dto';
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
+import { CourseProgressService } from '../learning/course-progress.service';
 
 const MINIO_CLIENT = 'MINIO_CLIENT';
 
@@ -69,6 +70,9 @@ describe('LessonsService', () => {
   let lessonsRepo: ReturnType<typeof createMockRepository<Lesson>>;
   let coursesRepo: ReturnType<typeof createMockRepository<Course>>;
   let minioClient: Record<string, jest.Mock>;
+  let courseProgressService: {
+    recomputeCourseEnrollmentsProgress: jest.Mock;
+  };
   let mockQueryRunner: {
     manager: { find: jest.Mock; update: jest.Mock };
     connect: jest.Mock;
@@ -89,6 +93,11 @@ describe('LessonsService', () => {
     minioClient = {
       putObject: jest.fn().mockResolvedValue(undefined),
       removeObject: jest.fn().mockResolvedValue(undefined),
+    };
+    courseProgressService = {
+      recomputeCourseEnrollmentsProgress: jest
+        .fn()
+        .mockResolvedValue(undefined),
     };
 
     mockQueryRunner = {
@@ -133,6 +142,10 @@ describe('LessonsService', () => {
           useValue: {
             createQueryRunner: jest.fn().mockReturnValue(mockQueryRunner),
           },
+        },
+        {
+          provide: CourseProgressService,
+          useValue: courseProgressService,
         },
       ],
     }).compile();
@@ -224,6 +237,9 @@ describe('LessonsService', () => {
           courseId,
         }),
       );
+      expect(
+        courseProgressService.recomputeCourseEnrollmentsProgress,
+      ).toHaveBeenCalledWith(courseId);
     });
 
     it('should upload video when provided', async () => {
@@ -362,6 +378,9 @@ describe('LessonsService', () => {
       // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(lessonsRepo.remove).toHaveBeenCalledWith(lesson);
       expect(minioClient.removeObject).toHaveBeenCalledTimes(2);
+      expect(
+        courseProgressService.recomputeCourseEnrollmentsProgress,
+      ).toHaveBeenCalledWith(lesson.courseId);
     });
 
     it('should reindex positions after deletion', async () => {
