@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import { ConfigService } from './config.service';
 import {
   DEFAULT_PAYMENT_CONFIG,
+  PaymentConfigCurrency,
   UpdatePaymentConfigDto,
 } from './dto/config.dto';
 import { PaymentConfig } from './schemas/config.schema';
@@ -11,6 +12,7 @@ import { PaymentConfigAudit } from './schemas/config-audit.schema';
 
 const CONFIG_ID = 'config-id';
 const ACTOR_ID = 'admin-id';
+const ACTOR_EMAIL = 'admin@example.com';
 
 function mockQuery<T>(value: T) {
   return { exec: jest.fn().mockResolvedValue(value) };
@@ -58,7 +60,7 @@ describe('ConfigService', () => {
     currency: 'VND',
     allowedPrices: [199000, 0, 99000],
     freeCourseLimit: 5,
-    minimumWithdrawalAmount: 200000,
+    minimumWithdrawalAmount: 2000000,
   };
 
   beforeEach(async () => {
@@ -161,7 +163,7 @@ describe('ConfigService', () => {
       platformFeePercent: 15,
       allowedPrices: [0, 99000, 199000],
       freeCourseLimit: 5,
-      minimumWithdrawalAmount: 200000,
+      minimumWithdrawalAmount: 2000000,
       updatedById: ACTOR_ID,
     });
     current.save = jest.fn().mockResolvedValue(saved);
@@ -170,7 +172,7 @@ describe('ConfigService', () => {
       _id: { toString: () => 'audit-id' },
     });
 
-    const result = await service.updateConfig(ACTOR_ID, updateDto);
+    const result = await service.updateConfig(ACTOR_ID, ACTOR_EMAIL, updateDto);
 
     expect(current.platformFeePercent).toBe(15);
     expect(current.allowedPrices).toEqual([0, 99000, 199000]);
@@ -179,6 +181,7 @@ describe('ConfigService', () => {
       expect.objectContaining({
         configId: CONFIG_ID,
         actorId: ACTOR_ID,
+        actorEmail: ACTOR_EMAIL,
         changedFields: expect.arrayContaining([
           'platformFeePercent',
           'allowedPrices',
@@ -194,7 +197,7 @@ describe('ConfigService', () => {
     const current = createConfig({ updatedById: ACTOR_ID });
     configModel.findOne.mockReturnValue(mockQuery(current));
 
-    const result = await service.updateConfig(ACTOR_ID, {
+    const result = await service.updateConfig(ACTOR_ID, ACTOR_EMAIL, {
       platformFeePercent: DEFAULT_PAYMENT_CONFIG.platformFeePercent,
       currency: 'VND',
       allowedPrices: [...DEFAULT_PAYMENT_CONFIG.allowedPrices],
@@ -211,7 +214,7 @@ describe('ConfigService', () => {
     const current = createConfig({ updatedById: null });
     configModel.findOne.mockReturnValue(mockQuery(current));
 
-    await service.updateConfig(ACTOR_ID, {
+    await service.updateConfig(ACTOR_ID, ACTOR_EMAIL, {
       platformFeePercent: DEFAULT_PAYMENT_CONFIG.platformFeePercent,
       currency: 'VND',
       allowedPrices: [...DEFAULT_PAYMENT_CONFIG.allowedPrices],
@@ -229,6 +232,7 @@ describe('ConfigService', () => {
       _id: { toString: () => 'audit-id' },
       configId: CONFIG_ID,
       actorId: ACTOR_ID,
+      actorEmail: ACTOR_EMAIL,
       previousValue: { ...DEFAULT_PAYMENT_CONFIG },
       newValue: { ...DEFAULT_PAYMENT_CONFIG, platformFeePercent: 15 },
       changedFields: ['platformFeePercent'],
@@ -239,8 +243,16 @@ describe('ConfigService', () => {
 
     const result = await service.listAudits({ page: 1, limit: 10 });
 
+    expect(result.items[0]).not.toHaveProperty('actorId');
+
     expect(result).toEqual({
-      items: [expect.objectContaining({ id: 'audit-id', configId: CONFIG_ID })],
+      items: [
+        expect.objectContaining({
+          id: 'audit-id',
+          configId: CONFIG_ID,
+          actorEmail: ACTOR_EMAIL,
+        }),
+      ],
       total: 1,
       page: 1,
       limit: 10,
@@ -252,13 +264,14 @@ describe('ConfigService', () => {
     ['fee below zero', { platformFeePercent: -1 }],
     ['fee above 100', { platformFeePercent: 100.01 }],
     ['invalid fee value', { platformFeePercent: Number.NaN }],
-    ['unsupported currency', { currency: 'USD' }],
+    ['unsupported currency', { currency: 'USD' as PaymentConfigCurrency }],
     ['empty prices', { allowedPrices: [] }],
     ['missing free price', { allowedPrices: [99000] }],
     ['duplicate prices', { allowedPrices: [0, 99000, 99000] }],
     ['negative price', { allowedPrices: [0, -1] }],
     ['negative free course limit', { freeCourseLimit: -1 }],
-    ['zero minimum withdrawal', { minimumWithdrawalAmount: 0 }],
+    ['minimum withdrawal below policy', { minimumWithdrawalAmount: 999999 }],
+    ['minimum withdrawal off step', { minimumWithdrawalAmount: 1050000 }],
   ])('rejects %s', async (_name, patch) => {
     configModel.findOne.mockReturnValue(mockQuery(createConfig()));
     const validDto: UpdatePaymentConfigDto = {
@@ -266,11 +279,11 @@ describe('ConfigService', () => {
       currency: 'VND',
       allowedPrices: [0, 99000],
       freeCourseLimit: 3,
-      minimumWithdrawalAmount: 100000,
+      minimumWithdrawalAmount: 1000000,
     };
 
     await expect(
-      service.updateConfig(ACTOR_ID, { ...validDto, ...patch }),
+      service.updateConfig(ACTOR_ID, ACTOR_EMAIL, { ...validDto, ...patch }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 

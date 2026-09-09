@@ -24,9 +24,10 @@ export class ConfigController {
   @Put()
   updateConfig(
     @CurrentUser('id') actorId: string,
+    @CurrentUser('email') actorEmail: string,
     @Body() dto: UpdatePaymentConfigDto,
   ) {
-    return this.configService.updateConfig(actorId, dto);
+    return this.configService.updateConfig(actorId, actorEmail, dto);
   }
 
   @Get('audits')

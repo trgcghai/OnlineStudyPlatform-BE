@@ -59,17 +59,21 @@ describe('ConfigController', () => {
       currency: 'VND' as const,
       allowedPrices: [0, 99000],
       freeCourseLimit: 3,
-      minimumWithdrawalAmount: 100000,
+      minimumWithdrawalAmount: 1000000,
     };
     const response = {
       id: 'config-id',
     } as Awaited<ReturnType<ConfigService['updateConfig']>>;
     service.updateConfig.mockResolvedValue(response);
 
-    await expect(controller.updateConfig('admin-id', dto)).resolves.toBe(
-      response,
-    );
-    expect(service.updateConfig.mock.calls[0]).toEqual(['admin-id', dto]);
+    await expect(
+      controller.updateConfig('admin-id', 'admin@example.com', dto),
+    ).resolves.toBe(response);
+    expect(service.updateConfig.mock.calls[0]).toEqual([
+      'admin-id',
+      'admin@example.com',
+      dto,
+    ]);
   });
 
   it('lists audits', async () => {

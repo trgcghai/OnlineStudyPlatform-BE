@@ -15,6 +15,9 @@ export class PaymentConfigAudit {
   @Prop({ required: true, type: String })
   actorId!: string;
 
+  @Prop({ required: true, type: String })
+  actorEmail!: string;
+
   @Prop({ required: true, type: MongooseSchema.Types.Mixed })
   previousValue!: PaymentConfigSnapshot;
 

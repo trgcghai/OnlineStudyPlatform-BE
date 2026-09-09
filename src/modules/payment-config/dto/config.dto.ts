@@ -14,13 +14,15 @@ import {
 export const PAYMENT_CONFIG_SUPPORTED_CURRENCIES = ['VND'] as const;
 export type PaymentConfigCurrency =
   (typeof PAYMENT_CONFIG_SUPPORTED_CURRENCIES)[number];
+export const MINIMUM_WITHDRAWAL_AMOUNT_MIN = 1000000; // 1 million VND
+export const MINIMUM_WITHDRAWAL_AMOUNT_STEP = 100000; // 100k VND
 
 export const DEFAULT_PAYMENT_CONFIG = {
   platformFeePercent: 20,
   currency: 'VND' as PaymentConfigCurrency,
   allowedPrices: [0, 99000, 199000, 299000, 499000, 799000, 999000],
   freeCourseLimit: 3,
-  minimumWithdrawalAmount: 100000,
+  minimumWithdrawalAmount: MINIMUM_WITHDRAWAL_AMOUNT_MIN,
   updatedById: null,
 } as const;
 
@@ -47,7 +49,7 @@ export class UpdatePaymentConfigDto {
   freeCourseLimit!: number | null;
 
   @IsInt()
-  @Min(1)
+  @Min(MINIMUM_WITHDRAWAL_AMOUNT_MIN)
   minimumWithdrawalAmount!: number;
 }
 
@@ -90,7 +92,7 @@ export interface PaymentConfigSnapshot {
 export interface PaymentConfigAuditResponse {
   id: string;
   configId: string;
-  actorId: string;
+  actorEmail: string;
   previousValue: PaymentConfigSnapshot;
   newValue: PaymentConfigSnapshot;
   changedFields: string[];

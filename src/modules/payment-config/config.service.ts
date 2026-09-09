@@ -4,6 +4,8 @@ import { Model } from 'mongoose';
 import {
   DEFAULT_PAYMENT_CONFIG,
   ListPaymentConfigAuditsQueryDto,
+  MINIMUM_WITHDRAWAL_AMOUNT_MIN,
+  MINIMUM_WITHDRAWAL_AMOUNT_STEP,
   PaymentConfigAuditListResult,
   PaymentConfigAuditResponse,
   PaymentConfigResponse,
@@ -76,6 +78,7 @@ export class ConfigService implements OnModuleInit {
 
   async updateConfig(
     actorId: string,
+    actorEmail: string,
     dto: UpdatePaymentConfigDto,
   ): Promise<PaymentConfigResponse> {
     await this.ensureDefaultConfig();
@@ -108,6 +111,7 @@ export class ConfigService implements OnModuleInit {
     await this.auditModel.create({
       configId: this.getDocumentId(saved),
       actorId,
+      actorEmail,
       previousValue,
       newValue: this.toSnapshot(saved),
       changedFields,
@@ -211,10 +215,11 @@ export class ConfigService implements OnModuleInit {
 
     if (
       !Number.isInteger(dto.minimumWithdrawalAmount) ||
-      dto.minimumWithdrawalAmount <= 0
+      dto.minimumWithdrawalAmount < MINIMUM_WITHDRAWAL_AMOUNT_MIN ||
+      dto.minimumWithdrawalAmount % MINIMUM_WITHDRAWAL_AMOUNT_STEP !== 0
     ) {
       throw new BadRequestException(
-        'Minimum withdrawal amount must be a positive integer',
+        'Minimum withdrawal amount must be at least 1000000 and use 100000 increments',
       );
     }
 
@@ -289,7 +294,7 @@ export class ConfigService implements OnModuleInit {
     return {
       id: this.getDocumentId(audit),
       configId: audit.configId,
-      actorId: audit.actorId,
+      actorEmail: audit.actorEmail,
       previousValue: audit.previousValue,
       newValue: audit.newValue,
       changedFields: audit.changedFields,
