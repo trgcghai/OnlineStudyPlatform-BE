@@ -15,6 +15,8 @@ import {
   CourseLearningOrder,
   CourseStatus,
 } from './entities/course.entity';
+import { Question, QuestionType } from '../quizzes/entities/question.entity';
+import { Quiz } from '../quizzes/entities/quiz.entity';
 
 describe('CoursesService', () => {
   let service: CoursesService;
@@ -29,6 +31,8 @@ describe('CoursesService', () => {
   let minioClient: { putObject: jest.Mock; removeObject: jest.Mock };
   let enrollmentRepo: { exists: jest.Mock };
   let lessonsRepo: { find: jest.Mock };
+  let quizzesRepo: { find: jest.Mock };
+  let questionsRepo: { find: jest.Mock };
   let notificationsService: {
     createQueueNotification: jest.Mock;
     createDirectNotification: jest.Mock;
@@ -83,6 +87,33 @@ describe('CoursesService', () => {
     ...overrides,
   });
 
+  const makeQuiz = (overrides: Partial<Quiz> = {}): Quiz => ({
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    lessonId: '55555555-5555-4555-8555-555555555555',
+    title: 'Bai kiem tra hoc ky',
+    description: '',
+    timeLimitMinutes: 10,
+    passScore: 70,
+    questions: [],
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    updatedAt: new Date('2026-01-01T00:00:00Z'),
+    ...overrides,
+  });
+
+  const makeQuestion = (overrides: Partial<Question> = {}): Question => ({
+    id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    quizId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    content: 'Cau hoi kiem tra',
+    type: QuestionType.MCQ,
+    options: ['A', 'B'],
+    correctAnswers: [0],
+    points: 5,
+    position: 0,
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    updatedAt: new Date('2026-01-01T00:00:00Z'),
+    ...overrides,
+  });
+
   beforeEach(() => {
     repo = {
       create: jest.fn((input: Partial<Course>) => input),
@@ -107,6 +138,8 @@ describe('CoursesService', () => {
     };
     enrollmentRepo = { exists: jest.fn() };
     lessonsRepo = { find: jest.fn().mockResolvedValue([]) };
+    quizzesRepo = { find: jest.fn().mockResolvedValue([]) };
+    questionsRepo = { find: jest.fn().mockResolvedValue([]) };
     notificationsService = {
       createQueueNotification: jest.fn(),
       createDirectNotification: jest.fn(),
@@ -131,6 +164,8 @@ describe('CoursesService', () => {
       dataSource as unknown as DataSource,
       enrollmentRepo as never,
       lessonsRepo as unknown as Repository<Lesson>,
+      quizzesRepo as unknown as Repository<Quiz>,
+      questionsRepo as unknown as Repository<Question>,
     );
   });
 
@@ -1082,6 +1117,84 @@ describe('CoursesService', () => {
         new InternalServerErrorException('Could not upload course thumbnail'),
       );
       expect(repo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listLessonsWithQuizzes', () => {
+    it('returns lessons with their quiz summaries when a quiz exists', async () => {
+      const lesson = makeLesson();
+      const quiz = makeQuiz({ lessonId: lesson.id });
+      const question = makeQuestion({ quizId: quiz.id, points: 5 });
+
+      repo.findOne.mockResolvedValue(makeCourse());
+      lessonsRepo.find.mockResolvedValue([lesson]);
+      quizzesRepo.find.mockResolvedValue([quiz]);
+      questionsRepo.find.mockResolvedValue([question]);
+
+      const result = await service.listLessonsWithQuizzes(courseId);
+
+      expect(result.total).toBe(1);
+      expect(result.courseId).toBe(courseId);
+      expect(result.courseTitle).toBe('Lap trinh NestJS');
+      expect(result.items[0]).toMatchObject({
+        lesson: { id: lesson.id, title: lesson.title, courseId },
+        quiz: {
+          id: quiz.id,
+          lessonId: lesson.id,
+          courseId,
+          questionCount: 1,
+          totalPoints: 5,
+          passScorePoints: 4,
+          passScore: 70,
+        },
+      });
+
+      expect(questionsRepo.find).toHaveBeenCalledTimes(1);
+      const questionQuery = questionsRepo.find.mock.calls[0][0] as {
+        where: { quizId: { _value: string[] } };
+      };
+      expect(questionQuery.where.quizId._value).toEqual([quiz.id]);
+    });
+
+    it('returns a null quiz for a lesson without a quiz', async () => {
+      const lesson = makeLesson();
+
+      repo.findOne.mockResolvedValue(makeCourse());
+      lessonsRepo.find.mockResolvedValue([lesson]);
+      quizzesRepo.find.mockResolvedValue([]);
+
+      const result = await service.listLessonsWithQuizzes(courseId);
+
+      expect(result.total).toBe(1);
+      expect(result.items[0].quiz).toBeNull();
+
+      expect(questionsRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('returns an empty list when the course has no lessons', async () => {
+      repo.findOne.mockResolvedValue(makeCourse());
+      lessonsRepo.find.mockResolvedValue([]);
+
+      const result = await service.listLessonsWithQuizzes(courseId);
+
+      expect(result).toEqual({
+        items: [],
+        total: 0,
+        courseId,
+        courseTitle: 'Lap trinh NestJS',
+      });
+
+      expect(quizzesRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when the course does not exist', async () => {
+      repo.findOne.mockResolvedValue(null);
+
+      await expect(service.listLessonsWithQuizzes(courseId)).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expect(lessonsRepo.find).not.toHaveBeenCalled();
     });
   });
 });

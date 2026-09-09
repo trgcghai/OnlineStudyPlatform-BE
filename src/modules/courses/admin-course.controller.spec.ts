@@ -4,11 +4,11 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ROLES_KEY } from '../../common/constants/auth.constant';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { UserRole } from '../users/entities/user.entity';
-import { AdminCourseContentController } from './admin-course-content.controller';
-import { AdminCourseContentService } from './admin-course-content.service';
+import { AdminCourseController } from './admin-course.controller';
+import { CoursesService } from './courses.service';
 
-describe('AdminCourseContentController', () => {
-  let controller: AdminCourseContentController;
+describe('AdminCourseController', () => {
+  let controller: AdminCourseController;
   let service: {
     listLessonsWithQuizzes: jest.Mock;
   };
@@ -21,11 +21,11 @@ describe('AdminCourseContentController', () => {
     };
 
     const module: TestingModule = await Test.createTestingModule({
-      controllers: [AdminCourseContentController],
-      providers: [{ provide: AdminCourseContentService, useValue: service }],
+      controllers: [AdminCourseController],
+      providers: [{ provide: CoursesService, useValue: service }],
     }).compile();
 
-    controller = module.get(AdminCourseContentController);
+    controller = module.get(AdminCourseController);
   });
 
   it('delegates lesson listing with quiz summaries to the service', async () => {
@@ -35,9 +35,9 @@ describe('AdminCourseContentController', () => {
   });
 });
 
-describe('AdminCourseContentController RBAC', () => {
+describe('AdminCourseController RBAC', () => {
   const handler = Object.getOwnPropertyDescriptor(
-    AdminCourseContentController.prototype,
+    AdminCourseController.prototype,
     'listLessonsWithQuizzes',
   )?.value;
 
@@ -49,15 +49,15 @@ describe('AdminCourseContentController RBAC', () => {
       getRequest: <T>() => ({ user }) as T,
     }),
     getHandler: () => handler,
-    getClass: () => AdminCourseContentController,
+    getClass: () => AdminCourseController,
   });
 
   const reflector = new Reflector();
 
   it('restricts the controller class to Admin', () => {
-    expect(
-      Reflect.getMetadata(ROLES_KEY, AdminCourseContentController),
-    ).toEqual([UserRole.ADMIN]);
+    expect(Reflect.getMetadata(ROLES_KEY, AdminCourseController)).toEqual([
+      UserRole.ADMIN,
+    ]);
   });
 
   it('allows an Admin through', () => {

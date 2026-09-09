@@ -11,6 +11,8 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { CourseLearningOrder, CourseStatus } from '../entities/course.entity';
+import type { LessonResponse } from '../../lessons/dto/lesson.dto';
+import type { QuizSummaryResponse } from '../../quizzes/dto/quiz.dto';
 
 const trimString = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
@@ -259,4 +261,16 @@ export interface CourseListResult {
   page: number;
   limit: number;
   totalPages: number;
+}
+
+export interface AdminCourseLessonItem {
+  lesson: LessonResponse;
+  quiz: QuizSummaryResponse | null;
+}
+
+export interface AdminCourseContentListResult {
+  items: AdminCourseLessonItem[];
+  total: number;
+  courseId: string;
+  courseTitle: string;
 }

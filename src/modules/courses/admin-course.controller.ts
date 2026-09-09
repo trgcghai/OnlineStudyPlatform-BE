@@ -9,18 +9,16 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { UserRole } from '../users/entities/user.entity';
-import { AdminCourseContentService } from './admin-course-content.service';
+import { CoursesService } from './courses.service';
 
 @Controller('admin/courses')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN)
-export class AdminCourseContentController {
-  constructor(
-    private readonly adminCourseContentService: AdminCourseContentService,
-  ) {}
+export class AdminCourseController {
+  constructor(private readonly coursesService: CoursesService) {}
 
   @Get(':courseId/lessons')
   listLessonsWithQuizzes(@Param('courseId', ParseUUIDPipe) courseId: string) {
-    return this.adminCourseContentService.listLessonsWithQuizzes(courseId);
+    return this.coursesService.listLessonsWithQuizzes(courseId);
   }
 }
