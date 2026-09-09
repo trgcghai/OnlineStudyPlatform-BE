@@ -1,20 +1,42 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Course, CourseStatus } from '../courses/entities/course.entity';
+import { LessonProgress } from '../learning/entities/lesson-progress.entity';
+import { QuizAttemptStatus } from '../quizzes/dto/quiz-attempt.dto';
+import { QuizAttempt } from '../quizzes/entities/quiz-attempt.entity';
 import {
+  CourseEnrollmentCompletionStatus,
+  CourseEnrollmentListItemResponse,
+  CourseEnrollmentListResponse,
+  CourseEnrollmentQuizSummaryResponse,
   EnrollmentCourseResponse,
   EnrollmentResponse,
+  ListCourseEnrollmentsQueryDto,
 } from './dto/enrollment.dto';
 import { Enrollment } from './entities/enrollment.entity';
 
 const DUPLICATE_ENROLLMENT_ERROR = 'Bạn đã đăng ký khóa học này';
 const PUBLISHED_ONLY_ERROR = 'Chỉ có thể đăng ký khóa học đã xuất bản';
+
+interface LessonActivityRaw {
+  learnerId: string;
+  lastLessonActivityAt: Date | string | null;
+}
+
+interface QuizSummaryRaw {
+  learnerId: string;
+  bestScore: string | number | null;
+  latestAttemptAt: Date | string | null;
+  passedCount: string | number | null;
+  attemptCount: string | number | null;
+}
 
 @Injectable()
 export class EnrollmentsService {
@@ -23,6 +45,10 @@ export class EnrollmentsService {
     private readonly enrollmentsRepository: Repository<Enrollment>,
     @InjectRepository(Course)
     private readonly coursesRepository: Repository<Course>,
+    @InjectRepository(LessonProgress)
+    private readonly lessonProgressRepository: Repository<LessonProgress>,
+    @InjectRepository(QuizAttempt)
+    private readonly quizAttemptsRepository: Repository<QuizAttempt>,
   ) {}
 
   async enroll(
@@ -79,6 +105,64 @@ export class EnrollmentsService {
     );
   }
 
+  async findCourseEnrollmentsForInstructor(
+    instructorId: string,
+    courseId: string,
+    query: ListCourseEnrollmentsQueryDto,
+  ): Promise<CourseEnrollmentListResponse> {
+    await this.assertCourseOwnership(instructorId, courseId);
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const queryBuilder = this.enrollmentsRepository
+      .createQueryBuilder('enrollment')
+      .leftJoinAndSelect('enrollment.learner', 'learner')
+      .where('enrollment.courseId = :courseId', { courseId });
+
+    if (query.q) {
+      queryBuilder.andWhere(
+        '(LOWER(learner.name) LIKE :q OR LOWER(learner.email) LIKE :q)',
+        { q: `%${query.q.toLowerCase()}%` },
+      );
+    }
+
+    const [enrollments, total] = await queryBuilder
+      .orderBy('enrollment.enrolledAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    if (enrollments.length === 0) {
+      return {
+        items: [],
+        total,
+        page,
+        limit,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      };
+    }
+
+    const learnerIds = enrollments.map((enrollment) => enrollment.learnerId);
+    const [lessonActivityByLearner, quizSummaryByLearner] = await Promise.all([
+      this.getLessonActivityByLearner(courseId, learnerIds),
+      this.getQuizSummaryByLearner(courseId, learnerIds),
+    ]);
+
+    return {
+      items: enrollments.map((enrollment) =>
+        this.toCourseEnrollmentListItem(
+          enrollment,
+          lessonActivityByLearner,
+          quizSummaryByLearner,
+        ),
+      ),
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
   async isLearnerEnrolled(
     learnerId: string,
     courseId: string,
@@ -88,6 +172,100 @@ export class EnrollmentsService {
     });
   }
 
+  private async assertCourseOwnership(
+    instructorId: string,
+    courseId: string,
+  ): Promise<Course> {
+    const course = await this.coursesRepository.findOne({
+      where: { id: courseId },
+    });
+
+    if (!course) {
+      throw new NotFoundException('Course not found');
+    }
+
+    if (course.instructorId !== instructorId) {
+      throw new ForbiddenException('You do not own this course');
+    }
+
+    return course;
+  }
+
+  private async getLessonActivityByLearner(
+    courseId: string,
+    learnerIds: string[],
+  ): Promise<Map<string, Date>> {
+    const rows = await this.lessonProgressRepository
+      .createQueryBuilder('progress')
+      .select('progress.learnerId', 'learnerId')
+      .addSelect('MAX(progress.updatedAt)', 'lastLessonActivityAt')
+      .where('progress.courseId = :courseId', { courseId })
+      .andWhere('progress.learnerId IN (:...learnerIds)', { learnerIds })
+      .groupBy('progress.learnerId')
+      .getRawMany<LessonActivityRaw>();
+
+    return new Map(
+      rows
+        .filter((row) => row.lastLessonActivityAt)
+        .map((row) => [
+          row.learnerId,
+          new Date(row.lastLessonActivityAt as Date | string),
+        ]),
+    );
+  }
+
+  private async getQuizSummaryByLearner(
+    courseId: string,
+    learnerIds: string[],
+  ): Promise<Map<string, CourseEnrollmentQuizSummaryResponse>> {
+    const rows = await this.quizAttemptsRepository
+      .createQueryBuilder('attempt')
+      .leftJoin('attempt.quiz', 'quiz')
+      .leftJoin('quiz.lesson', 'lesson')
+      .select('attempt.learnerId', 'learnerId')
+      .addSelect('MAX(CAST(attempt.score AS numeric))', 'bestScore')
+      .addSelect(
+        'MAX(COALESCE(attempt.submitted_at, attempt.updated_at))',
+        'latestAttemptAt',
+      )
+      .addSelect(
+        'SUM(CASE WHEN attempt.passed = true THEN 1 ELSE 0 END)',
+        'passedCount',
+      )
+      .addSelect('COUNT(attempt.id)', 'attemptCount')
+      .where('lesson.courseId = :courseId', { courseId })
+      .andWhere('attempt.learnerId IN (:...learnerIds)', { learnerIds })
+      .andWhere('attempt.status IN (:...completedStatuses)', {
+        completedStatuses: [
+          QuizAttemptStatus.PASSED,
+          QuizAttemptStatus.NOT_PASSED,
+        ],
+      })
+      .groupBy('attempt.learnerId')
+      .getRawMany<QuizSummaryRaw>();
+
+    return new Map(
+      rows.map((row) => {
+        const attemptCount = Number(row.attemptCount ?? 0);
+        const passedCount = Number(row.passedCount ?? 0);
+
+        return [
+          row.learnerId,
+          {
+            bestScore:
+              row.bestScore === null || row.bestScore === undefined
+                ? null
+                : Number(row.bestScore),
+            latestAttemptAt: row.latestAttemptAt
+              ? new Date(row.latestAttemptAt)
+              : null,
+            passed: attemptCount === 0 ? null : passedCount > 0,
+          },
+        ];
+      }),
+    );
+  }
+
   private isUniqueConstraintError(error: unknown): boolean {
     return (
       typeof error === 'object' &&
@@ -95,6 +273,65 @@ export class EnrollmentsService {
       'code' in error &&
       error.code === '23505'
     );
+  }
+
+  private toCourseEnrollmentListItem(
+    enrollment: Enrollment,
+    lessonActivityByLearner: Map<string, Date>,
+    quizSummaryByLearner: Map<string, CourseEnrollmentQuizSummaryResponse>,
+  ): CourseEnrollmentListItemResponse {
+    const lessonActivityAt = lessonActivityByLearner.get(enrollment.learnerId);
+    const quizSummary = quizSummaryByLearner.get(enrollment.learnerId) ?? {
+      bestScore: null,
+      latestAttemptAt: null,
+      passed: null,
+    };
+
+    return {
+      enrollmentId: enrollment.id,
+      learner: {
+        id: enrollment.learner.id,
+        name: enrollment.learner.name,
+        email: enrollment.learner.email,
+      },
+      enrolledAt: enrollment.enrolledAt,
+      progress: enrollment.progress,
+      completionStatus: this.getCompletionStatus(enrollment),
+      completedAt: enrollment.completedAt,
+      lastActivityAt: this.getLatestDate(
+        lessonActivityAt ?? null,
+        quizSummary.latestAttemptAt,
+      ),
+      quizSummary,
+    };
+  }
+
+  private getCompletionStatus(
+    enrollment: Enrollment,
+  ): CourseEnrollmentCompletionStatus {
+    const progress = Number(enrollment.progress);
+
+    if (enrollment.completedAt || progress >= 100) {
+      return 'completed';
+    }
+
+    if (progress > 0) {
+      return 'in_progress';
+    }
+
+    return 'not_started';
+  }
+
+  private getLatestDate(...dates: Array<Date | null>): Date | null {
+    const timestamps = dates
+      .filter((date): date is Date => Boolean(date))
+      .map((date) => date.getTime());
+
+    if (timestamps.length === 0) {
+      return null;
+    }
+
+    return new Date(Math.max(...timestamps));
   }
 
   private toEnrollmentResponse(enrollment: Enrollment): EnrollmentResponse {
