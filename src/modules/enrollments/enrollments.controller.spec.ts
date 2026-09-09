@@ -9,13 +9,22 @@ import { EnrollmentsService } from './enrollments.service';
 
 describe('EnrollmentsController', () => {
   let controller: EnrollmentsController;
-  let service: { enroll: jest.Mock; findMine: jest.Mock };
+  let service: {
+    enroll: jest.Mock;
+    findMine: jest.Mock;
+    findCourseEnrollmentsForInstructor: jest.Mock;
+  };
 
   const learnerId = '11111111-1111-4111-8111-111111111111';
   const courseId = '22222222-2222-4222-8222-222222222222';
+  const instructorId = '33333333-3333-4333-8333-333333333333';
 
   beforeEach(async () => {
-    service = { enroll: jest.fn(), findMine: jest.fn() };
+    service = {
+      enroll: jest.fn(),
+      findMine: jest.fn(),
+      findCourseEnrollmentsForInstructor: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [EnrollmentsController],
@@ -36,10 +45,27 @@ describe('EnrollmentsController', () => {
 
     expect(service.findMine).toHaveBeenCalledWith(learnerId);
   });
+
+  it('delegates instructor course enrollment listing to the service', async () => {
+    const query = { page: 1, limit: 10, q: 'tran' };
+
+    await controller.findCourseEnrollmentsForInstructor(
+      courseId,
+      instructorId,
+      query,
+    );
+
+    expect(service.findCourseEnrollmentsForInstructor).toHaveBeenCalledWith(
+      instructorId,
+      courseId,
+      query,
+    );
+  });
 });
 
 describe('EnrollmentsController auth metadata', () => {
-  type HandlerName = 'enroll' | 'findMine';
+  type HandlerName =
+    'enroll' | 'findMine' | 'findCourseEnrollmentsForInstructor';
 
   const handlerOf = (methodName: HandlerName): unknown =>
     Object.getOwnPropertyDescriptor(EnrollmentsController.prototype, methodName)
@@ -59,4 +85,13 @@ describe('EnrollmentsController auth metadata', () => {
       ]);
     },
   );
+
+  it('restricts findCourseEnrollmentsForInstructor to Instructors', () => {
+    expect(
+      Reflect.getMetadata(
+        ROLES_KEY,
+        handlerOf('findCourseEnrollmentsForInstructor'),
+      ),
+    ).toEqual([UserRole.INSTRUCTOR]);
+  });
 });
