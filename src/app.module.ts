@@ -20,6 +20,7 @@ import { LearningModule } from './modules/learning/learning.module';
 import { QuizzesModule } from './modules/quizzes/quizzes.module';
 import { SeedsModule } from './common/seeds/seeds.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { PaymentConfigModule } from './modules/payment-config/payment-config.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
     DashboardModule,
     NotificationsModule,
     QuizzesModule,
+    PaymentConfigModule,
     SeedsModule,
   ],
   controllers: [AppController],
