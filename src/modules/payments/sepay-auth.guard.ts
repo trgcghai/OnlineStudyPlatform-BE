@@ -1,9 +1,4 @@
-import {
-  createHmac,
-  timingSafeEqual,
-  type BinaryLike,
-  type KeyObject,
-} from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 import {
   CanActivate,
   ExecutionContext,
@@ -15,16 +10,9 @@ import type { Request } from 'express';
 
 const DEFAULT_SIGNATURE_TTL_SECONDS = 300;
 
-function safeEqual(
-  left: BinaryLike | KeyObject,
-  right: BinaryLike | KeyObject,
-): boolean {
-  const leftBuffer = Buffer.isBuffer(left)
-    ? left
-    : Buffer.from(left as BinaryLike);
-  const rightBuffer = Buffer.isBuffer(right)
-    ? right
-    : Buffer.from(right as BinaryLike);
+function safeEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
 
   if (leftBuffer.length !== rightBuffer.length) {
     return false;
