@@ -13,11 +13,10 @@ import {
 import { CourseLearningOrder, CourseStatus } from '../entities/course.entity';
 import type { LessonResponse } from '../../lessons/dto/lesson.dto';
 import type { QuizSummaryResponse } from '../../quizzes/dto/quiz.dto';
+import { FREE_COURSE_PRICE } from '../../../common/constants/course.constant';
 
 const trimString = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
-
-export const DEFAULT_COURSE_PRICE = 0;
 
 export const COURSE_SORT_FIELDS = [
   'createdAt',
@@ -77,7 +76,7 @@ export class CreateCourseDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  @Min(DEFAULT_COURSE_PRICE)
+  @Min(FREE_COURSE_PRICE)
   price?: number;
 }
 
@@ -107,7 +106,7 @@ export class UpdateCourseDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  @Min(DEFAULT_COURSE_PRICE)
+  @Min(FREE_COURSE_PRICE)
   price?: number;
 }
 

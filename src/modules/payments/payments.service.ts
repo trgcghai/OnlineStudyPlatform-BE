@@ -9,6 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
+import { FREE_COURSE_PRICE } from '../../common/constants/course.constant';
 import { Course, CourseStatus } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -28,7 +29,6 @@ import {
   PaymentTransaction,
 } from './entities/payment-transaction.entity';
 
-const FREE_COURSE_PRICE = 0;
 const DUPLICATE_ENROLLMENT_ERROR = 'Bạn đã đăng ký khóa học này';
 const COURSE_NOT_FOUND_ERROR = 'Course not found';
 const TRANSACTION_NOT_FOUND_ERROR = 'Payment transaction not found';
@@ -169,18 +169,42 @@ export class PaymentsService {
     }
 
     const providerTransactionId = String(payload.id);
+    const transaction = await this.findPendingTransactionForWebhook(
+      providerTransactionId,
+      payload,
+    );
+    if (!transaction) {
+      return;
+    }
 
+    if (payload.transferAmount < transaction.amount) {
+      await this.failUnderpaidTransaction(transaction, payload.transferAmount);
+      return;
+    }
+
+    await this.confirmPaidTransactionAndEnroll(
+      transaction,
+      providerTransactionId,
+      payload,
+    );
+    await this.notifyPaymentSuccess(transaction);
+  }
+
+  private async findPendingTransactionForWebhook(
+    providerTransactionId: string,
+    payload: SePayWebhookPayload,
+  ): Promise<PaymentTransaction | null> {
     const alreadyProcessed = await this.transactionsRepository.findOne({
       where: { providerTransactionId },
     });
 
     if (alreadyProcessed) {
-      return;
+      return null;
     }
 
     const paymentCode = this.resolveSePayPaymentCode(payload);
     if (!paymentCode) {
-      return;
+      return null;
     }
 
     const transaction = await this.transactionsRepository.findOne({
@@ -188,23 +212,33 @@ export class PaymentsService {
     });
 
     if (!transaction || transaction.status !== PaymentStatus.PENDING) {
-      return;
+      return null;
     }
 
-    if (payload.transferAmount < transaction.amount) {
-      transaction.status = PaymentStatus.FAILED;
-      const saved = await this.transactionsRepository.save(transaction);
-      await this.writeAudit(
-        saved,
-        PaymentAuditActorType.SEPAY,
-        null,
-        PaymentStatus.PENDING,
-        PaymentStatus.FAILED,
-        `Số tiền chuyển khoản ${payload.transferAmount} nhỏ hơn ${transaction.amount}`,
-      );
-      return;
-    }
+    return transaction;
+  }
 
+  private async failUnderpaidTransaction(
+    transaction: PaymentTransaction,
+    transferAmount: number,
+  ): Promise<void> {
+    transaction.status = PaymentStatus.FAILED;
+    const saved = await this.transactionsRepository.save(transaction);
+    await this.writeAudit(
+      saved,
+      PaymentAuditActorType.SEPAY,
+      null,
+      PaymentStatus.PENDING,
+      PaymentStatus.FAILED,
+      `Số tiền chuyển khoản ${transferAmount} nhỏ hơn ${transaction.amount}`,
+    );
+  }
+
+  private async confirmPaidTransactionAndEnroll(
+    transaction: PaymentTransaction,
+    providerTransactionId: string,
+    payload: SePayWebhookPayload,
+  ): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
       const transactionsRepository = manager.getRepository(PaymentTransaction);
       const payment = await transactionsRepository.findOne({
@@ -240,7 +274,6 @@ export class PaymentsService {
       const existing = await enrollmentsRepository.findOne({
         where: { learnerId: saved.learnerId, courseId: saved.courseId },
       });
-
       if (existing) {
         return;
       }
@@ -254,7 +287,11 @@ export class PaymentsService {
         }),
       );
     });
+  }
 
+  private async notifyPaymentSuccess(
+    transaction: PaymentTransaction,
+  ): Promise<void> {
     await this.notificationsService.createDirectNotification({
       userId: transaction.learnerId,
       title: 'Thanh toán thành công',

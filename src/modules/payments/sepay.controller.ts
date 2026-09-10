@@ -12,7 +12,7 @@ import {
 import type { Response } from 'express';
 import { SePayWebhookPayload } from './dto/payment.dto';
 import { PaymentsService } from './payments.service';
-import { SePayAuthGuard } from './sepay-auth.guard';
+import { SePayAuthGuard } from '../../common/guards/sepay-auth.guard';
 
 @Controller('payments/sepay')
 export class SePayWebhookController {
