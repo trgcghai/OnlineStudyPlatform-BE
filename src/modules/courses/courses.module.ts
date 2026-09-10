@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { Lesson } from '../lessons/entities/lesson.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { PaymentsModule } from '../payments/payments.module';
 import { Question } from '../quizzes/entities/question.entity';
 import { Quiz } from '../quizzes/entities/quiz.entity';
 import { AdminCourseController } from './admin-course.controller';
@@ -15,6 +16,7 @@ import { CoursesService } from './courses.service';
   imports: [
     TypeOrmModule.forFeature([Course, Enrollment, Lesson, Quiz, Question]),
     NotificationsModule,
+    PaymentsModule,
   ],
   controllers: [
     PublicCoursesController,

@@ -2,6 +2,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   NotFoundException,
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
@@ -66,6 +68,7 @@ describe('EnrollmentsService', () => {
     status: CourseStatus.PUBLISHED,
     rejectReason: null,
     learningOrder: CourseLearningOrder.FREE,
+    price: 0,
     instructorId,
     instructor: {
       id: instructorId,
@@ -156,6 +159,18 @@ describe('EnrollmentsService', () => {
         expect(enrollmentsRepository.save).not.toHaveBeenCalled();
       },
     );
+
+    it('blocks enrollment for a paid course until payment is confirmed', async () => {
+      coursesRepository.findOne.mockResolvedValue(makeCourse({ price: 99000 }));
+
+      await expect(service.enroll(learnerId, courseId)).rejects.toEqual(
+        new HttpException(
+          'Khóa học trả phí. Vui lòng hoàn tất thanh toán trước khi truy cập nội dung.',
+          HttpStatus.PAYMENT_REQUIRED,
+        ),
+      );
+      expect(enrollmentsRepository.save).not.toHaveBeenCalled();
+    });
 
     it('throws NotFoundException when the course does not exist', async () => {
       coursesRepository.findOne.mockResolvedValue(null);

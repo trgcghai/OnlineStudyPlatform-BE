@@ -75,36 +75,42 @@ const SAMPLE_COURSES = [
     'Programming',
     CourseStatus.PUBLISHED,
     CourseLearningOrder.SEQUENTIAL,
+    0,
   ],
   [
     'NestJS API Design',
     'Programming',
     CourseStatus.PUBLISHED,
     CourseLearningOrder.FREE,
+    99000,
   ],
   [
     'TypeScript For Web Apps',
     'Programming',
     CourseStatus.DRAFT,
     CourseLearningOrder.SEQUENTIAL,
+    0,
   ],
   [
     'React Performance Patterns',
     'Programming',
     CourseStatus.PENDING,
     CourseLearningOrder.FREE,
+    199000,
   ],
   [
     'Advanced JavaScript',
     'Programming',
     CourseStatus.REJECTED,
     CourseLearningOrder.SEQUENTIAL,
+    0,
   ],
   [
     'Docker For Developers',
     'Programming',
     CourseStatus.PUBLISHED,
     CourseLearningOrder.FREE,
+    0,
   ],
 
   [
@@ -112,36 +118,42 @@ const SAMPLE_COURSES = [
     'Data',
     CourseStatus.PUBLISHED,
     CourseLearningOrder.SEQUENTIAL,
+    199000,
   ],
   [
     'MongoDB Practical Guide',
     'Data',
     CourseStatus.PENDING,
     CourseLearningOrder.FREE,
+    0,
   ],
   [
     'Redis Caching Patterns',
     'Data',
     CourseStatus.DRAFT,
     CourseLearningOrder.SEQUENTIAL,
+    0,
   ],
   [
     'SQL Query Optimization',
     'Data',
     CourseStatus.REJECTED,
     CourseLearningOrder.FREE,
+    99000,
   ],
   [
     'Data Visualization Basics',
     'Data',
     CourseStatus.PUBLISHED,
     CourseLearningOrder.SEQUENTIAL,
+    0,
   ],
   [
     'Introduction To Data Analytics',
     'Data',
     CourseStatus.PENDING,
     CourseLearningOrder.FREE,
+    299000,
   ],
 
   [
@@ -149,36 +161,42 @@ const SAMPLE_COURSES = [
     'Design',
     CourseStatus.PUBLISHED,
     CourseLearningOrder.SEQUENTIAL,
+    0,
   ],
   [
     'Design Systems In Practice',
     'Design',
     CourseStatus.PENDING,
     CourseLearningOrder.FREE,
+    0,
   ],
   [
     'Figma To Frontend Workflow',
     'Design',
     CourseStatus.DRAFT,
     CourseLearningOrder.SEQUENTIAL,
+    199000,
   ],
   [
     'UX Research Essentials',
     'Design',
     CourseStatus.REJECTED,
     CourseLearningOrder.FREE,
+    0,
   ],
   [
     'Responsive Web Design',
     'Design',
     CourseStatus.PUBLISHED,
     CourseLearningOrder.SEQUENTIAL,
+    499000,
   ],
   [
     'Mobile App Design Basics',
     'Design',
     CourseStatus.DRAFT,
     CourseLearningOrder.FREE,
+    0,
   ],
 
   [
@@ -186,24 +204,28 @@ const SAMPLE_COURSES = [
     'Business',
     CourseStatus.PUBLISHED,
     CourseLearningOrder.SEQUENTIAL,
+    0,
   ],
   [
     'Product Management 101',
     'Business',
     CourseStatus.PENDING,
     CourseLearningOrder.FREE,
+    799000,
   ],
   [
     'Digital Marketing Launchpad',
     'Business',
     CourseStatus.DRAFT,
     CourseLearningOrder.SEQUENTIAL,
+    0,
   ],
   [
     'Entrepreneurship Fundamentals',
     'Business',
     CourseStatus.REJECTED,
     CourseLearningOrder.FREE,
+    0,
   ],
 
   [
@@ -211,24 +233,28 @@ const SAMPLE_COURSES = [
     'Language',
     CourseStatus.PUBLISHED,
     CourseLearningOrder.SEQUENTIAL,
+    0,
   ],
   [
     'Business English Writing',
     'Language',
     CourseStatus.PENDING,
     CourseLearningOrder.FREE,
+    99000,
   ],
   [
     'IELTS Reading Practice',
     'Language',
     CourseStatus.DRAFT,
     CourseLearningOrder.SEQUENTIAL,
+    0,
   ],
   [
     'English Presentation Skills',
     'Language',
     CourseStatus.REJECTED,
     CourseLearningOrder.FREE,
+    0,
   ],
 
   [
@@ -236,24 +262,28 @@ const SAMPLE_COURSES = [
     'Other',
     CourseStatus.DRAFT,
     CourseLearningOrder.SEQUENTIAL,
+    0,
   ],
   [
     'Learning How To Learn',
     'Other',
     CourseStatus.PUBLISHED,
     CourseLearningOrder.FREE,
+    999000,
   ],
   [
     'Time Management Essentials',
     'Other',
     CourseStatus.PENDING,
     CourseLearningOrder.SEQUENTIAL,
+    0,
   ],
   [
     'Personal Productivity Basics',
     'Other',
     CourseStatus.REJECTED,
     CourseLearningOrder.FREE,
+    0,
   ],
 ] as const;
 
@@ -325,7 +355,7 @@ export class SampleDataSeed implements OnApplicationBootstrap {
     }
 
     const courses = SAMPLE_COURSES.map(
-      ([title, category, status, learningOrder], index) =>
+      ([title, category, status, learningOrder, price], index) =>
         this.coursesRepository.create({
           title,
           description:
@@ -335,6 +365,7 @@ export class SampleDataSeed implements OnApplicationBootstrap {
           thumbnail: UNSPLASH_COURSE_THUMBNAILS[index],
           status,
           learningOrder,
+          price,
           instructorId: instructor.id,
           rejectReason:
             status === CourseStatus.REJECTED ? 'Sample reject reason' : null,

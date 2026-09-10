@@ -17,12 +17,15 @@ import type { QuizSummaryResponse } from '../../quizzes/dto/quiz.dto';
 const trimString = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
+export const DEFAULT_COURSE_PRICE = 0;
+
 export const COURSE_SORT_FIELDS = [
   'createdAt',
   'updatedAt',
   'title',
   'category',
   'status',
+  'price',
 ] as const;
 
 export const PUBLIC_COURSE_SORT_FIELDS = [
@@ -30,6 +33,7 @@ export const PUBLIC_COURSE_SORT_FIELDS = [
   'updatedAt',
   'title',
   'category',
+  'price',
 ] as const;
 
 export type CourseSortField = (typeof COURSE_SORT_FIELDS)[number];
@@ -69,6 +73,12 @@ export class CreateCourseDto {
   @IsOptional()
   @IsEnum(CourseLearningOrder)
   learningOrder?: CourseLearningOrder;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(DEFAULT_COURSE_PRICE)
+  price?: number;
 }
 
 export class UpdateCourseDto {
@@ -93,6 +103,12 @@ export class UpdateCourseDto {
   @IsOptional()
   @IsEnum(CourseLearningOrder)
   learningOrder?: CourseLearningOrder;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(DEFAULT_COURSE_PRICE)
+  price?: number;
 }
 
 export class ReviewCourseStatusDto {
@@ -194,6 +210,7 @@ export interface CourseResponse {
   title: string;
   description: string;
   category: string;
+  price: number;
   thumbnail: string | null;
   status: CourseStatus;
   rejectReason: string | null;
@@ -225,6 +242,7 @@ export interface PublicCourseResponse {
   title: string;
   description: string;
   category: string;
+  price: number;
   thumbnail: string | null;
   learningOrder: LearningOrder;
   instructorId: string;

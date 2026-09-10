@@ -25,6 +25,7 @@ describe('CoursesService', () => {
     save: jest.Mock;
     findOne: jest.Mock;
     delete: jest.Mock;
+    count: jest.Mock;
     createQueryBuilder: jest.Mock;
   };
   let configService: { getOrThrow: jest.Mock };
@@ -37,6 +38,11 @@ describe('CoursesService', () => {
     createQueueNotification: jest.Mock;
     createDirectNotification: jest.Mock;
     deleteNotification: jest.Mock;
+  };
+  let paymentConfigService: {
+    assertCoursePriceAllowed: jest.Mock;
+    getFreeCourseLimit: jest.Mock;
+    getCoursePricingReference: jest.Mock;
   };
   let dataSource: { createQueryRunner: jest.Mock };
   let queryRunner: {
@@ -61,6 +67,7 @@ describe('CoursesService', () => {
     status: CourseStatus.DRAFT,
     rejectReason: null,
     learningOrder: CourseLearningOrder.FREE,
+    price: 0,
     instructorId,
     instructor: {
       id: instructorId,
@@ -123,6 +130,7 @@ describe('CoursesService', () => {
       })),
       findOne: jest.fn(),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
+      count: jest.fn().mockResolvedValue(0),
       createQueryBuilder: jest.fn(),
     };
     configService = {
@@ -145,6 +153,14 @@ describe('CoursesService', () => {
       createDirectNotification: jest.fn(),
       deleteNotification: jest.fn(),
     };
+    paymentConfigService = {
+      assertCoursePriceAllowed: jest.fn().mockResolvedValue(undefined),
+      getFreeCourseLimit: jest.fn().mockResolvedValue(null),
+      getCoursePricingReference: jest.fn().mockResolvedValue({
+        currency: 'VND',
+        allowedPrices: [0, 99000, 199000],
+      }),
+    };
     queryRunner = {
       connect: jest.fn().mockResolvedValue(undefined),
       startTransaction: jest.fn().mockResolvedValue(undefined),
@@ -166,6 +182,7 @@ describe('CoursesService', () => {
       lessonsRepo as unknown as Repository<Lesson>,
       quizzesRepo as unknown as Repository<Quiz>,
       questionsRepo as unknown as Repository<Question>,
+      paymentConfigService as never,
     );
   });
 
@@ -188,7 +205,7 @@ describe('CoursesService', () => {
   };
 
   describe('create', () => {
-    it('creates a Draft course owned by the current Instructor', async () => {
+    it('creates a free Draft course owned by the current Instructor', async () => {
       const dto: CreateCourseDto = {
         title: '  Lap trinh NestJS  ',
         description: '  Khoa hoc nhap mon NestJS  ',
@@ -197,10 +214,14 @@ describe('CoursesService', () => {
 
       const result = await service.create(instructorId, dto);
 
+      expect(
+        paymentConfigService.assertCoursePriceAllowed,
+      ).toHaveBeenCalledWith(0);
       expect(repo.create).toHaveBeenCalledWith({
         title: 'Lap trinh NestJS',
         description: 'Khoa hoc nhap mon NestJS',
         category: 'Backend',
+        price: 0,
         status: CourseStatus.DRAFT,
         learningOrder: CourseLearningOrder.FREE,
         instructorId,
@@ -228,6 +249,41 @@ describe('CoursesService', () => {
           learningOrder: CourseLearningOrder.SEQUENTIAL,
         }),
       );
+    });
+
+    it('persists a configured price on create', async () => {
+      const dto: CreateCourseDto = {
+        title: 'Paid Course',
+        description: 'Desc',
+        category: 'Other',
+        price: 99000,
+      };
+
+      await service.create(instructorId, dto);
+
+      expect(
+        paymentConfigService.assertCoursePriceAllowed,
+      ).toHaveBeenCalledWith(99000);
+      expect(repo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ price: 99000 }),
+      );
+    });
+
+    it('rejects a course price outside the configured price list', async () => {
+      paymentConfigService.assertCoursePriceAllowed.mockRejectedValueOnce(
+        new BadRequestException('Course price is not allowed'),
+      );
+      const dto: CreateCourseDto = {
+        title: 'Paid Course',
+        description: 'Desc',
+        category: 'Other',
+        price: 50001,
+      };
+
+      await expect(service.create(instructorId, dto)).rejects.toEqual(
+        new BadRequestException('Course price is not allowed'),
+      );
+      expect(repo.create).not.toHaveBeenCalled();
     });
   });
 
@@ -767,6 +823,66 @@ describe('CoursesService', () => {
       );
       expect(queryRunner.rollbackTransaction).toHaveBeenCalledTimes(1);
     });
+
+    it('blocks a free course publish when the free-course limit is reached', async () => {
+      paymentConfigService.getFreeCourseLimit.mockResolvedValue(3);
+      repo.count.mockResolvedValue(3);
+      repo.findOne.mockResolvedValue(makeCourse({ price: 0 }));
+      repo.save.mockImplementation((input: Course) => input);
+
+      await expect(
+        service.requestPublish(courseId, instructorId),
+      ).rejects.toEqual(
+        new BadRequestException(
+          'Đã đạt giới hạn 3 khóa học miễn phí. Bạn không thể xuất bản thêm khóa học miễn phí.',
+        ),
+      );
+
+      expect(repo.count).toHaveBeenCalledWith({
+        where: {
+          instructorId,
+          price: 0,
+          id: expect.any(Object),
+          status: expect.any(Object),
+        },
+      });
+      expect(
+        notificationsService.createQueueNotification,
+      ).not.toHaveBeenCalled();
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not apply the free-course limit to paid courses', async () => {
+      paymentConfigService.getFreeCourseLimit.mockResolvedValue(3);
+      repo.findOne.mockResolvedValue(makeCourse({ price: 99000 }));
+      repo.save.mockImplementation((input: Course) => input);
+      notificationsService.createQueueNotification.mockResolvedValue({
+        _id: 'notification-id',
+      });
+
+      await service.requestPublish(courseId, instructorId);
+
+      expect(repo.count).not.toHaveBeenCalled();
+      expect(repo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: CourseStatus.PENDING }),
+      );
+    });
+
+    it('allows a free course publish when the limit is not configured', async () => {
+      paymentConfigService.getFreeCourseLimit.mockResolvedValue(null);
+      repo.findOne.mockResolvedValue(makeCourse({ price: 0 }));
+      repo.save.mockImplementation((input: Course) => input);
+      notificationsService.createQueueNotification.mockResolvedValue({
+        _id: 'notification-id',
+      });
+
+      await service.requestPublish(courseId, instructorId);
+
+      expect(repo.count).not.toHaveBeenCalled();
+      expect(repo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: CourseStatus.PENDING }),
+      );
+    });
   });
 
   describe('reviewCourseStatus', () => {
@@ -1019,6 +1135,35 @@ describe('CoursesService', () => {
         new BadRequestException('No changes provided'),
       );
       expect(repo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('updates the course price when it is in the configured list', async () => {
+      repo.findOne.mockResolvedValue(makeCourse({ price: 0 }));
+      repo.save.mockImplementation((input: Course) => input);
+
+      const result = await service.update(courseId, instructorId, {
+        price: 199000,
+      });
+
+      expect(
+        paymentConfigService.assertCoursePriceAllowed,
+      ).toHaveBeenCalledWith(199000);
+      expect(repo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ price: 199000 }),
+      );
+      expect(result.price).toBe(199000);
+    });
+
+    it('rejects a course price outside the configured list on update', async () => {
+      paymentConfigService.assertCoursePriceAllowed.mockRejectedValueOnce(
+        new BadRequestException('Course price is not allowed'),
+      );
+      repo.findOne.mockResolvedValue(makeCourse({ price: 0 }));
+
+      await expect(
+        service.update(courseId, instructorId, { price: 12345 }),
+      ).rejects.toEqual(new BadRequestException('Course price is not allowed'));
+      expect(repo.save).not.toHaveBeenCalled();
     });
   });
 

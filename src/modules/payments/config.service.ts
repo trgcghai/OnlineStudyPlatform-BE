@@ -8,6 +8,7 @@ import {
   MINIMUM_WITHDRAWAL_AMOUNT_STEP,
   PaymentConfigAuditListResult,
   PaymentConfigAuditResponse,
+  PaymentConfigCurrency,
   PaymentConfigResponse,
   PaymentConfigSnapshot,
   UpdatePaymentConfigDto,
@@ -150,6 +151,18 @@ export class ConfigService implements OnModuleInit {
     if (!config.allowedPrices.includes(price)) {
       throw new BadRequestException('Course price is not allowed');
     }
+  }
+
+  async getCoursePricingReference(): Promise<{
+    currency: PaymentConfigCurrency;
+    allowedPrices: number[];
+  }> {
+    const config = await this.getActiveConfig();
+
+    return {
+      currency: config.currency,
+      allowedPrices: [...config.allowedPrices],
+    };
   }
 
   async getFreeCourseLimit(): Promise<number | null> {

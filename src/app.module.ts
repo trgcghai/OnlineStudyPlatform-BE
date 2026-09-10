@@ -20,7 +20,7 @@ import { LearningModule } from './modules/learning/learning.module';
 import { QuizzesModule } from './modules/quizzes/quizzes.module';
 import { SeedsModule } from './common/seeds/seeds.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
-import { PaymentConfigModule } from './modules/payment-config/payment-config.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 
 @Module({
   imports: [
@@ -57,7 +57,7 @@ import { PaymentConfigModule } from './modules/payment-config/payment-config.mod
     DashboardModule,
     NotificationsModule,
     QuizzesModule,
-    PaymentConfigModule,
+    PaymentsModule,
     SeedsModule,
   ],
   controllers: [AppController],

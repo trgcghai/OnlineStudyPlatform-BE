@@ -2,6 +2,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -24,6 +26,9 @@ import { Enrollment } from './entities/enrollment.entity';
 
 const DUPLICATE_ENROLLMENT_ERROR = 'Bạn đã đăng ký khóa học này';
 const PUBLISHED_ONLY_ERROR = 'Chỉ có thể đăng ký khóa học đã xuất bản';
+const PAID_ENROLLMENT_REQUIRES_PAYMENT_ERROR =
+  'Khóa học trả phí. Vui lòng hoàn tất thanh toán trước khi truy cập nội dung.';
+const FREE_COURSE_PRICE = 0;
 
 interface LessonActivityRaw {
   learnerId: string;
@@ -65,6 +70,13 @@ export class EnrollmentsService {
 
     if (course.status !== CourseStatus.PUBLISHED) {
       throw new BadRequestException(PUBLISHED_ONLY_ERROR);
+    }
+
+    if (course.price > FREE_COURSE_PRICE) {
+      throw new HttpException(
+        PAID_ENROLLMENT_REQUIRES_PAYMENT_ERROR,
+        HttpStatus.PAYMENT_REQUIRED,
+      );
     }
 
     const existingEnrollment = await this.enrollmentsRepository.findOne({
@@ -355,6 +367,7 @@ export class EnrollmentsService {
       title: course.title,
       description: course.description,
       category: course.category,
+      price: course.price,
       thumbnail: course.thumbnail,
       instructorId: course.instructorId,
       instructor: course.instructor
