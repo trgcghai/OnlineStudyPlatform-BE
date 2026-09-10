@@ -17,7 +17,13 @@ async function bootstrap() {
       transform: true,
     }),
   );
-  app.enableCors({ origin: true, credentials: true });
+  app.enableCors({
+    origin: [
+      'http://localhost:3000', // Local frontend
+      'https://89rgm492-3000.asse.devtunnels.ms/', // Forwared frontend, this might change
+    ],
+    credentials: true,
+  });
 
   await app.listen(port);
 }
