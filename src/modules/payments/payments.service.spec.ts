@@ -51,7 +51,7 @@ describe('PaymentsService', () => {
   const courseId = '22222222-2222-4222-8222-222222222222';
   const transactionId = '33333333-3333-4333-8333-333333333333';
   const instructorId = '44444444-4444-4444-8444-444444444444';
-  const expiresAt = new Date('2026-09-10T12:30:00.000Z');
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
   const paymentCode = 'KLTN20260910120000ABC123';
 
   const makeCourse = (overrides: Partial<Course> = {}): Course => ({
