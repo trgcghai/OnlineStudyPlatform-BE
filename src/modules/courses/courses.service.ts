@@ -11,7 +11,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
 import type { Types } from 'mongoose';
 import type { Client as MinioClient } from 'minio';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, In, Not, Repository } from 'typeorm';
 import { MINIO_CLIENT } from '../../common/constants/file.constant';
 import { AuthenticatedUser } from '../auth/dto/auth.dto';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
@@ -23,6 +23,7 @@ import { Question } from '../quizzes/entities/question.entity';
 import { Quiz } from '../quizzes/entities/quiz.entity';
 import type { QuizSummaryResponse } from '../quizzes/dto/quiz.dto';
 import { UserRole } from '../users/entities/user.entity';
+import { ConfigService as PaymentConfigService } from '../payments/config.service';
 import {
   AdminCourseContentListResult,
   CourseApprovalListResult,
@@ -30,6 +31,7 @@ import {
   CourseListResult,
   CourseResponse,
   CreateCourseDto,
+  DEFAULT_COURSE_PRICE,
   ListPublishedCoursesQueryDto,
   ListCoursesQueryDto,
   PublishedCourseLimitQueryDto,
@@ -62,16 +64,21 @@ export class CoursesService {
     private readonly quizzesRepository: Repository<Quiz>,
     @InjectRepository(Question)
     private readonly questionsRepository: Repository<Question>,
+    private readonly paymentConfigService: PaymentConfigService,
   ) {}
 
   async create(
     instructorId: string,
     dto: CreateCourseDto,
   ): Promise<CourseResponse> {
+    const price = dto.price ?? DEFAULT_COURSE_PRICE;
+    await this.paymentConfigService.assertCoursePriceAllowed(price);
+
     const course = this.coursesRepository.create({
       title: dto.title.trim(),
       description: dto.description.trim(),
       category: dto.category.trim(),
+      price,
       status: CourseStatus.DRAFT,
       learningOrder: dto.learningOrder ?? CourseLearningOrder.FREE,
       instructorId,
@@ -283,7 +290,8 @@ export class CoursesService {
       dto.title !== undefined ||
       dto.description !== undefined ||
       dto.category !== undefined ||
-      dto.learningOrder !== undefined,
+      dto.learningOrder !== undefined ||
+      dto.price !== undefined,
     );
 
     if (!hasChanges) {
@@ -306,6 +314,11 @@ export class CoursesService {
 
     if (dto.learningOrder !== undefined) {
       course.learningOrder = dto.learningOrder;
+    }
+
+    if (dto.price !== undefined) {
+      await this.paymentConfigService.assertCoursePriceAllowed(dto.price);
+      course.price = dto.price;
     }
 
     if (course.status === CourseStatus.REJECTED) {
@@ -349,6 +362,10 @@ export class CoursesService {
       }
 
       this.assertCourseStatusTransition(course.status, CourseStatus.PENDING);
+
+      if (course.price === DEFAULT_COURSE_PRICE) {
+        await this.assertFreeCourseLimitPublishable(instructorId, course.id);
+      }
 
       course.status = CourseStatus.PENDING;
       course.rejectReason = null;
@@ -459,6 +476,33 @@ export class CoursesService {
     if (!legalTransitions[from]?.includes(to)) {
       throw new BadRequestException(
         `Illegal course status transition: ${from} -> ${to}`,
+      );
+    }
+  }
+
+  private async assertFreeCourseLimitPublishable(
+    instructorId: string,
+    courseId: string,
+  ): Promise<void> {
+    const freeCourseLimit =
+      await this.paymentConfigService.getFreeCourseLimit();
+
+    if (freeCourseLimit === null) {
+      return;
+    }
+
+    const freeCourseCount = await this.coursesRepository.count({
+      where: {
+        instructorId,
+        price: DEFAULT_COURSE_PRICE,
+        id: Not(courseId),
+        status: In([CourseStatus.PENDING, CourseStatus.PUBLISHED]),
+      },
+    });
+
+    if (freeCourseCount >= freeCourseLimit) {
+      throw new BadRequestException(
+        `Đã đạt giới hạn ${freeCourseLimit} khóa học miễn phí. Bạn không thể xuất bản thêm khóa học miễn phí.`,
       );
     }
   }
@@ -681,6 +725,7 @@ export class CoursesService {
       title: course.title,
       description: course.description,
       category: course.category,
+      price: course.price,
       thumbnail: course.thumbnail,
       status: course.status,
       rejectReason: course.rejectReason,
@@ -697,6 +742,7 @@ export class CoursesService {
       title: course.title,
       description: course.description,
       category: course.category,
+      price: course.price,
       thumbnail: course.thumbnail,
       learningOrder: course.learningOrder,
       instructorId: course.instructorId,

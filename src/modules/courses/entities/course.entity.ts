@@ -35,6 +35,9 @@ export class Course {
   @Column({ length: 80 })
   category!: string;
 
+  @Column({ type: 'int', default: 0 })
+  price!: number;
+
   @Column({ type: 'varchar', nullable: true })
   thumbnail!: string | null;
 

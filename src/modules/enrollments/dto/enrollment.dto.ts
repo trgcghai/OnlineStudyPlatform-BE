@@ -14,6 +14,7 @@ export interface EnrollmentCourseResponse {
   title: string;
   description: string;
   category: string;
+  price: number;
   thumbnail: string | null;
   instructorId: string;
   instructor?: EnrollmentCourseInstructorResponse;

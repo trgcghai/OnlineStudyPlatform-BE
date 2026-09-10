@@ -309,4 +309,13 @@ describe('ConfigService', () => {
     await expect(service.calculatePlatformFee(100000)).resolves.toBe(20000);
     await expect(service.calculateInstructorNet(100000)).resolves.toBe(80000);
   });
+
+  it('returns the course pricing reference for instructor-facing pages', async () => {
+    configModel.findOne.mockReturnValue(mockQuery(createConfig()));
+
+    await expect(service.getCoursePricingReference()).resolves.toEqual({
+      currency: 'VND',
+      allowedPrices: [0, 99000, 199000, 299000, 499000, 799000, 999000],
+    });
+  });
 });
