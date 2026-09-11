@@ -182,12 +182,15 @@ export class PaymentsService {
       return;
     }
 
-    await this.confirmPaidTransactionAndEnroll(
+    const confirmed = await this.confirmPaidTransactionAndEnroll(
       transaction,
       providerTransactionId,
       payload,
     );
-    await this.notifyPaymentSuccess(transaction);
+
+    if (confirmed) {
+      await this.notifyPaymentSuccess(transaction);
+    }
   }
 
   private async findPendingTransactionForWebhook(
@@ -238,15 +241,40 @@ export class PaymentsService {
     transaction: PaymentTransaction,
     providerTransactionId: string,
     payload: SePayWebhookPayload,
-  ): Promise<void> {
-    await this.dataSource.transaction(async (manager) => {
+  ): Promise<boolean> {
+    return this.dataSource.transaction(async (manager) => {
       const transactionsRepository = manager.getRepository(PaymentTransaction);
       const payment = await transactionsRepository.findOne({
         where: { id: transaction.id },
       });
 
       if (!payment || payment.status !== PaymentStatus.PENDING) {
-        return;
+        return false;
+      }
+
+      if (payment.expiresAt <= new Date()) {
+        payment.status = PaymentStatus.EXPIRED;
+        payment.providerTransactionId = providerTransactionId;
+        payment.providerGateway = payload.gateway || null;
+        payment.providerReferenceCode = payload.referenceCode ?? null;
+        payment.paidAt = null;
+        const saved = await transactionsRepository.save(payment);
+
+        await manager.getRepository(PaymentAuditLog).save(
+          manager.getRepository(PaymentAuditLog).create({
+            transactionId: saved.id,
+            actorType: PaymentAuditActorType.SEPAY,
+            actorId: null,
+            fromStatus: PaymentStatus.PENDING,
+            toStatus: PaymentStatus.EXPIRED,
+            amount: saved.amount,
+            paymentCode: saved.paymentCode,
+            providerTransactionId: saved.providerTransactionId,
+            reason: 'Payment received after transaction expiry',
+          }),
+        );
+
+        return false;
       }
 
       payment.status = PaymentStatus.PAID;
@@ -275,7 +303,7 @@ export class PaymentsService {
         where: { learnerId: saved.learnerId, courseId: saved.courseId },
       });
       if (existing) {
-        return;
+        return true;
       }
 
       await enrollmentsRepository.save(
@@ -286,6 +314,8 @@ export class PaymentsService {
           completedAt: null,
         }),
       );
+
+      return true;
     });
   }
 

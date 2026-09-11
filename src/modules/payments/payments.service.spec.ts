@@ -497,6 +497,75 @@ describe('PaymentsService', () => {
       expect(notificationsService.createDirectNotification).toHaveBeenCalled();
     });
 
+    it('marks a pending transaction expired when SePay confirms after expiresAt', async () => {
+      const expiredTransaction = makeTransaction({
+        expiresAt: new Date('2026-09-01T00:00:00.000Z'),
+      });
+      transactionsRepository.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(expiredTransaction);
+
+      const txSave = jest.fn((input: Partial<PaymentTransaction>) =>
+        Promise.resolve(makeTransaction({ ...input, id: transactionId })),
+      );
+      const auditRepo = {
+        create: jest.fn((input: unknown) => input),
+        save: jest.fn(),
+      };
+      const enrollmentRepo = {
+        findOne: jest.fn(),
+        create: jest.fn(),
+        save: jest.fn(),
+      };
+      const manager = {
+        getRepository: jest.fn((repo: unknown) => {
+          if (repo === PaymentTransaction) {
+            return {
+              findOne: jest.fn().mockResolvedValue(expiredTransaction),
+              save: txSave,
+            };
+          }
+          if (repo === PaymentAuditLog) return auditRepo;
+          if (repo === Enrollment) return enrollmentRepo;
+          return null;
+        }),
+      };
+      dataSource.transaction.mockImplementation(
+        (callback: (m: typeof manager) => Promise<boolean>) =>
+          callback(manager),
+      );
+
+      await paymentsService.processSePayWebhook(makeSePayPayload());
+
+      expect(txSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: PaymentStatus.EXPIRED,
+          providerTransactionId: '123456',
+          providerGateway: 'Vietcombank',
+          providerReferenceCode: 'ref-1',
+          paidAt: null,
+        }),
+      );
+      expect(auditRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactionId,
+          actorType: PaymentAuditActorType.SEPAY,
+          actorId: null,
+          fromStatus: PaymentStatus.PENDING,
+          toStatus: PaymentStatus.EXPIRED,
+          amount: 99000,
+          paymentCode,
+          providerTransactionId: '123456',
+          reason: 'Payment received after transaction expiry',
+        }),
+      );
+      expect(enrollmentRepo.create).not.toHaveBeenCalled();
+      expect(enrollmentRepo.save).not.toHaveBeenCalled();
+      expect(
+        notificationsService.createDirectNotification,
+      ).not.toHaveBeenCalled();
+    });
+
     it('ignores outbound transfers', async () => {
       await paymentsService.processSePayWebhook(
         makeSePayPayload({ transferType: 'out' }),
@@ -515,6 +584,24 @@ describe('PaymentsService', () => {
 
       await paymentsService.processSePayWebhook(makeSePayPayload());
 
+      expect(transactionsRepository.save).not.toHaveBeenCalled();
+      expect(
+        notificationsService.createDirectNotification,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('ignores replay of a late expired webhook by provider transaction id', async () => {
+      transactionsRepository.findOne.mockResolvedValueOnce(
+        makeTransaction({
+          status: PaymentStatus.EXPIRED,
+          providerTransactionId: '123456',
+          paidAt: null,
+        }),
+      );
+
+      await paymentsService.processSePayWebhook(makeSePayPayload());
+
+      expect(dataSource.transaction).not.toHaveBeenCalled();
       expect(transactionsRepository.save).not.toHaveBeenCalled();
       expect(
         notificationsService.createDirectNotification,
