@@ -10,9 +10,9 @@ import type { Request } from 'express';
 
 const DEFAULT_SIGNATURE_TTL_SECONDS = 300;
 
-function safeEqual(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
+function safeEqual(left: string | Buffer, right: string | Buffer): boolean {
+  const leftBuffer = Buffer.isBuffer(left) ? left : Buffer.from(left);
+  const rightBuffer = Buffer.isBuffer(right) ? right : Buffer.from(right);
 
   if (leftBuffer.length !== rightBuffer.length) {
     return false;

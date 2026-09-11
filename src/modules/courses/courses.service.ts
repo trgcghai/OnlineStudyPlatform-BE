@@ -13,6 +13,7 @@ import type { Types } from 'mongoose';
 import type { Client as MinioClient } from 'minio';
 import { DataSource, In, Not, Repository } from 'typeorm';
 import { MINIO_CLIENT } from '../../common/constants/file.constant';
+import { FREE_COURSE_PRICE } from '../../common/constants/course.constant';
 import { AuthenticatedUser } from '../auth/dto/auth.dto';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { Lesson } from '../lessons/entities/lesson.entity';
@@ -31,7 +32,6 @@ import {
   CourseListResult,
   CourseResponse,
   CreateCourseDto,
-  DEFAULT_COURSE_PRICE,
   ListPublishedCoursesQueryDto,
   ListCoursesQueryDto,
   PublishedCourseLimitQueryDto,
@@ -71,7 +71,7 @@ export class CoursesService {
     instructorId: string,
     dto: CreateCourseDto,
   ): Promise<CourseResponse> {
-    const price = dto.price ?? DEFAULT_COURSE_PRICE;
+    const price = dto.price ?? FREE_COURSE_PRICE;
     await this.paymentConfigService.assertCoursePriceAllowed(price);
 
     const course = this.coursesRepository.create({
@@ -363,7 +363,7 @@ export class CoursesService {
 
       this.assertCourseStatusTransition(course.status, CourseStatus.PENDING);
 
-      if (course.price === DEFAULT_COURSE_PRICE) {
+      if (course.price === FREE_COURSE_PRICE) {
         await this.assertFreeCourseLimitPublishable(instructorId, course.id);
       }
 
@@ -494,7 +494,7 @@ export class CoursesService {
     const freeCourseCount = await this.coursesRepository.count({
       where: {
         instructorId,
-        price: DEFAULT_COURSE_PRICE,
+        price: FREE_COURSE_PRICE,
         id: Not(courseId),
         status: In([CourseStatus.PENDING, CourseStatus.PUBLISHED]),
       },

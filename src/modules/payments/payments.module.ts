@@ -4,7 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Course } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
-import { ConfigController } from './config.controller';
+import { SePayAuthGuard } from '../../common/guards/sepay-auth.guard';
 import { ConfigService } from './config.service';
 import { PaymentAuditLog } from './entities/payment-audit.entity';
 import { PaymentTransaction } from './entities/payment-transaction.entity';
@@ -15,7 +15,6 @@ import {
   PaymentConfigAuditSchema,
 } from './schemas/config-audit.schema';
 import { PaymentConfig, PaymentConfigSchema } from './schemas/config.schema';
-import { SePayAuthGuard } from './sepay-auth.guard';
 import { SePayWebhookController } from './sepay.controller';
 
 @Module({
@@ -32,7 +31,7 @@ import { SePayWebhookController } from './sepay.controller';
     ]),
     NotificationsModule,
   ],
-  controllers: [PaymentsController, SePayWebhookController, ConfigController],
+  controllers: [PaymentsController, SePayWebhookController],
   providers: [PaymentsService, SePayAuthGuard, ConfigService],
   exports: [PaymentsService, ConfigService],
 })
