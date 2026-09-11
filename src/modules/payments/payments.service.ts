@@ -246,6 +246,7 @@ export class PaymentsService {
       const transactionsRepository = manager.getRepository(PaymentTransaction);
       const payment = await transactionsRepository.findOne({
         where: { id: transaction.id },
+        lock: { mode: 'pessimistic_write' },
       });
 
       if (!payment || payment.status !== PaymentStatus.PENDING) {

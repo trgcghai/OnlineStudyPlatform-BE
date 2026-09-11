@@ -426,16 +426,18 @@ describe('PaymentsService', () => {
           Promise.resolve({ ...input, id: 'e1' }),
         ),
       };
+      const txFindOne = jest
+        .fn()
+        .mockResolvedValueOnce(makeTransaction())
+        .mockResolvedValue(makeTransaction());
+      const txRepository = {
+        findOne: txFindOne,
+        save: txSave,
+      };
       const manager = {
         getRepository: jest.fn((repo: unknown) => {
           if (repo === PaymentTransaction) {
-            return {
-              findOne: jest
-                .fn()
-                .mockResolvedValueOnce(makeTransaction())
-                .mockResolvedValue(makeTransaction()),
-              save: txSave,
-            };
+            return txRepository;
           }
           if (repo === PaymentAuditLog) return auditRepo;
           if (repo === Enrollment) return enrollmentRepo;
@@ -443,17 +445,22 @@ describe('PaymentsService', () => {
         }),
       };
       dataSource.transaction.mockImplementation(
-        (callback: (m: typeof manager) => Promise<void>) => callback(manager),
+        (callback: (m: typeof manager) => Promise<boolean>) =>
+          callback(manager),
       );
 
-      return { txSave, enrollmentRepo };
+      return { txSave, enrollmentRepo, txFindOne };
     };
 
     it('confirms a pending transaction and creates the enrollment', async () => {
-      const { txSave, enrollmentRepo } = configureHappyPath();
+      const { txSave, enrollmentRepo, txFindOne } = configureHappyPath();
 
       await paymentsService.processSePayWebhook(makeSePayPayload());
 
+      expect(txFindOne).toHaveBeenCalledWith({
+        where: { id: transactionId },
+        lock: { mode: 'pessimistic_write' },
+      });
       expect(txSave).toHaveBeenCalledWith(
         expect.objectContaining({
           status: PaymentStatus.PAID,
@@ -603,6 +610,110 @@ describe('PaymentsService', () => {
 
       expect(dataSource.transaction).not.toHaveBeenCalled();
       expect(transactionsRepository.save).not.toHaveBeenCalled();
+      expect(
+        notificationsService.createDirectNotification,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('does not create enrollment or notification when locked row is already paid', async () => {
+      transactionsRepository.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(makeTransaction());
+
+      const txSave = jest.fn();
+      const auditRepo = {
+        create: jest.fn((input: unknown) => input),
+        save: jest.fn(),
+      };
+      const enrollmentRepo = {
+        findOne: jest.fn(),
+        create: jest.fn(),
+        save: jest.fn(),
+      };
+      const txFindOne = jest.fn().mockResolvedValue(
+        makeTransaction({
+          status: PaymentStatus.PAID,
+          providerTransactionId: 'other-provider-tx',
+          paidAt: new Date('2026-09-10T12:06:00.000Z'),
+        }),
+      );
+      const manager = {
+        getRepository: jest.fn((repo: unknown) => {
+          if (repo === PaymentTransaction) {
+            return { findOne: txFindOne, save: txSave };
+          }
+          if (repo === PaymentAuditLog) return auditRepo;
+          if (repo === Enrollment) return enrollmentRepo;
+          return null;
+        }),
+      };
+      dataSource.transaction.mockImplementation(
+        (callback: (m: typeof manager) => Promise<boolean>) =>
+          callback(manager),
+      );
+
+      await paymentsService.processSePayWebhook(makeSePayPayload());
+
+      expect(txFindOne).toHaveBeenCalledWith({
+        where: { id: transactionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      expect(txSave).not.toHaveBeenCalled();
+      expect(auditRepo.save).not.toHaveBeenCalled();
+      expect(enrollmentRepo.create).not.toHaveBeenCalled();
+      expect(enrollmentRepo.save).not.toHaveBeenCalled();
+      expect(
+        notificationsService.createDirectNotification,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('does not create enrollment or notification when locked row is already expired', async () => {
+      transactionsRepository.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(makeTransaction());
+
+      const txSave = jest.fn();
+      const auditRepo = {
+        create: jest.fn((input: unknown) => input),
+        save: jest.fn(),
+      };
+      const enrollmentRepo = {
+        findOne: jest.fn(),
+        create: jest.fn(),
+        save: jest.fn(),
+      };
+      const txFindOne = jest.fn().mockResolvedValue(
+        makeTransaction({
+          status: PaymentStatus.EXPIRED,
+          providerTransactionId: 'other-provider-tx',
+          paidAt: null,
+        }),
+      );
+      const manager = {
+        getRepository: jest.fn((repo: unknown) => {
+          if (repo === PaymentTransaction) {
+            return { findOne: txFindOne, save: txSave };
+          }
+          if (repo === PaymentAuditLog) return auditRepo;
+          if (repo === Enrollment) return enrollmentRepo;
+          return null;
+        }),
+      };
+      dataSource.transaction.mockImplementation(
+        (callback: (m: typeof manager) => Promise<boolean>) =>
+          callback(manager),
+      );
+
+      await paymentsService.processSePayWebhook(makeSePayPayload());
+
+      expect(txFindOne).toHaveBeenCalledWith({
+        where: { id: transactionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      expect(txSave).not.toHaveBeenCalled();
+      expect(auditRepo.save).not.toHaveBeenCalled();
+      expect(enrollmentRepo.create).not.toHaveBeenCalled();
+      expect(enrollmentRepo.save).not.toHaveBeenCalled();
       expect(
         notificationsService.createDirectNotification,
       ).not.toHaveBeenCalled();
