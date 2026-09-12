@@ -348,6 +348,87 @@ describe('PaymentsService', () => {
     });
   });
 
+  describe('listLearnerTransactions', () => {
+    it('lists only current learner transactions with status and pagination', async () => {
+      const transaction = makeTransaction({
+        status: PaymentStatus.PAID,
+        paidAt: new Date('2026-09-12T08:00:00.000Z'),
+        course: { id: courseId, title: 'NestJS Fundamentals' } as never,
+      });
+      const qb = makeQueryBuilder([transaction], 12);
+      transactionsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      const result = await paymentsService.listLearnerTransactions(learnerId, {
+        status: PaymentStatus.PAID,
+        page: 2,
+        limit: 5,
+      });
+
+      expect(transactionsRepository.createQueryBuilder).toHaveBeenCalledWith(
+        'transaction',
+      );
+      expect(qb.leftJoinAndSelect).toHaveBeenCalledWith(
+        'transaction.course',
+        'course',
+      );
+      expect(qb.where).toHaveBeenCalledWith(
+        'transaction.learnerId = :learnerId',
+        { learnerId },
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith('transaction.status = :status', {
+        status: PaymentStatus.PAID,
+      });
+      expect(qb.orderBy).toHaveBeenCalledWith('transaction.createdAt', 'DESC');
+      expect(qb.skip).toHaveBeenCalledWith(5);
+      expect(qb.take).toHaveBeenCalledWith(5);
+      expect(result).toEqual({
+        items: [
+          {
+            id: transaction.id,
+            courseTitle: 'NestJS Fundamentals',
+            amount: transaction.amount,
+            status: PaymentStatus.PAID,
+            createdAt: transaction.createdAt,
+            paidAt: transaction.paidAt,
+          },
+        ],
+        total: 12,
+        page: 2,
+        limit: 5,
+        totalPages: 3,
+      });
+    });
+
+    it('does not expose payment code, provider fields, learner id, course id, or expiry', async () => {
+      const transaction = makeTransaction({
+        course: { id: courseId, title: 'Payment Safe Course' } as never,
+      });
+      const qb = makeQueryBuilder([transaction], 1);
+      transactionsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      const result = await paymentsService.listLearnerTransactions(
+        learnerId,
+        {},
+      );
+      const item = result.items[0] as Record<string, unknown>;
+
+      expect(Object.keys(item).sort()).toEqual([
+        'amount',
+        'courseTitle',
+        'createdAt',
+        'id',
+        'paidAt',
+        'status',
+      ]);
+      expect(item.paymentCode).toBeUndefined();
+      expect(item.provider).toBeUndefined();
+      expect(item.providerTransactionId).toBeUndefined();
+      expect(item.learnerId).toBeUndefined();
+      expect(item.courseId).toBeUndefined();
+      expect(item.expiresAt).toBeUndefined();
+    });
+  });
+
   describe('listAdminTransactions', () => {
     it('lists admin payment transactions with filters and pagination', async () => {
       const transaction = makeTransaction({

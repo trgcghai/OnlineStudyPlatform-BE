@@ -35,6 +35,7 @@ describe('PaymentsController', () => {
     } as unknown as jest.Mocked<ConfigService>;
     paymentsService = {
       createCheckout: jest.fn(),
+      listLearnerTransactions: jest.fn(),
       getOwnedTransaction: jest.fn(),
       cancelOwnedTransaction: jest.fn(),
       listAdminTransactions: jest.fn(),
@@ -85,6 +86,9 @@ describe('PaymentsController', () => {
 
   it('requires Learner role for checkout endpoints', () => {
     expect(getMethodRoles('createCheckout')).toEqual([UserRole.LEARNER]);
+    expect(getMethodRoles('listLearnerTransactions')).toEqual([
+      UserRole.LEARNER,
+    ]);
     expect(getMethodRoles('getTransaction')).toEqual([UserRole.LEARNER]);
     expect(getMethodRoles('cancelTransaction')).toEqual([UserRole.LEARNER]);
   });
@@ -166,6 +170,28 @@ describe('PaymentsController', () => {
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(paymentsService.listAdminTransactions).toHaveBeenCalledWith(query);
     void transactionId;
+  });
+
+  it('lists learner payment transactions for current learner', async () => {
+    const learnerId = 'learner-id';
+    const query = { page: 1, limit: 10 };
+    const response = {
+      items: [],
+      total: 0,
+      page: 1,
+      limit: 10,
+      totalPages: 0,
+    };
+    paymentsService.listLearnerTransactions.mockResolvedValue(response);
+
+    await expect(
+      controller.listLearnerTransactions(learnerId, query),
+    ).resolves.toBe(response);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(paymentsService.listLearnerTransactions).toHaveBeenCalledWith(
+      learnerId,
+      query,
+    );
   });
 
   it('gets admin payment transaction detail', async () => {

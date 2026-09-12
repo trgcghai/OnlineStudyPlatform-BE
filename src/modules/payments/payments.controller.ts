@@ -21,7 +21,10 @@ import {
   ListAdminPaymentProviderEventsQueryDto,
   ListAdminPaymentTransactionsQueryDto,
 } from './dto/admin-payment.dto';
-import { CheckoutCourseDto } from './dto/payment.dto';
+import {
+  CheckoutCourseDto,
+  ListLearnerPaymentTransactionsQueryDto,
+} from './dto/payment.dto';
 import { ConfigService } from './config.service';
 import { PaymentsService } from './payments.service';
 
@@ -40,6 +43,15 @@ export class PaymentsController {
     @Body() dto: CheckoutCourseDto,
   ) {
     return this.paymentsService.createCheckout(learnerId, dto.courseId);
+  }
+
+  @Get('transactions')
+  @Roles(UserRole.LEARNER)
+  listLearnerTransactions(
+    @CurrentUser('id') learnerId: string,
+    @Query() query: ListLearnerPaymentTransactionsQueryDto,
+  ) {
+    return this.paymentsService.listLearnerTransactions(learnerId, query);
   }
 
   @Get('transactions/:transactionId')

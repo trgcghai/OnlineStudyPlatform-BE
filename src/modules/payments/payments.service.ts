@@ -15,6 +15,9 @@ import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   CheckoutResponse,
+  LearnerPaymentTransactionItem,
+  LearnerPaymentTransactionListResponse,
+  ListLearnerPaymentTransactionsQueryDto,
   PaymentTransactionResponse,
   SE_PAY_TRANSFER_IN,
   SePayWebhookPayload,
@@ -47,6 +50,9 @@ const FREE_COURSE_ERROR = 'Khóa học miễn phí không cần thanh toán';
 const PAYMENT_CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const VIET_QR_URL = 'https://vietqr.app/img';
 const SE_PAY_MEMO_PREFIX = 'SEVQR';
+const DEFAULT_LEARNER_PAYMENT_PAGE = 1;
+const DEFAULT_LEARNER_PAYMENT_LIMIT = 10;
+const MAX_LEARNER_PAYMENT_LIMIT = 100;
 const DEFAULT_ADMIN_PAYMENT_PAGE = 1;
 const DEFAULT_ADMIN_PAYMENT_LIMIT = 10;
 const MAX_ADMIN_PAYMENT_LIMIT = 100;
@@ -193,6 +199,41 @@ export class PaymentsService {
     );
 
     return this.toCheckoutResponse(saved);
+  }
+
+  async listLearnerTransactions(
+    learnerId: string,
+    query: ListLearnerPaymentTransactionsQueryDto,
+  ): Promise<LearnerPaymentTransactionListResponse> {
+    const page = this.normalizePage(query.page, DEFAULT_LEARNER_PAYMENT_PAGE);
+    const limit = this.normalizeLimit(
+      query.limit,
+      DEFAULT_LEARNER_PAYMENT_LIMIT,
+      MAX_LEARNER_PAYMENT_LIMIT,
+    );
+    const qb = this.transactionsRepository
+      .createQueryBuilder('transaction')
+      .leftJoinAndSelect('transaction.course', 'course')
+      .where('transaction.learnerId = :learnerId', { learnerId })
+      .orderBy('transaction.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (query.status) {
+      qb.andWhere('transaction.status = :status', { status: query.status });
+    }
+
+    const [items, total] = await qb.getManyAndCount();
+
+    return {
+      items: items.map((transaction) =>
+        this.toLearnerPaymentTransactionItem(transaction),
+      ),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async listAdminTransactions(
@@ -626,14 +667,21 @@ export class PaymentsService {
     });
   }
 
-  private normalizePage(value?: number): number {
-    return value && value > 0 ? value : DEFAULT_ADMIN_PAYMENT_PAGE;
+  private normalizePage(
+    value?: number,
+    defaultPage = DEFAULT_ADMIN_PAYMENT_PAGE,
+  ): number {
+    return value && value > 0 ? value : defaultPage;
   }
 
-  private normalizeLimit(value?: number): number {
-    if (!value || value <= 0) return DEFAULT_ADMIN_PAYMENT_LIMIT;
+  private normalizeLimit(
+    value?: number,
+    defaultLimit = DEFAULT_ADMIN_PAYMENT_LIMIT,
+    maxLimit = MAX_ADMIN_PAYMENT_LIMIT,
+  ): number {
+    if (!value || value <= 0) return defaultLimit;
 
-    return Math.min(value, MAX_ADMIN_PAYMENT_LIMIT);
+    return Math.min(value, maxLimit);
   }
 
   private async saveProviderEventResult(
@@ -967,6 +1015,19 @@ export class PaymentsService {
       expiresAt: transaction.expiresAt,
       paidAt: transaction.paidAt,
       createdAt: transaction.createdAt,
+    };
+  }
+
+  private toLearnerPaymentTransactionItem(
+    transaction: PaymentTransaction,
+  ): LearnerPaymentTransactionItem {
+    return {
+      id: transaction.id,
+      courseTitle: transaction.course?.title ?? 'Khóa học không xác định',
+      amount: transaction.amount,
+      status: transaction.status,
+      createdAt: transaction.createdAt,
+      paidAt: transaction.paidAt,
     };
   }
 
