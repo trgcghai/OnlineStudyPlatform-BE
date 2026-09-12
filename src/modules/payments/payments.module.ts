@@ -11,6 +11,7 @@ import { PaymentProviderEvent } from './entities/payment-provider-event.entity';
 import { PaymentTransaction } from './entities/payment-transaction.entity';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
+import { PaymentTransactionCleanupService } from './payment-transaction-cleanup.service';
 import {
   PaymentConfigAudit,
   PaymentConfigAuditSchema,
@@ -34,7 +35,12 @@ import { SePayWebhookController } from './sepay.controller';
     NotificationsModule,
   ],
   controllers: [PaymentsController, SePayWebhookController],
-  providers: [PaymentsService, SePayAuthGuard, ConfigService],
+  providers: [
+    PaymentsService,
+    PaymentTransactionCleanupService,
+    SePayAuthGuard,
+    ConfigService,
+  ],
   exports: [PaymentsService, ConfigService],
 })
 export class PaymentsModule {}
