@@ -17,7 +17,14 @@ import {
   ListPaymentConfigAuditsQueryDto,
   UpdatePaymentConfigDto,
 } from './dto/config.dto';
-import { CheckoutCourseDto } from './dto/payment.dto';
+import {
+  ListAdminPaymentProviderEventsQueryDto,
+  ListAdminPaymentTransactionsQueryDto,
+} from './dto/admin-payment.dto';
+import {
+  CheckoutCourseDto,
+  ListLearnerPaymentTransactionsQueryDto,
+} from './dto/payment.dto';
 import { ConfigService } from './config.service';
 import { PaymentsService } from './payments.service';
 
@@ -36,6 +43,15 @@ export class PaymentsController {
     @Body() dto: CheckoutCourseDto,
   ) {
     return this.paymentsService.createCheckout(learnerId, dto.courseId);
+  }
+
+  @Get('transactions')
+  @Roles(UserRole.LEARNER)
+  listLearnerTransactions(
+    @CurrentUser('id') learnerId: string,
+    @Query() query: ListLearnerPaymentTransactionsQueryDto,
+  ) {
+    return this.paymentsService.listLearnerTransactions(learnerId, query);
   }
 
   @Get('transactions/:transactionId')
@@ -85,5 +101,31 @@ export class PaymentsController {
   @Roles(UserRole.ADMIN)
   listAudits(@Query() query: ListPaymentConfigAuditsQueryDto) {
     return this.configService.listAudits(query);
+  }
+
+  @Get('admin/transactions')
+  @Roles(UserRole.ADMIN)
+  listAdminTransactions(@Query() query: ListAdminPaymentTransactionsQueryDto) {
+    return this.paymentsService.listAdminTransactions(query);
+  }
+
+  @Get('admin/transactions/:transactionId')
+  @Roles(UserRole.ADMIN)
+  getAdminTransactionDetail(@Param('transactionId') transactionId: string) {
+    return this.paymentsService.getAdminTransactionDetail(transactionId);
+  }
+
+  @Get('admin/provider-events')
+  @Roles(UserRole.ADMIN)
+  listAdminProviderEvents(
+    @Query() query: ListAdminPaymentProviderEventsQueryDto,
+  ) {
+    return this.paymentsService.listAdminProviderEvents(query);
+  }
+
+  @Get('admin/provider-events/:eventId')
+  @Roles(UserRole.ADMIN)
+  getAdminProviderEventDetail(@Param('eventId') eventId: string) {
+    return this.paymentsService.getAdminProviderEventDetail(eventId);
   }
 }

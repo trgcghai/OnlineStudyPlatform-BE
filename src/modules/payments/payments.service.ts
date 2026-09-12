@@ -8,22 +8,35 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { Brackets, DataSource, Repository } from 'typeorm';
 import { FREE_COURSE_PRICE } from '../../common/constants/course.constant';
 import { Course, CourseStatus } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   CheckoutResponse,
+  LearnerPaymentTransactionItem,
+  LearnerPaymentTransactionListResponse,
+  ListLearnerPaymentTransactionsQueryDto,
   PaymentTransactionResponse,
   SE_PAY_TRANSFER_IN,
   SePayWebhookPayload,
 } from './dto/payment.dto';
 import {
+  AdminPaymentListResponse,
+  ListAdminPaymentProviderEventsQueryDto,
+  ListAdminPaymentTransactionsQueryDto,
+} from './dto/admin-payment.dto';
+import {
   PaymentAuditActorType,
   PaymentAuditActorTypeValue,
   PaymentAuditLog,
 } from './entities/payment-audit.entity';
+import {
+  PaymentProviderEvent,
+  PaymentProviderEventResult,
+  PaymentProviderEventResultValue,
+} from './entities/payment-provider-event.entity';
 import {
   PaymentStatus,
   PaymentTransaction,
@@ -37,6 +50,29 @@ const FREE_COURSE_ERROR = 'Khóa học miễn phí không cần thanh toán';
 const PAYMENT_CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const VIET_QR_URL = 'https://vietqr.app/img';
 const SE_PAY_MEMO_PREFIX = 'SEVQR';
+const DEFAULT_LEARNER_PAYMENT_PAGE = 1;
+const DEFAULT_LEARNER_PAYMENT_LIMIT = 10;
+const MAX_LEARNER_PAYMENT_LIMIT = 100;
+const DEFAULT_ADMIN_PAYMENT_PAGE = 1;
+const DEFAULT_ADMIN_PAYMENT_LIMIT = 10;
+const MAX_ADMIN_PAYMENT_LIMIT = 100;
+
+type PaymentConfirmationResult =
+  | {
+      confirmed: true;
+      result: typeof PaymentProviderEventResult.PROCESSED_PAID;
+      reason: null;
+    }
+  | {
+      confirmed: false;
+      result: typeof PaymentProviderEventResult.EXPIRED;
+      reason: string;
+    }
+  | {
+      confirmed: false;
+      result: typeof PaymentProviderEventResult.DUPLICATE_PAYMENT;
+      reason: string;
+    };
 
 @Injectable()
 export class PaymentsService {
@@ -45,6 +81,8 @@ export class PaymentsService {
     private readonly transactionsRepository: Repository<PaymentTransaction>,
     @InjectRepository(PaymentAuditLog)
     private readonly auditsRepository: Repository<PaymentAuditLog>,
+    @InjectRepository(PaymentProviderEvent)
+    private readonly providerEventsRepository: Repository<PaymentProviderEvent>,
     @InjectRepository(Course)
     private readonly coursesRepository: Repository<Course>,
     @InjectRepository(Enrollment)
@@ -163,66 +201,511 @@ export class PaymentsService {
     return this.toCheckoutResponse(saved);
   }
 
-  async processSePayWebhook(payload: SePayWebhookPayload): Promise<void> {
-    if (payload.transferType !== SE_PAY_TRANSFER_IN) {
-      return;
-    }
-
-    const providerTransactionId = String(payload.id);
-    const transaction = await this.findPendingTransactionForWebhook(
-      providerTransactionId,
-      payload,
+  async listLearnerTransactions(
+    learnerId: string,
+    query: ListLearnerPaymentTransactionsQueryDto,
+  ): Promise<LearnerPaymentTransactionListResponse> {
+    const page = this.normalizePage(query.page, DEFAULT_LEARNER_PAYMENT_PAGE);
+    const limit = this.normalizeLimit(
+      query.limit,
+      DEFAULT_LEARNER_PAYMENT_LIMIT,
+      MAX_LEARNER_PAYMENT_LIMIT,
     );
-    if (!transaction) {
-      return;
+    const qb = this.transactionsRepository
+      .createQueryBuilder('transaction')
+      .leftJoinAndSelect('transaction.course', 'course')
+      .where('transaction.learnerId = :learnerId', { learnerId })
+      .orderBy('transaction.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (query.status) {
+      qb.andWhere('transaction.status = :status', { status: query.status });
     }
 
-    if (payload.transferAmount < transaction.amount) {
-      await this.failUnderpaidTransaction(transaction, payload.transferAmount);
-      return;
-    }
+    const [items, total] = await qb.getManyAndCount();
 
-    await this.confirmPaidTransactionAndEnroll(
-      transaction,
-      providerTransactionId,
-      payload,
-    );
-    await this.notifyPaymentSuccess(transaction);
+    return {
+      items: items.map((transaction) =>
+        this.toLearnerPaymentTransactionItem(transaction),
+      ),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
-  private async findPendingTransactionForWebhook(
-    providerTransactionId: string,
-    payload: SePayWebhookPayload,
-  ): Promise<PaymentTransaction | null> {
-    const alreadyProcessed = await this.transactionsRepository.findOne({
+  async listAdminTransactions(
+    query: ListAdminPaymentTransactionsQueryDto,
+  ): Promise<AdminPaymentListResponse<unknown>> {
+    const page = this.normalizePage(query.page);
+    const limit = this.normalizeLimit(query.limit);
+    const qb = this.transactionsRepository
+      .createQueryBuilder('transaction')
+      .leftJoinAndSelect('transaction.learner', 'learner')
+      .leftJoinAndSelect('transaction.course', 'course')
+      .orderBy('transaction.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (query.status) {
+      qb.andWhere('transaction.status = :status', { status: query.status });
+    }
+    if (query.dateFrom) {
+      qb.andWhere('transaction.createdAt >= :dateFrom', {
+        dateFrom: new Date(query.dateFrom),
+      });
+    }
+    if (query.dateTo) {
+      qb.andWhere('transaction.createdAt <= :dateTo', {
+        dateTo: new Date(query.dateTo),
+      });
+    }
+    if (query.learnerId) {
+      qb.andWhere('transaction.learnerId = :learnerId', {
+        learnerId: query.learnerId,
+      });
+    }
+    if (query.courseId) {
+      qb.andWhere('transaction.courseId = :courseId', {
+        courseId: query.courseId,
+      });
+    }
+    if (query.amountMin !== undefined) {
+      qb.andWhere('transaction.amount >= :amountMin', {
+        amountMin: query.amountMin,
+      });
+    }
+    if (query.amountMax !== undefined) {
+      qb.andWhere('transaction.amount <= :amountMax', {
+        amountMax: query.amountMax,
+      });
+    }
+    if (query.search?.trim()) {
+      const search = `%${query.search.trim()}%`;
+      qb.andWhere(
+        new Brackets((subQb) => {
+          subQb
+            .where('transaction.id::text ILIKE :search', { search })
+            .orWhere('transaction.paymentCode ILIKE :search', { search })
+            .orWhere('transaction.providerTransactionId ILIKE :search', {
+              search,
+            })
+            .orWhere('transaction.learnerId::text ILIKE :search', { search })
+            .orWhere('transaction.courseId::text ILIKE :search', { search });
+        }),
+      );
+    }
+
+    const [items, total] = await qb.getManyAndCount();
+
+    return {
+      items: items.map((transaction) => ({
+        id: transaction.id,
+        learnerId: transaction.learnerId,
+        courseId: transaction.courseId,
+        amount: transaction.amount,
+        currency: transaction.currency,
+        status: transaction.status,
+        paymentCode: transaction.paymentCode,
+        provider: transaction.provider,
+        providerTransactionId: transaction.providerTransactionId,
+        providerGateway: transaction.providerGateway,
+        providerReferenceCode: transaction.providerReferenceCode,
+        expiresAt: transaction.expiresAt,
+        paidAt: transaction.paidAt,
+        createdAt: transaction.createdAt,
+        updatedAt: transaction.updatedAt,
+        learner: transaction.learner
+          ? {
+              id: transaction.learner.id,
+              name: transaction.learner.name,
+              email: transaction.learner.email,
+            }
+          : null,
+        course: transaction.course
+          ? { id: transaction.course.id, title: transaction.course.title }
+          : null,
+      })),
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
+  async getAdminTransactionDetail(transactionId: string): Promise<unknown> {
+    const transaction = await this.transactionsRepository.findOne({
+      where: { id: transactionId },
+      relations: { learner: true, course: true },
+    });
+
+    if (!transaction) {
+      throw new NotFoundException(TRANSACTION_NOT_FOUND_ERROR);
+    }
+
+    const [audits, providerEvents] = await Promise.all([
+      this.auditsRepository.find({
+        where: { transactionId },
+        order: { createdAt: 'DESC' },
+      }),
+      this.providerEventsRepository.find({
+        where: { paymentTransactionId: transactionId },
+        order: { receivedAt: 'DESC', createdAt: 'DESC' },
+      }),
+    ]);
+
+    return {
+      id: transaction.id,
+      learnerId: transaction.learnerId,
+      courseId: transaction.courseId,
+      amount: transaction.amount,
+      currency: transaction.currency,
+      status: transaction.status,
+      paymentCode: transaction.paymentCode,
+      provider: transaction.provider,
+      providerTransactionId: transaction.providerTransactionId,
+      providerGateway: transaction.providerGateway,
+      providerReferenceCode: transaction.providerReferenceCode,
+      expiresAt: transaction.expiresAt,
+      paidAt: transaction.paidAt,
+      createdAt: transaction.createdAt,
+      updatedAt: transaction.updatedAt,
+      learner: transaction.learner
+        ? {
+            id: transaction.learner.id,
+            name: transaction.learner.name,
+            email: transaction.learner.email,
+          }
+        : null,
+      course: transaction.course
+        ? { id: transaction.course.id, title: transaction.course.title }
+        : null,
+      audits: audits.map((audit) => ({
+        id: audit.id,
+        fromStatus: audit.fromStatus,
+        toStatus: audit.toStatus,
+        actorType: audit.actorType,
+        actorId: audit.actorId,
+        providerTransactionId: audit.providerTransactionId,
+        reason: audit.reason,
+        createdAt: audit.createdAt,
+      })),
+      providerEvents: providerEvents.map((event) => ({
+        id: event.id,
+        result: event.result,
+        providerTransactionId: event.providerTransactionId,
+        reportedPaymentCode: event.reportedPaymentCode,
+        transferAmount: event.transferAmount,
+        transferType: event.transferType,
+        gateway: event.gateway,
+        receivedAt: event.receivedAt,
+        processedAt: event.processedAt,
+      })),
+    };
+  }
+
+  async listAdminProviderEvents(
+    query: ListAdminPaymentProviderEventsQueryDto,
+  ): Promise<AdminPaymentListResponse<unknown>> {
+    const page = this.normalizePage(query.page);
+    const limit = this.normalizeLimit(query.limit);
+    const qb = this.providerEventsRepository
+      .createQueryBuilder('event')
+      .leftJoinAndSelect('event.paymentTransaction', 'transaction')
+      .orderBy('event.receivedAt', 'DESC')
+      .addOrderBy('event.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (query.result) {
+      qb.andWhere('event.result = :result', { result: query.result });
+    }
+    if (query.dateFrom) {
+      qb.andWhere('event.receivedAt >= :dateFrom', {
+        dateFrom: new Date(query.dateFrom),
+      });
+    }
+    if (query.dateTo) {
+      qb.andWhere('event.receivedAt <= :dateTo', {
+        dateTo: new Date(query.dateTo),
+      });
+    }
+    if (query.transferType) {
+      qb.andWhere('event.transferType = :transferType', {
+        transferType: query.transferType,
+      });
+    }
+    if (query.paymentStatus) {
+      qb.andWhere('transaction.status = :paymentStatus', {
+        paymentStatus: query.paymentStatus,
+      });
+    }
+    if (query.gateway) {
+      qb.andWhere('event.gateway = :gateway', { gateway: query.gateway });
+    }
+    if (query.search?.trim()) {
+      const search = `%${query.search.trim()}%`;
+      qb.andWhere(
+        new Brackets((subQb) => {
+          subQb
+            .where('event.id::text ILIKE :search', { search })
+            .orWhere('event.providerTransactionId ILIKE :search', { search })
+            .orWhere('event.reportedPaymentCode ILIKE :search', { search })
+            .orWhere('event.providerReferenceCode ILIKE :search', { search })
+            .orWhere('event.paymentTransactionId::text ILIKE :search', {
+              search,
+            })
+            .orWhere('transaction.paymentCode ILIKE :search', { search });
+        }),
+      );
+    }
+
+    const [items, total] = await qb.getManyAndCount();
+
+    return {
+      items: items.map((event) => ({
+        id: event.id,
+        provider: event.provider,
+        providerTransactionId: event.providerTransactionId,
+        paymentTransactionId: event.paymentTransactionId,
+        reportedPaymentCode: event.reportedPaymentCode,
+        transferAmount: event.transferAmount,
+        transferType: event.transferType,
+        gateway: event.gateway,
+        providerReferenceCode: event.providerReferenceCode,
+        result: event.result,
+        reason: event.reason,
+        receivedAt: event.receivedAt,
+        processedAt: event.processedAt,
+        createdAt: event.createdAt,
+        paymentTransaction: event.paymentTransaction
+          ? {
+              id: event.paymentTransaction.id,
+              paymentCode: event.paymentTransaction.paymentCode,
+              status: event.paymentTransaction.status,
+            }
+          : null,
+      })),
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
+  async getAdminProviderEventDetail(eventId: string): Promise<unknown> {
+    const event = await this.providerEventsRepository.findOne({
+      where: { id: eventId },
+      relations: { paymentTransaction: true },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Payment provider event not found');
+    }
+
+    return {
+      id: event.id,
+      provider: event.provider,
+      providerTransactionId: event.providerTransactionId,
+      paymentTransactionId: event.paymentTransactionId,
+      reportedPaymentCode: event.reportedPaymentCode,
+      transferAmount: event.transferAmount,
+      transferType: event.transferType,
+      gateway: event.gateway,
+      providerReferenceCode: event.providerReferenceCode,
+      result: event.result,
+      reason: event.reason,
+      receivedAt: event.receivedAt,
+      processedAt: event.processedAt,
+      createdAt: event.createdAt,
+      paymentTransaction: event.paymentTransaction
+        ? {
+            id: event.paymentTransaction.id,
+            paymentCode: event.paymentTransaction.paymentCode,
+            status: event.paymentTransaction.status,
+            courseId: event.paymentTransaction.courseId,
+            learnerId: event.paymentTransaction.learnerId,
+            amount: event.paymentTransaction.amount,
+            currency: event.paymentTransaction.currency,
+          }
+        : null,
+    };
+  }
+
+  async processSePayWebhook(payload: SePayWebhookPayload): Promise<void> {
+    const providerTransactionId = String(payload.id);
+    const existingEvent = await this.providerEventsRepository.findOne({
       where: { providerTransactionId },
     });
 
-    if (alreadyProcessed) {
-      return null;
+    if (existingEvent) {
+      return;
     }
 
-    const paymentCode = this.resolveSePayPaymentCode(payload);
+    const providerEvent = this.buildProviderEvent(
+      payload,
+      providerTransactionId,
+    );
+
+    if (payload.transferType !== SE_PAY_TRANSFER_IN) {
+      await this.saveProviderEventResult(
+        providerEvent,
+        PaymentProviderEventResult.IGNORED_TRANSFER_TYPE,
+        `Ignored non-inbound transfer type: ${payload.transferType}`,
+      );
+      return;
+    }
+
+    const paymentCode = providerEvent.reportedPaymentCode;
     if (!paymentCode) {
-      return null;
+      await this.saveProviderEventResult(
+        providerEvent,
+        PaymentProviderEventResult.UNKNOWN_PAYMENT_CODE,
+        'No payment code found in SePay webhook payload',
+      );
+      return;
+    }
+
+    const alreadyProcessed = await this.transactionsRepository.findOne({
+      where: { providerTransactionId },
+    });
+    if (alreadyProcessed) {
+      return;
     }
 
     const transaction = await this.transactionsRepository.findOne({
       where: { paymentCode },
     });
-
-    if (!transaction || transaction.status !== PaymentStatus.PENDING) {
-      return null;
+    if (!transaction) {
+      await this.saveProviderEventResult(
+        providerEvent,
+        PaymentProviderEventResult.UNKNOWN_PAYMENT_CODE,
+        `No payment transaction found for payment code ${paymentCode}`,
+      );
+      return;
     }
 
-    return transaction;
+    if (transaction.status === PaymentStatus.PAID) {
+      await this.saveProviderEventResult(
+        providerEvent,
+        PaymentProviderEventResult.DUPLICATE_PAYMENT,
+        'Payment transaction is already paid; manual reconciliation required',
+        transaction,
+      );
+      return;
+    }
+
+    if (transaction.status === PaymentStatus.EXPIRED) {
+      await this.saveProviderEventResult(
+        providerEvent,
+        PaymentProviderEventResult.EXPIRED,
+        'Payment transaction is already expired; manual reconciliation required',
+        transaction,
+      );
+      return;
+    }
+
+    if (transaction.status !== PaymentStatus.PENDING) {
+      await this.saveProviderEventResult(
+        providerEvent,
+        PaymentProviderEventResult.DUPLICATE_PAYMENT,
+        `Payment transaction is already ${transaction.status}; manual reconciliation required`,
+        transaction,
+      );
+      return;
+    }
+
+    if (payload.transferAmount !== transaction.amount) {
+      const reason = `Payment amount mismatch: expected=${transaction.amount}, received=${payload.transferAmount}`;
+      await this.saveProviderEventResult(
+        providerEvent,
+        PaymentProviderEventResult.AMOUNT_MISMATCH,
+        reason,
+        transaction,
+      );
+      await this.failAmountMismatchTransaction(transaction, payload);
+      return;
+    }
+
+    const confirmation = await this.confirmPaidTransactionAndEnroll(
+      transaction,
+      providerTransactionId,
+      payload,
+    );
+
+    await this.saveProviderEventResult(
+      providerEvent,
+      confirmation.result,
+      confirmation.reason,
+      transaction,
+    );
+
+    if (confirmation.confirmed) {
+      await this.notifyPaymentSuccess(transaction);
+    }
   }
 
-  private async failUnderpaidTransaction(
+  private buildProviderEvent(
+    payload: SePayWebhookPayload,
+    providerTransactionId: string,
+  ): PaymentProviderEvent {
+    return this.providerEventsRepository.create({
+      provider: 'sepay',
+      providerTransactionId,
+      paymentTransactionId: null,
+      reportedPaymentCode: this.resolveSePayPaymentCode(payload),
+      transferAmount: payload.transferAmount,
+      transferType: payload.transferType,
+      gateway: payload.gateway || null,
+      providerReferenceCode: payload.referenceCode ?? null,
+      result: null,
+      reason: null,
+      receivedAt: new Date(),
+      processedAt: null,
+    });
+  }
+
+  private normalizePage(
+    value?: number,
+    defaultPage = DEFAULT_ADMIN_PAYMENT_PAGE,
+  ): number {
+    return value && value > 0 ? value : defaultPage;
+  }
+
+  private normalizeLimit(
+    value?: number,
+    defaultLimit = DEFAULT_ADMIN_PAYMENT_LIMIT,
+    maxLimit = MAX_ADMIN_PAYMENT_LIMIT,
+  ): number {
+    if (!value || value <= 0) return defaultLimit;
+
+    return Math.min(value, maxLimit);
+  }
+
+  private async saveProviderEventResult(
+    event: PaymentProviderEvent,
+    result: PaymentProviderEventResultValue,
+    reason: string | null,
+    transaction: PaymentTransaction | null = null,
+  ): Promise<void> {
+    event.paymentTransactionId = transaction?.id ?? null;
+    event.result = result;
+    event.reason = reason;
+    event.processedAt = new Date();
+    await this.providerEventsRepository.save(event);
+  }
+
+  private async failAmountMismatchTransaction(
     transaction: PaymentTransaction,
-    transferAmount: number,
+    payload: SePayWebhookPayload,
   ): Promise<void> {
     transaction.status = PaymentStatus.FAILED;
+    transaction.providerTransactionId = String(payload.id);
+    transaction.providerGateway = payload.gateway || null;
+    transaction.providerReferenceCode = payload.referenceCode ?? null;
+    transaction.paidAt = null;
     const saved = await this.transactionsRepository.save(transaction);
     await this.writeAudit(
       saved,
@@ -230,7 +713,7 @@ export class PaymentsService {
       null,
       PaymentStatus.PENDING,
       PaymentStatus.FAILED,
-      `Số tiền chuyển khoản ${transferAmount} nhỏ hơn ${transaction.amount}`,
+      `Payment amount mismatch: expected=${transaction.amount}, received=${payload.transferAmount}`,
     );
   }
 
@@ -238,15 +721,67 @@ export class PaymentsService {
     transaction: PaymentTransaction,
     providerTransactionId: string,
     payload: SePayWebhookPayload,
-  ): Promise<void> {
-    await this.dataSource.transaction(async (manager) => {
+  ): Promise<PaymentConfirmationResult> {
+    return this.dataSource.transaction(async (manager) => {
       const transactionsRepository = manager.getRepository(PaymentTransaction);
       const payment = await transactionsRepository.findOne({
         where: { id: transaction.id },
+        lock: { mode: 'pessimistic_write' },
       });
 
-      if (!payment || payment.status !== PaymentStatus.PENDING) {
-        return;
+      if (!payment) {
+        return {
+          confirmed: false,
+          result: PaymentProviderEventResult.DUPLICATE_PAYMENT,
+          reason:
+            'Payment transaction no longer exists; manual reconciliation required',
+        };
+      }
+
+      if (payment.status === PaymentStatus.EXPIRED) {
+        return {
+          confirmed: false,
+          result: PaymentProviderEventResult.EXPIRED,
+          reason:
+            'Payment transaction is already expired; manual reconciliation required',
+        };
+      }
+
+      if (payment.status !== PaymentStatus.PENDING) {
+        return {
+          confirmed: false,
+          result: PaymentProviderEventResult.DUPLICATE_PAYMENT,
+          reason: `Payment transaction is already ${payment.status}; manual reconciliation required`,
+        };
+      }
+
+      if (payment.expiresAt <= new Date()) {
+        payment.status = PaymentStatus.EXPIRED;
+        payment.providerTransactionId = providerTransactionId;
+        payment.providerGateway = payload.gateway || null;
+        payment.providerReferenceCode = payload.referenceCode ?? null;
+        payment.paidAt = null;
+        const saved = await transactionsRepository.save(payment);
+
+        await manager.getRepository(PaymentAuditLog).save(
+          manager.getRepository(PaymentAuditLog).create({
+            transactionId: saved.id,
+            actorType: PaymentAuditActorType.SEPAY,
+            actorId: null,
+            fromStatus: PaymentStatus.PENDING,
+            toStatus: PaymentStatus.EXPIRED,
+            amount: saved.amount,
+            paymentCode: saved.paymentCode,
+            providerTransactionId: saved.providerTransactionId,
+            reason: 'Payment received after transaction expiry',
+          }),
+        );
+
+        return {
+          confirmed: false,
+          result: PaymentProviderEventResult.EXPIRED,
+          reason: 'Payment received after transaction expiry',
+        };
       }
 
       payment.status = PaymentStatus.PAID;
@@ -275,7 +810,11 @@ export class PaymentsService {
         where: { learnerId: saved.learnerId, courseId: saved.courseId },
       });
       if (existing) {
-        return;
+        return {
+          confirmed: true,
+          result: PaymentProviderEventResult.PROCESSED_PAID,
+          reason: null,
+        };
       }
 
       await enrollmentsRepository.save(
@@ -286,6 +825,12 @@ export class PaymentsService {
           completedAt: null,
         }),
       );
+
+      return {
+        confirmed: true,
+        result: PaymentProviderEventResult.PROCESSED_PAID,
+        reason: null,
+      };
     });
   }
 
@@ -470,6 +1015,19 @@ export class PaymentsService {
       expiresAt: transaction.expiresAt,
       paidAt: transaction.paidAt,
       createdAt: transaction.createdAt,
+    };
+  }
+
+  private toLearnerPaymentTransactionItem(
+    transaction: PaymentTransaction,
+  ): LearnerPaymentTransactionItem {
+    return {
+      id: transaction.id,
+      courseTitle: transaction.course?.title ?? 'Khóa học không xác định',
+      amount: transaction.amount,
+      status: transaction.status,
+      createdAt: transaction.createdAt,
+      paidAt: transaction.paidAt,
     };
   }
 

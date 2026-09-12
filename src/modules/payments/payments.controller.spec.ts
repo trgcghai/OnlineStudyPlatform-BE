@@ -24,6 +24,7 @@ describe('PaymentsController', () => {
   let controller: PaymentsController;
   let configService: jest.Mocked<ConfigService>;
   let paymentsService: jest.Mocked<PaymentsService>;
+  const transactionId = '33333333-3333-4333-8333-333333333333';
 
   beforeEach(async () => {
     configService = {
@@ -34,8 +35,13 @@ describe('PaymentsController', () => {
     } as unknown as jest.Mocked<ConfigService>;
     paymentsService = {
       createCheckout: jest.fn(),
+      listLearnerTransactions: jest.fn(),
       getOwnedTransaction: jest.fn(),
       cancelOwnedTransaction: jest.fn(),
+      listAdminTransactions: jest.fn(),
+      getAdminTransactionDetail: jest.fn(),
+      listAdminProviderEvents: jest.fn(),
+      getAdminProviderEventDetail: jest.fn(),
     } as unknown as jest.Mocked<PaymentsService>;
 
     const moduleRef = await Test.createTestingModule({
@@ -64,6 +70,14 @@ describe('PaymentsController', () => {
     expect(getMethodRoles('getConfig')).toEqual([UserRole.ADMIN]);
     expect(getMethodRoles('updateConfig')).toEqual([UserRole.ADMIN]);
     expect(getMethodRoles('listAudits')).toEqual([UserRole.ADMIN]);
+    expect(getMethodRoles('listAdminTransactions')).toEqual([UserRole.ADMIN]);
+    expect(getMethodRoles('getAdminTransactionDetail')).toEqual([
+      UserRole.ADMIN,
+    ]);
+    expect(getMethodRoles('listAdminProviderEvents')).toEqual([UserRole.ADMIN]);
+    expect(getMethodRoles('getAdminProviderEventDetail')).toEqual([
+      UserRole.ADMIN,
+    ]);
   });
 
   it('requires Instructor role for course pricing', () => {
@@ -72,6 +86,9 @@ describe('PaymentsController', () => {
 
   it('requires Learner role for checkout endpoints', () => {
     expect(getMethodRoles('createCheckout')).toEqual([UserRole.LEARNER]);
+    expect(getMethodRoles('listLearnerTransactions')).toEqual([
+      UserRole.LEARNER,
+    ]);
     expect(getMethodRoles('getTransaction')).toEqual([UserRole.LEARNER]);
     expect(getMethodRoles('cancelTransaction')).toEqual([UserRole.LEARNER]);
   });
@@ -134,5 +151,90 @@ describe('PaymentsController', () => {
     configService.listAudits.mockResolvedValue(response);
 
     await expect(controller.listAudits(query)).resolves.toBe(response);
+  });
+
+  it('lists admin payment transactions', async () => {
+    const query = { page: 1, limit: 10 };
+    const response = {
+      items: [],
+      total: 0,
+      page: 1,
+      limit: 10,
+      totalPages: 1,
+    };
+    paymentsService.listAdminTransactions.mockResolvedValue(response);
+
+    await expect(controller.listAdminTransactions(query)).resolves.toBe(
+      response,
+    );
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(paymentsService.listAdminTransactions).toHaveBeenCalledWith(query);
+    void transactionId;
+  });
+
+  it('lists learner payment transactions for current learner', async () => {
+    const learnerId = 'learner-id';
+    const query = { page: 1, limit: 10 };
+    const response = {
+      items: [],
+      total: 0,
+      page: 1,
+      limit: 10,
+      totalPages: 0,
+    };
+    paymentsService.listLearnerTransactions.mockResolvedValue(response);
+
+    await expect(
+      controller.listLearnerTransactions(learnerId, query),
+    ).resolves.toBe(response);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(paymentsService.listLearnerTransactions).toHaveBeenCalledWith(
+      learnerId,
+      query,
+    );
+  });
+
+  it('gets admin payment transaction detail', async () => {
+    const response = { id: transactionId };
+    paymentsService.getAdminTransactionDetail.mockResolvedValue(response);
+
+    await expect(
+      controller.getAdminTransactionDetail(transactionId),
+    ).resolves.toBe(response);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(paymentsService.getAdminTransactionDetail).toHaveBeenCalledWith(
+      transactionId,
+    );
+  });
+
+  it('lists admin payment provider events', async () => {
+    const query = { page: 1, limit: 10 };
+    const response = {
+      items: [],
+      total: 0,
+      page: 1,
+      limit: 10,
+      totalPages: 1,
+    };
+    paymentsService.listAdminProviderEvents.mockResolvedValue(response);
+
+    await expect(controller.listAdminProviderEvents(query)).resolves.toBe(
+      response,
+    );
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(paymentsService.listAdminProviderEvents).toHaveBeenCalledWith(query);
+  });
+
+  it('gets admin payment provider event detail', async () => {
+    const response = { id: 'event-1' };
+    paymentsService.getAdminProviderEventDetail.mockResolvedValue(response);
+
+    await expect(
+      controller.getAdminProviderEventDetail('event-1'),
+    ).resolves.toBe(response);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(paymentsService.getAdminProviderEventDetail).toHaveBeenCalledWith(
+      'event-1',
+    );
   });
 });
