@@ -742,14 +742,55 @@ describe('PaymentsService', () => {
       );
 
       expect(transactionsRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ status: PaymentStatus.FAILED }),
+        expect.objectContaining({
+          status: PaymentStatus.FAILED,
+          providerTransactionId: '123456',
+          providerGateway: 'Vietcombank',
+          providerReferenceCode: 'ref-1',
+          paidAt: null,
+        }),
       );
       expect(auditsRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({
           actorType: PaymentAuditActorType.SEPAY,
           fromStatus: PaymentStatus.PENDING,
           toStatus: PaymentStatus.FAILED,
-          reason: 'Số tiền chuyển khoản 50000 nhỏ hơn 99000',
+          providerTransactionId: '123456',
+          reason: 'Payment amount mismatch: expected=99000, received=50000',
+        }),
+      );
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+      expect(enrollmentsRepository.findAll).not.toHaveBeenCalled();
+      expect(
+        notificationsService.createDirectNotification,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('marks the transaction failed when the transfer amount is too high', async () => {
+      transactionsRepository.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(makeTransaction());
+
+      await paymentsService.processSePayWebhook(
+        makeSePayPayload({ transferAmount: 120000 }),
+      );
+
+      expect(transactionsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: PaymentStatus.FAILED,
+          providerTransactionId: '123456',
+          providerGateway: 'Vietcombank',
+          providerReferenceCode: 'ref-1',
+          paidAt: null,
+        }),
+      );
+      expect(auditsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorType: PaymentAuditActorType.SEPAY,
+          fromStatus: PaymentStatus.PENDING,
+          toStatus: PaymentStatus.FAILED,
+          providerTransactionId: '123456',
+          reason: 'Payment amount mismatch: expected=99000, received=120000',
         }),
       );
       expect(dataSource.transaction).not.toHaveBeenCalled();

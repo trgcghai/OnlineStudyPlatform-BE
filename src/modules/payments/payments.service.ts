@@ -177,8 +177,8 @@ export class PaymentsService {
       return;
     }
 
-    if (payload.transferAmount < transaction.amount) {
-      await this.failUnderpaidTransaction(transaction, payload.transferAmount);
+    if (payload.transferAmount !== transaction.amount) {
+      await this.failAmountMismatchTransaction(transaction, payload);
       return;
     }
 
@@ -221,11 +221,15 @@ export class PaymentsService {
     return transaction;
   }
 
-  private async failUnderpaidTransaction(
+  private async failAmountMismatchTransaction(
     transaction: PaymentTransaction,
-    transferAmount: number,
+    payload: SePayWebhookPayload,
   ): Promise<void> {
     transaction.status = PaymentStatus.FAILED;
+    transaction.providerTransactionId = String(payload.id);
+    transaction.providerGateway = payload.gateway || null;
+    transaction.providerReferenceCode = payload.referenceCode ?? null;
+    transaction.paidAt = null;
     const saved = await this.transactionsRepository.save(transaction);
     await this.writeAudit(
       saved,
@@ -233,7 +237,7 @@ export class PaymentsService {
       null,
       PaymentStatus.PENDING,
       PaymentStatus.FAILED,
-      `Số tiền chuyển khoản ${transferAmount} nhỏ hơn ${transaction.amount}`,
+      `Payment amount mismatch: expected=${transaction.amount}, received=${payload.transferAmount}`,
     );
   }
 
