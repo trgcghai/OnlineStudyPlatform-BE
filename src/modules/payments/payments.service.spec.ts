@@ -19,6 +19,10 @@ import {
   PaymentAuditLog,
 } from './entities/payment-audit.entity';
 import {
+  PaymentProviderEvent,
+  PaymentProviderEventResult,
+} from './entities/payment-provider-event.entity';
+import {
   PaymentStatus,
   PaymentTransaction,
 } from './entities/payment-transaction.entity';
@@ -33,6 +37,11 @@ describe('PaymentsService', () => {
     exists: jest.Mock;
   };
   let auditsRepository: { create: jest.Mock; save: jest.Mock };
+  let providerEventsRepository: {
+    create: jest.Mock;
+    save: jest.Mock;
+    findOne: jest.Mock;
+  };
   let coursesRepository: { findOne: jest.Mock };
   let enrollmentsRepository: {
     findAll: never;
@@ -124,6 +133,13 @@ describe('PaymentsService', () => {
       create: jest.fn((input: Partial<PaymentAuditLog>) => input),
       save: jest.fn(),
     };
+    providerEventsRepository = {
+      create: jest.fn((input: Partial<PaymentProviderEvent>) => input),
+      save: jest.fn((input: Partial<PaymentProviderEvent>) =>
+        Promise.resolve({ id: 'event-1', ...input }),
+      ),
+      findOne: jest.fn(),
+    };
     coursesRepository = { findOne: jest.fn() };
     enrollmentsRepository = {
       findAll: jest.fn(),
@@ -154,6 +170,7 @@ describe('PaymentsService', () => {
     paymentsService = new PaymentsService(
       transactionsRepository as unknown as Repository<PaymentTransaction>,
       auditsRepository as unknown as Repository<PaymentAuditLog>,
+      providerEventsRepository as unknown as Repository<PaymentProviderEvent>,
       coursesRepository as unknown as Repository<Course>,
       enrollmentsRepository as unknown as Repository<Enrollment>,
       notificationsService as unknown as NotificationsService,
@@ -476,6 +493,20 @@ describe('PaymentsService', () => {
         progress: '0.00',
         completedAt: null,
       });
+      expect(providerEventsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerTransactionId: '123456',
+          paymentTransactionId: transactionId,
+          reportedPaymentCode: paymentCode,
+          transferAmount: 99000,
+          transferType: SE_PAY_TRANSFER_IN,
+          gateway: 'Vietcombank',
+          providerReferenceCode: 'ref-1',
+          result: PaymentProviderEventResult.PROCESSED_PAID,
+          reason: null,
+          processedAt: expect.any(Date),
+        }),
+      );
       expect(
         notificationsService.createDirectNotification,
       ).toHaveBeenCalledWith(
@@ -566,6 +597,16 @@ describe('PaymentsService', () => {
           reason: 'Payment received after transaction expiry',
         }),
       );
+      expect(providerEventsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerTransactionId: '123456',
+          paymentTransactionId: transactionId,
+          reportedPaymentCode: paymentCode,
+          result: PaymentProviderEventResult.EXPIRED,
+          reason: 'Payment received after transaction expiry',
+          processedAt: expect.any(Date),
+        }),
+      );
       expect(enrollmentRepo.create).not.toHaveBeenCalled();
       expect(enrollmentRepo.save).not.toHaveBeenCalled();
       expect(
@@ -573,25 +614,79 @@ describe('PaymentsService', () => {
       ).not.toHaveBeenCalled();
     });
 
-    it('ignores outbound transfers', async () => {
+    it('records outbound transfers as ignored provider events', async () => {
       await paymentsService.processSePayWebhook(
         makeSePayPayload({ transferType: 'out' }),
       );
 
+      expect(providerEventsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'sepay',
+          providerTransactionId: '123456',
+          paymentTransactionId: null,
+          reportedPaymentCode: paymentCode,
+          transferAmount: 99000,
+          transferType: 'out',
+          gateway: 'Vietcombank',
+          providerReferenceCode: 'ref-1',
+          result: PaymentProviderEventResult.IGNORED_TRANSFER_TYPE,
+          reason: 'Ignored non-inbound transfer type: out',
+          receivedAt: expect.any(Date),
+          processedAt: expect.any(Date),
+        }),
+      );
       expect(transactionsRepository.findOne).not.toHaveBeenCalled();
       expect(
         notificationsService.createDirectNotification,
       ).not.toHaveBeenCalled();
     });
 
-    it('ignores repeated webhooks for the same provider transaction', async () => {
-      transactionsRepository.findOne.mockResolvedValueOnce(
-        makeTransaction({ providerTransactionId: '123456' }),
-      );
+    it('ignores repeated provider events for the same provider transaction id', async () => {
+      providerEventsRepository.findOne.mockResolvedValue({
+        id: 'event-1',
+        providerTransactionId: '123456',
+      });
 
       await paymentsService.processSePayWebhook(makeSePayPayload());
 
+      expect(providerEventsRepository.save).not.toHaveBeenCalled();
+      expect(transactionsRepository.findOne).not.toHaveBeenCalled();
       expect(transactionsRepository.save).not.toHaveBeenCalled();
+      expect(
+        notificationsService.createDirectNotification,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('records a second real transfer for an already-paid payment code as duplicate payment', async () => {
+      providerEventsRepository.findOne.mockResolvedValue(null);
+      transactionsRepository.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(
+          makeTransaction({
+            status: PaymentStatus.PAID,
+            providerTransactionId: 'first-provider-tx',
+            paidAt: new Date('2026-09-10T12:06:00.000Z'),
+          }),
+        );
+
+      await paymentsService.processSePayWebhook(
+        makeSePayPayload({ id: 789012, referenceCode: 'ref-2' }),
+      );
+
+      expect(providerEventsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerTransactionId: '789012',
+          paymentTransactionId: transactionId,
+          reportedPaymentCode: paymentCode,
+          transferAmount: 99000,
+          result: PaymentProviderEventResult.DUPLICATE_PAYMENT,
+          reason:
+            'Payment transaction is already paid; manual reconciliation required',
+          processedAt: expect.any(Date),
+        }),
+      );
+      expect(transactionsRepository.save).not.toHaveBeenCalled();
+      expect(dataSource.transaction).not.toHaveBeenCalled();
       expect(
         notificationsService.createDirectNotification,
       ).not.toHaveBeenCalled();
@@ -719,13 +814,22 @@ describe('PaymentsService', () => {
       ).not.toHaveBeenCalled();
     });
 
-    it('ignores webhooks with an unknown payment code', async () => {
-      transactionsRepository.findOne
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(null);
+    it('records webhooks with an unknown payment code', async () => {
+      providerEventsRepository.findOne.mockResolvedValue(null);
+      transactionsRepository.findOne.mockResolvedValueOnce(null);
 
       await paymentsService.processSePayWebhook(makeSePayPayload());
 
+      expect(providerEventsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerTransactionId: '123456',
+          paymentTransactionId: null,
+          reportedPaymentCode: paymentCode,
+          result: PaymentProviderEventResult.UNKNOWN_PAYMENT_CODE,
+          reason: `No payment transaction found for payment code ${paymentCode}`,
+          processedAt: expect.any(Date),
+        }),
+      );
       expect(transactionsRepository.save).not.toHaveBeenCalled();
       expect(
         notificationsService.createDirectNotification,
@@ -757,6 +861,16 @@ describe('PaymentsService', () => {
           toStatus: PaymentStatus.FAILED,
           providerTransactionId: '123456',
           reason: 'Payment amount mismatch: expected=99000, received=50000',
+        }),
+      );
+      expect(providerEventsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerTransactionId: '123456',
+          paymentTransactionId: transactionId,
+          reportedPaymentCode: paymentCode,
+          result: PaymentProviderEventResult.AMOUNT_MISMATCH,
+          reason: 'Payment amount mismatch: expected=99000, received=50000',
+          processedAt: expect.any(Date),
         }),
       );
       expect(dataSource.transaction).not.toHaveBeenCalled();
@@ -791,6 +905,16 @@ describe('PaymentsService', () => {
           toStatus: PaymentStatus.FAILED,
           providerTransactionId: '123456',
           reason: 'Payment amount mismatch: expected=99000, received=120000',
+        }),
+      );
+      expect(providerEventsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerTransactionId: '123456',
+          paymentTransactionId: transactionId,
+          reportedPaymentCode: paymentCode,
+          result: PaymentProviderEventResult.AMOUNT_MISMATCH,
+          reason: 'Payment amount mismatch: expected=99000, received=120000',
+          processedAt: expect.any(Date),
         }),
       );
       expect(dataSource.transaction).not.toHaveBeenCalled();

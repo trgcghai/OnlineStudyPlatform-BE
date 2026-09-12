@@ -25,6 +25,11 @@ import {
   PaymentAuditLog,
 } from './entities/payment-audit.entity';
 import {
+  PaymentProviderEvent,
+  PaymentProviderEventResult,
+  PaymentProviderEventResultValue,
+} from './entities/payment-provider-event.entity';
+import {
   PaymentStatus,
   PaymentTransaction,
 } from './entities/payment-transaction.entity';
@@ -38,6 +43,23 @@ const PAYMENT_CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const VIET_QR_URL = 'https://vietqr.app/img';
 const SE_PAY_MEMO_PREFIX = 'SEVQR';
 
+type PaymentConfirmationResult =
+  | {
+      confirmed: true;
+      result: typeof PaymentProviderEventResult.PROCESSED_PAID;
+      reason: null;
+    }
+  | {
+      confirmed: false;
+      result: typeof PaymentProviderEventResult.EXPIRED;
+      reason: string;
+    }
+  | {
+      confirmed: false;
+      result: typeof PaymentProviderEventResult.DUPLICATE_PAYMENT;
+      reason: string;
+    };
+
 @Injectable()
 export class PaymentsService {
   constructor(
@@ -45,6 +67,8 @@ export class PaymentsService {
     private readonly transactionsRepository: Repository<PaymentTransaction>,
     @InjectRepository(PaymentAuditLog)
     private readonly auditsRepository: Repository<PaymentAuditLog>,
+    @InjectRepository(PaymentProviderEvent)
+    private readonly providerEventsRepository: Repository<PaymentProviderEvent>,
     @InjectRepository(Course)
     private readonly coursesRepository: Repository<Course>,
     @InjectRepository(Enrollment)
@@ -164,61 +188,149 @@ export class PaymentsService {
   }
 
   async processSePayWebhook(payload: SePayWebhookPayload): Promise<void> {
-    if (payload.transferType !== SE_PAY_TRANSFER_IN) {
-      return;
-    }
-
     const providerTransactionId = String(payload.id);
-    const transaction = await this.findPendingTransactionForWebhook(
-      providerTransactionId,
-      payload,
-    );
-    if (!transaction) {
-      return;
-    }
-
-    if (payload.transferAmount !== transaction.amount) {
-      await this.failAmountMismatchTransaction(transaction, payload);
-      return;
-    }
-
-    const confirmed = await this.confirmPaidTransactionAndEnroll(
-      transaction,
-      providerTransactionId,
-      payload,
-    );
-
-    if (confirmed) {
-      await this.notifyPaymentSuccess(transaction);
-    }
-  }
-
-  private async findPendingTransactionForWebhook(
-    providerTransactionId: string,
-    payload: SePayWebhookPayload,
-  ): Promise<PaymentTransaction | null> {
-    const alreadyProcessed = await this.transactionsRepository.findOne({
+    const existingEvent = await this.providerEventsRepository.findOne({
       where: { providerTransactionId },
     });
 
-    if (alreadyProcessed) {
-      return null;
+    if (existingEvent) {
+      return;
     }
 
-    const paymentCode = this.resolveSePayPaymentCode(payload);
+    const providerEvent = this.buildProviderEvent(
+      payload,
+      providerTransactionId,
+    );
+
+    if (payload.transferType !== SE_PAY_TRANSFER_IN) {
+      await this.saveProviderEventResult(
+        providerEvent,
+        PaymentProviderEventResult.IGNORED_TRANSFER_TYPE,
+        `Ignored non-inbound transfer type: ${payload.transferType}`,
+      );
+      return;
+    }
+
+    const paymentCode = providerEvent.reportedPaymentCode;
     if (!paymentCode) {
-      return null;
+      await this.saveProviderEventResult(
+        providerEvent,
+        PaymentProviderEventResult.UNKNOWN_PAYMENT_CODE,
+        'No payment code found in SePay webhook payload',
+      );
+      return;
+    }
+
+    const alreadyProcessed = await this.transactionsRepository.findOne({
+      where: { providerTransactionId },
+    });
+    if (alreadyProcessed) {
+      return;
     }
 
     const transaction = await this.transactionsRepository.findOne({
       where: { paymentCode },
     });
-
-    if (!transaction || transaction.status !== PaymentStatus.PENDING) {
-      return null;
+    if (!transaction) {
+      await this.saveProviderEventResult(
+        providerEvent,
+        PaymentProviderEventResult.UNKNOWN_PAYMENT_CODE,
+        `No payment transaction found for payment code ${paymentCode}`,
+      );
+      return;
     }
 
-    return transaction;
+    if (transaction.status === PaymentStatus.PAID) {
+      await this.saveProviderEventResult(
+        providerEvent,
+        PaymentProviderEventResult.DUPLICATE_PAYMENT,
+        'Payment transaction is already paid; manual reconciliation required',
+        transaction,
+      );
+      return;
+    }
+
+    if (transaction.status === PaymentStatus.EXPIRED) {
+      await this.saveProviderEventResult(
+        providerEvent,
+        PaymentProviderEventResult.EXPIRED,
+        'Payment transaction is already expired; manual reconciliation required',
+        transaction,
+      );
+      return;
+    }
+
+    if (transaction.status !== PaymentStatus.PENDING) {
+      await this.saveProviderEventResult(
+        providerEvent,
+        PaymentProviderEventResult.DUPLICATE_PAYMENT,
+        `Payment transaction is already ${transaction.status}; manual reconciliation required`,
+        transaction,
+      );
+      return;
+    }
+
+    if (payload.transferAmount !== transaction.amount) {
+      const reason = `Payment amount mismatch: expected=${transaction.amount}, received=${payload.transferAmount}`;
+      await this.saveProviderEventResult(
+        providerEvent,
+        PaymentProviderEventResult.AMOUNT_MISMATCH,
+        reason,
+        transaction,
+      );
+      await this.failAmountMismatchTransaction(transaction, payload);
+      return;
+    }
+
+    const confirmation = await this.confirmPaidTransactionAndEnroll(
+      transaction,
+      providerTransactionId,
+      payload,
+    );
+
+    await this.saveProviderEventResult(
+      providerEvent,
+      confirmation.result,
+      confirmation.reason,
+      transaction,
+    );
+
+    if (confirmation.confirmed) {
+      await this.notifyPaymentSuccess(transaction);
+    }
+  }
+
+  private buildProviderEvent(
+    payload: SePayWebhookPayload,
+    providerTransactionId: string,
+  ): PaymentProviderEvent {
+    return this.providerEventsRepository.create({
+      provider: 'sepay',
+      providerTransactionId,
+      paymentTransactionId: null,
+      reportedPaymentCode: this.resolveSePayPaymentCode(payload),
+      transferAmount: payload.transferAmount,
+      transferType: payload.transferType,
+      gateway: payload.gateway || null,
+      providerReferenceCode: payload.referenceCode ?? null,
+      result: null,
+      reason: null,
+      receivedAt: new Date(),
+      processedAt: null,
+    });
+  }
+
+  private async saveProviderEventResult(
+    event: PaymentProviderEvent,
+    result: PaymentProviderEventResultValue,
+    reason: string | null,
+    transaction: PaymentTransaction | null = null,
+  ): Promise<void> {
+    event.paymentTransactionId = transaction?.id ?? null;
+    event.result = result;
+    event.reason = reason;
+    event.processedAt = new Date();
+    await this.providerEventsRepository.save(event);
   }
 
   private async failAmountMismatchTransaction(
@@ -245,7 +357,7 @@ export class PaymentsService {
     transaction: PaymentTransaction,
     providerTransactionId: string,
     payload: SePayWebhookPayload,
-  ): Promise<boolean> {
+  ): Promise<PaymentConfirmationResult> {
     return this.dataSource.transaction(async (manager) => {
       const transactionsRepository = manager.getRepository(PaymentTransaction);
       const payment = await transactionsRepository.findOne({
@@ -253,8 +365,30 @@ export class PaymentsService {
         lock: { mode: 'pessimistic_write' },
       });
 
-      if (!payment || payment.status !== PaymentStatus.PENDING) {
-        return false;
+      if (!payment) {
+        return {
+          confirmed: false,
+          result: PaymentProviderEventResult.DUPLICATE_PAYMENT,
+          reason:
+            'Payment transaction no longer exists; manual reconciliation required',
+        };
+      }
+
+      if (payment.status === PaymentStatus.EXPIRED) {
+        return {
+          confirmed: false,
+          result: PaymentProviderEventResult.EXPIRED,
+          reason:
+            'Payment transaction is already expired; manual reconciliation required',
+        };
+      }
+
+      if (payment.status !== PaymentStatus.PENDING) {
+        return {
+          confirmed: false,
+          result: PaymentProviderEventResult.DUPLICATE_PAYMENT,
+          reason: `Payment transaction is already ${payment.status}; manual reconciliation required`,
+        };
       }
 
       if (payment.expiresAt <= new Date()) {
@@ -279,7 +413,11 @@ export class PaymentsService {
           }),
         );
 
-        return false;
+        return {
+          confirmed: false,
+          result: PaymentProviderEventResult.EXPIRED,
+          reason: 'Payment received after transaction expiry',
+        };
       }
 
       payment.status = PaymentStatus.PAID;
@@ -308,7 +446,11 @@ export class PaymentsService {
         where: { learnerId: saved.learnerId, courseId: saved.courseId },
       });
       if (existing) {
-        return true;
+        return {
+          confirmed: true,
+          result: PaymentProviderEventResult.PROCESSED_PAID,
+          reason: null,
+        };
       }
 
       await enrollmentsRepository.save(
@@ -320,7 +462,11 @@ export class PaymentsService {
         }),
       );
 
-      return true;
+      return {
+        confirmed: true,
+        result: PaymentProviderEventResult.PROCESSED_PAID,
+        reason: null,
+      };
     });
   }
 

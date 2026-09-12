@@ -7,6 +7,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { SePayAuthGuard } from '../../common/guards/sepay-auth.guard';
 import { ConfigService } from './config.service';
 import { PaymentAuditLog } from './entities/payment-audit.entity';
+import { PaymentProviderEvent } from './entities/payment-provider-event.entity';
 import { PaymentTransaction } from './entities/payment-transaction.entity';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
@@ -22,6 +23,7 @@ import { SePayWebhookController } from './sepay.controller';
     TypeOrmModule.forFeature([
       PaymentTransaction,
       PaymentAuditLog,
+      PaymentProviderEvent,
       Course,
       Enrollment,
     ]),
