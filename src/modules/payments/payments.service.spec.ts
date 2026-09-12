@@ -35,12 +35,15 @@ describe('PaymentsService', () => {
     save: jest.Mock;
     findOne: jest.Mock;
     exists: jest.Mock;
+    createQueryBuilder: jest.Mock;
   };
-  let auditsRepository: { create: jest.Mock; save: jest.Mock };
+  let auditsRepository: { create: jest.Mock; save: jest.Mock; find: jest.Mock };
   let providerEventsRepository: {
     create: jest.Mock;
     save: jest.Mock;
     findOne: jest.Mock;
+    find: jest.Mock;
+    createQueryBuilder: jest.Mock;
   };
   let coursesRepository: { findOne: jest.Mock };
   let enrollmentsRepository: {
@@ -120,6 +123,23 @@ describe('PaymentsService', () => {
     ...overrides,
   });
 
+  const makeQueryBuilder = <T>(items: T[], total = items.length) => {
+    const qb = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([items, total]),
+    };
+
+    return qb;
+  };
+
   beforeEach(() => {
     transactionsRepository = {
       create: jest.fn((input: Partial<PaymentTransaction>) => input),
@@ -128,10 +148,12 @@ describe('PaymentsService', () => {
       ),
       findOne: jest.fn(),
       exists: jest.fn(),
+      createQueryBuilder: jest.fn(),
     };
     auditsRepository = {
       create: jest.fn((input: Partial<PaymentAuditLog>) => input),
       save: jest.fn(),
+      find: jest.fn(),
     };
     providerEventsRepository = {
       create: jest.fn((input: Partial<PaymentProviderEvent>) => input),
@@ -139,6 +161,8 @@ describe('PaymentsService', () => {
         Promise.resolve({ id: 'event-1', ...input }),
       ),
       findOne: jest.fn(),
+      find: jest.fn(),
+      createQueryBuilder: jest.fn(),
     };
     coursesRepository = { findOne: jest.fn() };
     enrollmentsRepository = {
@@ -321,6 +345,299 @@ describe('PaymentsService', () => {
         }),
       );
       expect(transactionsRepository.create).toHaveBeenCalled();
+    });
+  });
+
+  describe('listAdminTransactions', () => {
+    it('lists admin payment transactions with filters and pagination', async () => {
+      const transaction = makeTransaction({
+        status: PaymentStatus.PAID,
+        learner: {
+          id: learnerId,
+          name: 'Learner A',
+          email: 'learner@example.com',
+        } as never,
+        course: {
+          id: courseId,
+          title: 'NestJS Course',
+        } as never,
+      });
+      const qb = makeQueryBuilder([transaction], 1);
+      transactionsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      const result = await paymentsService.listAdminTransactions({
+        status: PaymentStatus.PAID,
+        search: paymentCode,
+        learnerId,
+        courseId,
+        amountMin: 50000,
+        amountMax: 120000,
+        page: 2,
+        limit: 5,
+      });
+
+      expect(transactionsRepository.createQueryBuilder).toHaveBeenCalledWith(
+        'transaction',
+      );
+      expect(qb.leftJoinAndSelect).toHaveBeenCalledWith(
+        'transaction.learner',
+        'learner',
+      );
+      expect(qb.leftJoinAndSelect).toHaveBeenCalledWith(
+        'transaction.course',
+        'course',
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith('transaction.status = :status', {
+        status: PaymentStatus.PAID,
+      });
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'transaction.learnerId = :learnerId',
+        { learnerId },
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'transaction.courseId = :courseId',
+        { courseId },
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'transaction.amount >= :amountMin',
+        { amountMin: 50000 },
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'transaction.amount <= :amountMax',
+        { amountMax: 120000 },
+      );
+      expect(qb.skip).toHaveBeenCalledWith(5);
+      expect(qb.take).toHaveBeenCalledWith(5);
+      expect(result).toEqual({
+        items: [
+          expect.objectContaining({
+            id: transactionId,
+            paymentCode,
+            learner: {
+              id: learnerId,
+              name: 'Learner A',
+              email: 'learner@example.com',
+            },
+            course: { id: courseId, title: 'NestJS Course' },
+          }),
+        ],
+        total: 1,
+        page: 2,
+        limit: 5,
+        totalPages: 1,
+      });
+    });
+  });
+
+  describe('getAdminTransactionDetail', () => {
+    it('gets admin transaction detail with audits and provider events', async () => {
+      const transaction = makeTransaction({
+        learner: {
+          id: learnerId,
+          name: 'Learner A',
+          email: 'learner@example.com',
+        } as never,
+        course: {
+          id: courseId,
+          title: 'NestJS Course',
+        } as never,
+      });
+      const auditCreatedAt = new Date('2026-09-10T12:00:00.000Z');
+      const eventReceivedAt = new Date('2026-09-10T12:05:00.000Z');
+      const eventProcessedAt = new Date('2026-09-10T12:05:01.000Z');
+      transactionsRepository.findOne.mockResolvedValue(transaction);
+      auditsRepository.find.mockResolvedValue([
+        {
+          id: 'audit-1',
+          fromStatus: null,
+          toStatus: PaymentStatus.PENDING,
+          actorType: PaymentAuditActorType.SYSTEM,
+          actorId: null,
+          providerTransactionId: null,
+          reason: 'Checkout created',
+          createdAt: auditCreatedAt,
+        },
+      ]);
+      providerEventsRepository.find.mockResolvedValue([
+        {
+          id: 'event-1',
+          result: PaymentProviderEventResult.PROCESSED_PAID,
+          providerTransactionId: '123456',
+          reportedPaymentCode: paymentCode,
+          transferAmount: 99000,
+          transferType: SE_PAY_TRANSFER_IN,
+          gateway: 'Vietcombank',
+          receivedAt: eventReceivedAt,
+          processedAt: eventProcessedAt,
+        },
+      ]);
+
+      const result =
+        await paymentsService.getAdminTransactionDetail(transactionId);
+
+      expect(transactionsRepository.findOne).toHaveBeenCalledWith({
+        where: { id: transactionId },
+        relations: { learner: true, course: true },
+      });
+      expect(auditsRepository.find).toHaveBeenCalledWith({
+        where: { transactionId },
+        order: { createdAt: 'DESC' },
+      });
+      expect(providerEventsRepository.find).toHaveBeenCalledWith({
+        where: { paymentTransactionId: transactionId },
+        order: { receivedAt: 'DESC', createdAt: 'DESC' },
+      });
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: transactionId,
+          learner: {
+            id: learnerId,
+            name: 'Learner A',
+            email: 'learner@example.com',
+          },
+          course: { id: courseId, title: 'NestJS Course' },
+          audits: [
+            expect.objectContaining({
+              id: 'audit-1',
+              reason: 'Checkout created',
+              createdAt: auditCreatedAt,
+            }),
+          ],
+          providerEvents: [
+            expect.objectContaining({
+              id: 'event-1',
+              result: PaymentProviderEventResult.PROCESSED_PAID,
+              receivedAt: eventReceivedAt,
+              processedAt: eventProcessedAt,
+            }),
+          ],
+        }),
+      );
+    });
+
+    it('throws not found for missing admin transaction detail', async () => {
+      transactionsRepository.findOne.mockResolvedValue(null);
+
+      await expect(
+        paymentsService.getAdminTransactionDetail(transactionId),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('listAdminProviderEvents', () => {
+    it('lists admin provider events with filters and pagination', async () => {
+      const event = {
+        id: 'event-1',
+        provider: 'sepay',
+        providerTransactionId: '123456',
+        paymentTransactionId: transactionId,
+        reportedPaymentCode: paymentCode,
+        transferAmount: 99000,
+        transferType: SE_PAY_TRANSFER_IN,
+        gateway: 'Vietcombank',
+        providerReferenceCode: 'ref-1',
+        result: PaymentProviderEventResult.PROCESSED_PAID,
+        reason: null,
+        receivedAt: new Date('2026-09-10T12:05:00.000Z'),
+        processedAt: new Date('2026-09-10T12:05:01.000Z'),
+        createdAt: new Date('2026-09-10T12:05:00.000Z'),
+        paymentTransaction: makeTransaction({ status: PaymentStatus.PAID }),
+      };
+      const qb = makeQueryBuilder([event], 1);
+      providerEventsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      const result = await paymentsService.listAdminProviderEvents({
+        result: PaymentProviderEventResult.PROCESSED_PAID,
+        search: paymentCode,
+        transferType: SE_PAY_TRANSFER_IN,
+        paymentStatus: PaymentStatus.PAID,
+        gateway: 'Vietcombank',
+        page: 1,
+        limit: 10,
+      });
+
+      expect(providerEventsRepository.createQueryBuilder).toHaveBeenCalledWith(
+        'event',
+      );
+      expect(qb.leftJoinAndSelect).toHaveBeenCalledWith(
+        'event.paymentTransaction',
+        'transaction',
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith('event.result = :result', {
+        result: PaymentProviderEventResult.PROCESSED_PAID,
+      });
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'event.transferType = :transferType',
+        { transferType: SE_PAY_TRANSFER_IN },
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'transaction.status = :paymentStatus',
+        { paymentStatus: PaymentStatus.PAID },
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith('event.gateway = :gateway', {
+        gateway: 'Vietcombank',
+      });
+      expect(result.items[0]).toEqual(
+        expect.objectContaining({
+          id: 'event-1',
+          paymentTransaction: expect.objectContaining({
+            id: transactionId,
+            status: PaymentStatus.PAID,
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('getAdminProviderEventDetail', () => {
+    it('gets admin provider event detail with linked transaction ids only', async () => {
+      providerEventsRepository.findOne.mockResolvedValue({
+        id: 'event-1',
+        provider: 'sepay',
+        providerTransactionId: '123456',
+        paymentTransactionId: transactionId,
+        reportedPaymentCode: paymentCode,
+        transferAmount: 99000,
+        transferType: SE_PAY_TRANSFER_IN,
+        gateway: 'Vietcombank',
+        providerReferenceCode: 'ref-1',
+        result: PaymentProviderEventResult.PROCESSED_PAID,
+        reason: null,
+        receivedAt: new Date('2026-09-10T12:05:00.000Z'),
+        processedAt: new Date('2026-09-10T12:05:01.000Z'),
+        createdAt: new Date('2026-09-10T12:05:00.000Z'),
+        paymentTransaction: makeTransaction({ status: PaymentStatus.PAID }),
+      });
+
+      const result =
+        await paymentsService.getAdminProviderEventDetail('event-1');
+
+      expect(providerEventsRepository.findOne).toHaveBeenCalledWith({
+        where: { id: 'event-1' },
+        relations: { paymentTransaction: true },
+      });
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: 'event-1',
+          paymentTransaction: {
+            id: transactionId,
+            paymentCode,
+            status: PaymentStatus.PAID,
+            courseId,
+            learnerId,
+            amount: 99000,
+            currency: 'VND',
+          },
+        }),
+      );
+    });
+
+    it('throws not found for missing admin provider event detail', async () => {
+      providerEventsRepository.findOne.mockResolvedValue(null);
+
+      await expect(
+        paymentsService.getAdminProviderEventDetail('missing-event'),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 

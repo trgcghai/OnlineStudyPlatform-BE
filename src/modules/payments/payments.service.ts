@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { Brackets, DataSource, Repository } from 'typeorm';
 import { FREE_COURSE_PRICE } from '../../common/constants/course.constant';
 import { Course, CourseStatus } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
@@ -19,6 +19,11 @@ import {
   SE_PAY_TRANSFER_IN,
   SePayWebhookPayload,
 } from './dto/payment.dto';
+import {
+  AdminPaymentListResponse,
+  ListAdminPaymentProviderEventsQueryDto,
+  ListAdminPaymentTransactionsQueryDto,
+} from './dto/admin-payment.dto';
 import {
   PaymentAuditActorType,
   PaymentAuditActorTypeValue,
@@ -42,6 +47,9 @@ const FREE_COURSE_ERROR = 'Khóa học miễn phí không cần thanh toán';
 const PAYMENT_CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const VIET_QR_URL = 'https://vietqr.app/img';
 const SE_PAY_MEMO_PREFIX = 'SEVQR';
+const DEFAULT_ADMIN_PAYMENT_PAGE = 1;
+const DEFAULT_ADMIN_PAYMENT_LIMIT = 10;
+const MAX_ADMIN_PAYMENT_LIMIT = 100;
 
 type PaymentConfirmationResult =
   | {
@@ -187,6 +195,304 @@ export class PaymentsService {
     return this.toCheckoutResponse(saved);
   }
 
+  async listAdminTransactions(
+    query: ListAdminPaymentTransactionsQueryDto,
+  ): Promise<AdminPaymentListResponse<unknown>> {
+    const page = this.normalizePage(query.page);
+    const limit = this.normalizeLimit(query.limit);
+    const qb = this.transactionsRepository
+      .createQueryBuilder('transaction')
+      .leftJoinAndSelect('transaction.learner', 'learner')
+      .leftJoinAndSelect('transaction.course', 'course')
+      .orderBy('transaction.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (query.status) {
+      qb.andWhere('transaction.status = :status', { status: query.status });
+    }
+    if (query.dateFrom) {
+      qb.andWhere('transaction.createdAt >= :dateFrom', {
+        dateFrom: new Date(query.dateFrom),
+      });
+    }
+    if (query.dateTo) {
+      qb.andWhere('transaction.createdAt <= :dateTo', {
+        dateTo: new Date(query.dateTo),
+      });
+    }
+    if (query.learnerId) {
+      qb.andWhere('transaction.learnerId = :learnerId', {
+        learnerId: query.learnerId,
+      });
+    }
+    if (query.courseId) {
+      qb.andWhere('transaction.courseId = :courseId', {
+        courseId: query.courseId,
+      });
+    }
+    if (query.amountMin !== undefined) {
+      qb.andWhere('transaction.amount >= :amountMin', {
+        amountMin: query.amountMin,
+      });
+    }
+    if (query.amountMax !== undefined) {
+      qb.andWhere('transaction.amount <= :amountMax', {
+        amountMax: query.amountMax,
+      });
+    }
+    if (query.search?.trim()) {
+      const search = `%${query.search.trim()}%`;
+      qb.andWhere(
+        new Brackets((subQb) => {
+          subQb
+            .where('transaction.id::text ILIKE :search', { search })
+            .orWhere('transaction.paymentCode ILIKE :search', { search })
+            .orWhere('transaction.providerTransactionId ILIKE :search', {
+              search,
+            })
+            .orWhere('transaction.learnerId::text ILIKE :search', { search })
+            .orWhere('transaction.courseId::text ILIKE :search', { search });
+        }),
+      );
+    }
+
+    const [items, total] = await qb.getManyAndCount();
+
+    return {
+      items: items.map((transaction) => ({
+        id: transaction.id,
+        learnerId: transaction.learnerId,
+        courseId: transaction.courseId,
+        amount: transaction.amount,
+        currency: transaction.currency,
+        status: transaction.status,
+        paymentCode: transaction.paymentCode,
+        provider: transaction.provider,
+        providerTransactionId: transaction.providerTransactionId,
+        providerGateway: transaction.providerGateway,
+        providerReferenceCode: transaction.providerReferenceCode,
+        expiresAt: transaction.expiresAt,
+        paidAt: transaction.paidAt,
+        createdAt: transaction.createdAt,
+        updatedAt: transaction.updatedAt,
+        learner: transaction.learner
+          ? {
+              id: transaction.learner.id,
+              name: transaction.learner.name,
+              email: transaction.learner.email,
+            }
+          : null,
+        course: transaction.course
+          ? { id: transaction.course.id, title: transaction.course.title }
+          : null,
+      })),
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
+  async getAdminTransactionDetail(transactionId: string): Promise<unknown> {
+    const transaction = await this.transactionsRepository.findOne({
+      where: { id: transactionId },
+      relations: { learner: true, course: true },
+    });
+
+    if (!transaction) {
+      throw new NotFoundException(TRANSACTION_NOT_FOUND_ERROR);
+    }
+
+    const [audits, providerEvents] = await Promise.all([
+      this.auditsRepository.find({
+        where: { transactionId },
+        order: { createdAt: 'DESC' },
+      }),
+      this.providerEventsRepository.find({
+        where: { paymentTransactionId: transactionId },
+        order: { receivedAt: 'DESC', createdAt: 'DESC' },
+      }),
+    ]);
+
+    return {
+      id: transaction.id,
+      learnerId: transaction.learnerId,
+      courseId: transaction.courseId,
+      amount: transaction.amount,
+      currency: transaction.currency,
+      status: transaction.status,
+      paymentCode: transaction.paymentCode,
+      provider: transaction.provider,
+      providerTransactionId: transaction.providerTransactionId,
+      providerGateway: transaction.providerGateway,
+      providerReferenceCode: transaction.providerReferenceCode,
+      expiresAt: transaction.expiresAt,
+      paidAt: transaction.paidAt,
+      createdAt: transaction.createdAt,
+      updatedAt: transaction.updatedAt,
+      learner: transaction.learner
+        ? {
+            id: transaction.learner.id,
+            name: transaction.learner.name,
+            email: transaction.learner.email,
+          }
+        : null,
+      course: transaction.course
+        ? { id: transaction.course.id, title: transaction.course.title }
+        : null,
+      audits: audits.map((audit) => ({
+        id: audit.id,
+        fromStatus: audit.fromStatus,
+        toStatus: audit.toStatus,
+        actorType: audit.actorType,
+        actorId: audit.actorId,
+        providerTransactionId: audit.providerTransactionId,
+        reason: audit.reason,
+        createdAt: audit.createdAt,
+      })),
+      providerEvents: providerEvents.map((event) => ({
+        id: event.id,
+        result: event.result,
+        providerTransactionId: event.providerTransactionId,
+        reportedPaymentCode: event.reportedPaymentCode,
+        transferAmount: event.transferAmount,
+        transferType: event.transferType,
+        gateway: event.gateway,
+        receivedAt: event.receivedAt,
+        processedAt: event.processedAt,
+      })),
+    };
+  }
+
+  async listAdminProviderEvents(
+    query: ListAdminPaymentProviderEventsQueryDto,
+  ): Promise<AdminPaymentListResponse<unknown>> {
+    const page = this.normalizePage(query.page);
+    const limit = this.normalizeLimit(query.limit);
+    const qb = this.providerEventsRepository
+      .createQueryBuilder('event')
+      .leftJoinAndSelect('event.paymentTransaction', 'transaction')
+      .orderBy('event.receivedAt', 'DESC')
+      .addOrderBy('event.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (query.result) {
+      qb.andWhere('event.result = :result', { result: query.result });
+    }
+    if (query.dateFrom) {
+      qb.andWhere('event.receivedAt >= :dateFrom', {
+        dateFrom: new Date(query.dateFrom),
+      });
+    }
+    if (query.dateTo) {
+      qb.andWhere('event.receivedAt <= :dateTo', {
+        dateTo: new Date(query.dateTo),
+      });
+    }
+    if (query.transferType) {
+      qb.andWhere('event.transferType = :transferType', {
+        transferType: query.transferType,
+      });
+    }
+    if (query.paymentStatus) {
+      qb.andWhere('transaction.status = :paymentStatus', {
+        paymentStatus: query.paymentStatus,
+      });
+    }
+    if (query.gateway) {
+      qb.andWhere('event.gateway = :gateway', { gateway: query.gateway });
+    }
+    if (query.search?.trim()) {
+      const search = `%${query.search.trim()}%`;
+      qb.andWhere(
+        new Brackets((subQb) => {
+          subQb
+            .where('event.id::text ILIKE :search', { search })
+            .orWhere('event.providerTransactionId ILIKE :search', { search })
+            .orWhere('event.reportedPaymentCode ILIKE :search', { search })
+            .orWhere('event.providerReferenceCode ILIKE :search', { search })
+            .orWhere('event.paymentTransactionId::text ILIKE :search', {
+              search,
+            })
+            .orWhere('transaction.paymentCode ILIKE :search', { search });
+        }),
+      );
+    }
+
+    const [items, total] = await qb.getManyAndCount();
+
+    return {
+      items: items.map((event) => ({
+        id: event.id,
+        provider: event.provider,
+        providerTransactionId: event.providerTransactionId,
+        paymentTransactionId: event.paymentTransactionId,
+        reportedPaymentCode: event.reportedPaymentCode,
+        transferAmount: event.transferAmount,
+        transferType: event.transferType,
+        gateway: event.gateway,
+        providerReferenceCode: event.providerReferenceCode,
+        result: event.result,
+        reason: event.reason,
+        receivedAt: event.receivedAt,
+        processedAt: event.processedAt,
+        createdAt: event.createdAt,
+        paymentTransaction: event.paymentTransaction
+          ? {
+              id: event.paymentTransaction.id,
+              paymentCode: event.paymentTransaction.paymentCode,
+              status: event.paymentTransaction.status,
+            }
+          : null,
+      })),
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
+  async getAdminProviderEventDetail(eventId: string): Promise<unknown> {
+    const event = await this.providerEventsRepository.findOne({
+      where: { id: eventId },
+      relations: { paymentTransaction: true },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Payment provider event not found');
+    }
+
+    return {
+      id: event.id,
+      provider: event.provider,
+      providerTransactionId: event.providerTransactionId,
+      paymentTransactionId: event.paymentTransactionId,
+      reportedPaymentCode: event.reportedPaymentCode,
+      transferAmount: event.transferAmount,
+      transferType: event.transferType,
+      gateway: event.gateway,
+      providerReferenceCode: event.providerReferenceCode,
+      result: event.result,
+      reason: event.reason,
+      receivedAt: event.receivedAt,
+      processedAt: event.processedAt,
+      createdAt: event.createdAt,
+      paymentTransaction: event.paymentTransaction
+        ? {
+            id: event.paymentTransaction.id,
+            paymentCode: event.paymentTransaction.paymentCode,
+            status: event.paymentTransaction.status,
+            courseId: event.paymentTransaction.courseId,
+            learnerId: event.paymentTransaction.learnerId,
+            amount: event.paymentTransaction.amount,
+            currency: event.paymentTransaction.currency,
+          }
+        : null,
+    };
+  }
+
   async processSePayWebhook(payload: SePayWebhookPayload): Promise<void> {
     const providerTransactionId = String(payload.id);
     const existingEvent = await this.providerEventsRepository.findOne({
@@ -318,6 +624,16 @@ export class PaymentsService {
       receivedAt: new Date(),
       processedAt: null,
     });
+  }
+
+  private normalizePage(value?: number): number {
+    return value && value > 0 ? value : DEFAULT_ADMIN_PAYMENT_PAGE;
+  }
+
+  private normalizeLimit(value?: number): number {
+    if (!value || value <= 0) return DEFAULT_ADMIN_PAYMENT_LIMIT;
+
+    return Math.min(value, MAX_ADMIN_PAYMENT_LIMIT);
   }
 
   private async saveProviderEventResult(
