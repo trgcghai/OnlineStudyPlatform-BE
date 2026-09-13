@@ -253,23 +253,23 @@ export class PaymentsService {
       qb.andWhere('transaction.status = :status', { status: query.status });
     }
     if (query.dateFrom) {
-      qb.andWhere('transaction.createdAt >= :dateFrom', {
-        dateFrom: new Date(query.dateFrom),
+      qb.andWhere('"transaction"."created_at" >= :dateFrom', {
+        dateFrom: this.parseDateFromStartOfDay(query.dateFrom),
       });
     }
     if (query.dateTo) {
-      qb.andWhere('transaction.createdAt <= :dateTo', {
-        dateTo: new Date(query.dateTo),
+      qb.andWhere('"transaction"."created_at" <= :dateTo', {
+        dateTo: this.parseDateToEndOfDay(query.dateTo),
       });
     }
-    if (query.learnerId) {
-      qb.andWhere('transaction.learnerId = :learnerId', {
-        learnerId: query.learnerId,
+    if (query.learnerId?.trim()) {
+      qb.andWhere('"transaction"."learner_id"::text ILIKE :learnerId', {
+        learnerId: `%${query.learnerId.trim()}%`,
       });
     }
-    if (query.courseId) {
-      qb.andWhere('transaction.courseId = :courseId', {
-        courseId: query.courseId,
+    if (query.courseId?.trim()) {
+      qb.andWhere('"transaction"."course_id"::text ILIKE :courseId', {
+        courseId: `%${query.courseId.trim()}%`,
       });
     }
     if (query.amountMin !== undefined) {
@@ -287,13 +287,17 @@ export class PaymentsService {
       qb.andWhere(
         new Brackets((subQb) => {
           subQb
-            .where('transaction.id::text ILIKE :search', { search })
-            .orWhere('transaction.paymentCode ILIKE :search', { search })
-            .orWhere('transaction.providerTransactionId ILIKE :search', {
+            .where('"transaction"."id"::text ILIKE :search', { search })
+            .orWhere('"transaction"."payment_code" ILIKE :search', { search })
+            .orWhere('"transaction"."provider_transaction_id" ILIKE :search', {
               search,
             })
-            .orWhere('transaction.learnerId::text ILIKE :search', { search })
-            .orWhere('transaction.courseId::text ILIKE :search', { search });
+            .orWhere('"transaction"."learner_id"::text ILIKE :search', {
+              search,
+            })
+            .orWhere('"transaction"."course_id"::text ILIKE :search', {
+              search,
+            });
         }),
       );
     }
@@ -423,22 +427,22 @@ export class PaymentsService {
       qb.andWhere('event.result = :result', { result: query.result });
     }
     if (query.dateFrom) {
-      qb.andWhere('event.receivedAt >= :dateFrom', {
-        dateFrom: new Date(query.dateFrom),
+      qb.andWhere('event.received_at >= :dateFrom', {
+        dateFrom: this.parseDateFromStartOfDay(query.dateFrom),
       });
     }
     if (query.dateTo) {
-      qb.andWhere('event.receivedAt <= :dateTo', {
-        dateTo: new Date(query.dateTo),
+      qb.andWhere('event.received_at <= :dateTo', {
+        dateTo: this.parseDateToEndOfDay(query.dateTo),
       });
     }
     if (query.transferType) {
-      qb.andWhere('event.transferType = :transferType', {
+      qb.andWhere('event.transfer_type = :transferType', {
         transferType: query.transferType,
       });
     }
     if (query.paymentStatus) {
-      qb.andWhere('transaction.status = :paymentStatus', {
+      qb.andWhere('"transaction"."status" = :paymentStatus', {
         paymentStatus: query.paymentStatus,
       });
     }
@@ -451,13 +455,13 @@ export class PaymentsService {
         new Brackets((subQb) => {
           subQb
             .where('event.id::text ILIKE :search', { search })
-            .orWhere('event.providerTransactionId ILIKE :search', { search })
-            .orWhere('event.reportedPaymentCode ILIKE :search', { search })
-            .orWhere('event.providerReferenceCode ILIKE :search', { search })
-            .orWhere('event.paymentTransactionId::text ILIKE :search', {
+            .orWhere('event.provider_transaction_id ILIKE :search', { search })
+            .orWhere('event.reported_payment_code ILIKE :search', { search })
+            .orWhere('event.provider_reference_code ILIKE :search', { search })
+            .orWhere('event.payment_transaction_id::text ILIKE :search', {
               search,
             })
-            .orWhere('transaction.paymentCode ILIKE :search', { search });
+            .orWhere('"transaction"."payment_code" ILIKE :search', { search });
         }),
       );
     }
@@ -682,6 +686,22 @@ export class PaymentsService {
     if (!value || value <= 0) return defaultLimit;
 
     return Math.min(value, maxLimit);
+  }
+
+  private parseDateFromStartOfDay(value: string): Date {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return new Date(`${value}T00:00:00.000Z`);
+    }
+
+    return new Date(value);
+  }
+
+  private parseDateToEndOfDay(value: string): Date {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return new Date(`${value}T23:59:59.999Z`);
+    }
+
+    return new Date(value);
   }
 
   private async saveProviderEventResult(

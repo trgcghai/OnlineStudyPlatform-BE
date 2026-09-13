@@ -472,12 +472,12 @@ describe('PaymentsService', () => {
         status: PaymentStatus.PAID,
       });
       expect(qb.andWhere).toHaveBeenCalledWith(
-        'transaction.learnerId = :learnerId',
-        { learnerId },
+        '"transaction"."learner_id"::text ILIKE :learnerId',
+        { learnerId: `%${learnerId}%` },
       );
       expect(qb.andWhere).toHaveBeenCalledWith(
-        'transaction.courseId = :courseId',
-        { courseId },
+        '"transaction"."course_id"::text ILIKE :courseId',
+        { courseId: `%${courseId}%` },
       );
       expect(qb.andWhere).toHaveBeenCalledWith(
         'transaction.amount >= :amountMin',
@@ -507,6 +507,88 @@ describe('PaymentsService', () => {
         limit: 5,
         totalPages: 1,
       });
+    });
+
+    it('treats a date-only dateTo filter as the end of that day', async () => {
+      const qb = makeQueryBuilder([], 0);
+      transactionsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await paymentsService.listAdminTransactions({
+        dateTo: '2026-09-12',
+      });
+
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        '"transaction"."created_at" <= :dateTo',
+        { dateTo: new Date('2026-09-12T23:59:59.999Z') },
+      );
+    });
+
+    it('treats a date-only dateFrom filter as the start of that day', async () => {
+      const qb = makeQueryBuilder([], 0);
+      transactionsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await paymentsService.listAdminTransactions({
+        dateFrom: '2026-09-12',
+      });
+
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        '"transaction"."created_at" >= :dateFrom',
+        { dateFrom: new Date('2026-09-12T00:00:00.000Z') },
+      );
+    });
+
+    it('uses text matching for partial learner and course ids', async () => {
+      const qb = makeQueryBuilder([], 0);
+      transactionsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await paymentsService.listAdminTransactions({
+        learnerId: '1111',
+        courseId: '2222',
+      });
+
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        '"transaction"."learner_id"::text ILIKE :learnerId',
+        { learnerId: '%1111%' },
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        '"transaction"."course_id"::text ILIKE :courseId',
+        { courseId: '%2222%' },
+      );
+    });
+
+    it('uses database column names for admin transaction search', async () => {
+      const qb = makeQueryBuilder([], 0);
+      transactionsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await paymentsService.listAdminTransactions({ search: paymentCode });
+
+      const searchBracket = qb.andWhere.mock.calls[0][0];
+      const subQb = {
+        where: jest.fn().mockReturnThis(),
+        orWhere: jest.fn().mockReturnThis(),
+      };
+      searchBracket.whereFactory(subQb);
+
+      expect(subQb.where).toHaveBeenCalledWith(
+        '"transaction"."id"::text ILIKE :search',
+        { search: `%${paymentCode}%` },
+      );
+      expect(subQb.orWhere).toHaveBeenCalledWith(
+        '"transaction"."payment_code" ILIKE :search',
+        { search: `%${paymentCode}%` },
+      );
+      expect(subQb.orWhere).toHaveBeenCalledWith(
+        '"transaction"."provider_transaction_id" ILIKE :search',
+        { search: `%${paymentCode}%` },
+      );
+      expect(subQb.orWhere).toHaveBeenCalledWith(
+        '"transaction"."learner_id"::text ILIKE :search',
+        { search: `%${paymentCode}%` },
+      );
+      expect(subQb.orWhere).toHaveBeenCalledWith(
+        '"transaction"."course_id"::text ILIKE :search',
+        { search: `%${paymentCode}%` },
+      );
     });
   });
 
@@ -648,11 +730,11 @@ describe('PaymentsService', () => {
         result: PaymentProviderEventResult.PROCESSED_PAID,
       });
       expect(qb.andWhere).toHaveBeenCalledWith(
-        'event.transferType = :transferType',
+        'event.transfer_type = :transferType',
         { transferType: SE_PAY_TRANSFER_IN },
       );
       expect(qb.andWhere).toHaveBeenCalledWith(
-        'transaction.status = :paymentStatus',
+        '"transaction"."status" = :paymentStatus',
         { paymentStatus: PaymentStatus.PAID },
       );
       expect(qb.andWhere).toHaveBeenCalledWith('event.gateway = :gateway', {
@@ -666,6 +748,73 @@ describe('PaymentsService', () => {
             status: PaymentStatus.PAID,
           }),
         }),
+      );
+    });
+
+    it('treats a date-only dateTo filter as the end of that received day', async () => {
+      const qb = makeQueryBuilder([], 0);
+      providerEventsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await paymentsService.listAdminProviderEvents({
+        dateTo: '2026-09-12',
+      });
+
+      expect(qb.andWhere).toHaveBeenCalledWith('event.received_at <= :dateTo', {
+        dateTo: new Date('2026-09-12T23:59:59.999Z'),
+      });
+    });
+
+    it('treats a date-only dateFrom filter as the start of that received day', async () => {
+      const qb = makeQueryBuilder([], 0);
+      providerEventsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await paymentsService.listAdminProviderEvents({
+        dateFrom: '2026-09-12',
+      });
+
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'event.received_at >= :dateFrom',
+        {
+          dateFrom: new Date('2026-09-12T00:00:00.000Z'),
+        },
+      );
+    });
+
+    it('uses database column names for admin provider event search', async () => {
+      const qb = makeQueryBuilder([], 0);
+      providerEventsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await paymentsService.listAdminProviderEvents({ search: paymentCode });
+
+      const searchBracket = qb.andWhere.mock.calls[0][0];
+      const subQb = {
+        where: jest.fn().mockReturnThis(),
+        orWhere: jest.fn().mockReturnThis(),
+      };
+      searchBracket.whereFactory(subQb);
+
+      expect(subQb.where).toHaveBeenCalledWith('event.id::text ILIKE :search', {
+        search: `%${paymentCode}%`,
+      });
+      expect(subQb.orWhere).toHaveBeenCalledWith(
+        'event.provider_transaction_id ILIKE :search',
+        { search: `%${paymentCode}%` },
+      );
+      expect(subQb.orWhere).toHaveBeenCalledWith(
+        'event.reported_payment_code ILIKE :search',
+        { search: `%${paymentCode}%` },
+      );
+      expect(subQb.orWhere).toHaveBeenCalledWith(
+        'event.provider_reference_code ILIKE :search',
+        { search: `%${paymentCode}%` },
+      );
+      expect(subQb.orWhere).toHaveBeenCalledWith(
+        'event.payment_transaction_id::text ILIKE :search',
+        { search: `%${paymentCode}%` },
+      );
+      expect(subQb.orWhere).toHaveBeenCalledWith(
+        '"transaction"."payment_code" ILIKE :search',
+        { search: `%${paymentCode}%` },
       );
     });
   });
