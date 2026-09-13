@@ -52,4 +52,11 @@ export class AdminUsersController {
   disable(@Param('id', ParseUUIDPipe) id: string) {
     return this.usersService.disableUser(id);
   }
+
+  @Get('instructors/:instructorId/account')
+  getInstructorAccount(
+    @Param('instructorId', ParseUUIDPipe) instructorId: string,
+  ) {
+    return this.usersService.getInstructorAccountForAdmin(instructorId);
+  }
 }

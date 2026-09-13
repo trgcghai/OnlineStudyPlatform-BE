@@ -1,4 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ROLES_KEY } from '../../common/constants/auth.constant';
+import { UpsertInstructorAccountDto } from './dto/instructor-account.dto';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 import {
@@ -6,6 +8,7 @@ import {
   CreateUserDto,
   UpdateProfileDto,
 } from './dto/user.dto';
+import { UserRole } from './entities/user.entity';
 
 describe('UsersController', () => {
   let controller: UsersController;
@@ -13,6 +16,8 @@ describe('UsersController', () => {
     create: jest.Mock;
     getProfile: jest.Mock;
     updateProfile: jest.Mock;
+    getMyInstructorAccount: jest.Mock;
+    upsertMyInstructorAccount: jest.Mock;
     changePassword: jest.Mock;
     uploadAvatar: jest.Mock;
   };
@@ -22,6 +27,8 @@ describe('UsersController', () => {
       create: jest.fn(),
       getProfile: jest.fn(),
       updateProfile: jest.fn(),
+      getMyInstructorAccount: jest.fn(),
+      upsertMyInstructorAccount: jest.fn(),
       changePassword: jest.fn(),
       uploadAvatar: jest.fn(),
     };
@@ -56,6 +63,46 @@ describe('UsersController', () => {
     const dto: UpdateProfileDto = { name: 'New Name' };
     await controller.updateMe('user-id', dto);
     expect(service.updateProfile).toHaveBeenCalledWith('user-id', dto);
+  });
+
+  it('delegates getMyInstructorAccount with current instructor id', async () => {
+    await controller.getMyInstructorAccount('instructor-id');
+    expect(service.getMyInstructorAccount).toHaveBeenCalledWith(
+      'instructor-id',
+    );
+  });
+
+  it('delegates upsertMyInstructorAccount with current instructor id and dto', async () => {
+    const dto: UpsertInstructorAccountDto = {
+      bankName: 'VCB',
+      bankAccountNumber: '123456789',
+      accountHolderName: 'NGUYEN VAN A',
+    };
+
+    await controller.upsertMyInstructorAccount('instructor-id', dto);
+
+    expect(service.upsertMyInstructorAccount).toHaveBeenCalledWith(
+      'instructor-id',
+      dto,
+    );
+  });
+
+  it('requires Instructor role for instructor account self endpoints', () => {
+    const getMethod = Object.getOwnPropertyDescriptor(
+      UsersController.prototype,
+      'getMyInstructorAccount',
+    )?.value;
+    const putMethod = Object.getOwnPropertyDescriptor(
+      UsersController.prototype,
+      'upsertMyInstructorAccount',
+    )?.value;
+
+    expect(Reflect.getMetadata(ROLES_KEY, getMethod)).toEqual([
+      UserRole.INSTRUCTOR,
+    ]);
+    expect(Reflect.getMetadata(ROLES_KEY, putMethod)).toEqual([
+      UserRole.INSTRUCTOR,
+    ]);
   });
 
   it('returns passwordChanged after a successful password change', async () => {

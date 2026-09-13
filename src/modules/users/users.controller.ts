@@ -8,6 +8,7 @@ import {
   HttpStatus,
   Patch,
   Post,
+  Put,
   UploadedFile,
   UseFilters,
   UseGuards,
@@ -16,8 +17,11 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
 import { AvatarUploadExceptionFilter } from './filters/avatar-upload-exception.filter';
+import { UpsertInstructorAccountDto } from './dto/instructor-account.dto';
 import {
   ChangePasswordDto,
   CreateUserDto,
@@ -29,6 +33,7 @@ import {
   AVATAR_FIELD_NAME,
   AVATAR_MAX_SIZE_BYTES,
 } from '../../common/constants/file.constant';
+import { UserRole } from './entities/user.entity';
 
 @Controller('users')
 export class UsersController {
@@ -53,6 +58,23 @@ export class UsersController {
     @Body() updateProfileDto: UpdateProfileDto,
   ) {
     return this.usersService.updateProfile(userId, updateProfileDto);
+  }
+
+  @Get('me/instructor-account')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.INSTRUCTOR)
+  getMyInstructorAccount(@CurrentUser('id') instructorId: string) {
+    return this.usersService.getMyInstructorAccount(instructorId);
+  }
+
+  @Put('me/instructor-account')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.INSTRUCTOR)
+  upsertMyInstructorAccount(
+    @CurrentUser('id') instructorId: string,
+    @Body() dto: UpsertInstructorAccountDto,
+  ) {
+    return this.usersService.upsertMyInstructorAccount(instructorId, dto);
   }
 
   @Patch('me/password')

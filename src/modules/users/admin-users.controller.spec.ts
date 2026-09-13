@@ -16,6 +16,7 @@ describe('AdminUsersController', () => {
     createAsAdmin: jest.Mock;
     updateAsAdmin: jest.Mock;
     disableUser: jest.Mock;
+    getInstructorAccountForAdmin: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -24,6 +25,7 @@ describe('AdminUsersController', () => {
       createAsAdmin: jest.fn(),
       updateAsAdmin: jest.fn(),
       disableUser: jest.fn(),
+      getInstructorAccountForAdmin: jest.fn(),
     };
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AdminUsersController],
@@ -64,10 +66,18 @@ describe('AdminUsersController', () => {
     await controller.disable('user-id');
     expect(service.disableUser).toHaveBeenCalledWith('user-id');
   });
+
+  it('delegates instructor account lookup to the service', async () => {
+    await controller.getInstructorAccount('instructor-id');
+    expect(service.getInstructorAccountForAdmin).toHaveBeenCalledWith(
+      'instructor-id',
+    );
+  });
 });
 
 describe('AdminUsersController RBAC', () => {
-  type HandlerName = 'list' | 'create' | 'update' | 'disable';
+  type HandlerName =
+    'list' | 'create' | 'update' | 'disable' | 'getInstructorAccount';
 
   const handlerOf = (methodName: HandlerName): unknown =>
     Object.getOwnPropertyDescriptor(AdminUsersController.prototype, methodName)
@@ -96,7 +106,13 @@ describe('AdminUsersController RBAC', () => {
       UserRole.ADMIN,
     ]);
 
-    const handlerNames: HandlerName[] = ['list', 'create', 'update', 'disable'];
+    const handlerNames: HandlerName[] = [
+      'list',
+      'create',
+      'update',
+      'disable',
+      'getInstructorAccount',
+    ];
     for (const name of handlerNames) {
       expect(handlerOf(name)).toEqual(expect.any(Function));
     }

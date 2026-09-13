@@ -20,6 +20,7 @@ import {
   CreateUserDto,
   UpdateProfileDto,
 } from './dto/user.dto';
+import { InstructorAccount } from './entities/instructor-account.entity';
 import { User, UserRole, UserStatus } from './entities/user.entity';
 
 describe('UsersService', () => {
@@ -29,6 +30,11 @@ describe('UsersService', () => {
     findOneBy: jest.Mock;
     save: jest.Mock;
     createQueryBuilder: jest.Mock;
+  };
+  let accountRepo: {
+    create: jest.Mock;
+    findOne: jest.Mock;
+    save: jest.Mock;
   };
   let minioClient: { putObject: jest.Mock; removeObject: jest.Mock };
   let configService: { getOrThrow: jest.Mock };
@@ -44,6 +50,30 @@ describe('UsersService', () => {
     avatar: null,
     createdAt: new Date('2026-01-01T00:00:00Z'),
     updatedAt: new Date('2026-01-01T00:00:00Z'),
+  });
+
+  const makeInstructor = (): User => ({
+    ...makeUser(),
+    id: 'b7f8c2a0-1111-4a11-9f0a-000000000099',
+    role: UserRole.INSTRUCTOR,
+  });
+
+  const makeInstructorAccount = (
+    overrides: Partial<InstructorAccount> = {},
+  ): InstructorAccount => ({
+    id: 'acc-11111111-1111-4111-8111-111111111111',
+    instructorId: makeInstructor().id,
+    instructor: makeInstructor(),
+    bankName: 'VCB',
+    bankAccountNumber: '123456789',
+    accountHolderName: 'NGUYEN VAN A',
+    bankCode: 'VCB',
+    branchName: null,
+    phoneNumber: null,
+    note: null,
+    createdAt: new Date('2026-01-02T00:00:00Z'),
+    updatedAt: new Date('2026-01-02T00:00:00Z'),
+    ...overrides,
   });
 
   const userId = 'b7f8c2a0-1111-4a11-9f0a-000000000001';
@@ -64,6 +94,14 @@ describe('UsersService', () => {
       })),
       createQueryBuilder: jest.fn(),
     };
+    accountRepo = {
+      create: jest.fn((input: Partial<InstructorAccount>) => input),
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn((input: Partial<InstructorAccount>) => ({
+        ...makeInstructorAccount(),
+        ...input,
+      })),
+    };
     minioClient = {
       putObject: jest.fn().mockResolvedValue({ etag: '"etag"' }),
       removeObject: jest.fn().mockResolvedValue(undefined),
@@ -81,6 +119,7 @@ describe('UsersService', () => {
     };
     service = new UsersService(
       repo as unknown as Repository<User>,
+      accountRepo as unknown as Repository<InstructorAccount>,
       configService as unknown as ConfigService,
       minioClient as never,
       redis as never,
@@ -269,6 +308,103 @@ describe('UsersService', () => {
       await expect(
         service.changePassword('missing-id', changeDto),
       ).rejects.toEqual(new NotFoundException('User not found'));
+    });
+  });
+
+  describe('instructor account', () => {
+    const instructor = makeInstructor();
+    const accountDto = {
+      bankName: ' Vietcombank ',
+      bankAccountNumber: ' 123456789 ',
+      accountHolderName: ' Nguyen Van A ',
+      bankCode: ' VCB ',
+      branchName: '',
+      phoneNumber: ' 0909000000 ',
+      note: ' Main payout account ',
+    };
+
+    it('returns null for missing own instructor account', async () => {
+      accountRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.getMyInstructorAccount(instructor.id),
+      ).resolves.toBeNull();
+      expect(accountRepo.findOne).toHaveBeenCalledWith({
+        where: { instructorId: instructor.id },
+      });
+    });
+
+    it('creates an instructor account when none exists', async () => {
+      accountRepo.findOne.mockResolvedValue(null);
+
+      const result = await service.upsertMyInstructorAccount(
+        instructor.id,
+        accountDto,
+      );
+
+      expect(accountRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          instructorId: instructor.id,
+          bankName: 'Vietcombank',
+          bankAccountNumber: '123456789',
+          accountHolderName: 'Nguyen Van A',
+          bankCode: 'VCB',
+          branchName: null,
+          phoneNumber: '0909000000',
+          note: 'Main payout account',
+        }),
+      );
+      expect(result).toMatchObject({
+        instructorId: instructor.id,
+        bankName: 'Vietcombank',
+        branchName: null,
+      });
+    });
+
+    it('updates an existing instructor account', async () => {
+      const account = makeInstructorAccount({ instructorId: instructor.id });
+      accountRepo.findOne.mockResolvedValue(account);
+
+      const result = await service.upsertMyInstructorAccount(instructor.id, {
+        ...accountDto,
+        bankName: 'ACB',
+      });
+
+      expect(accountRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ id: account.id, bankName: 'ACB' }),
+      );
+      expect(result.bankName).toBe('ACB');
+    });
+
+    it('returns account for admin when target user is an instructor', async () => {
+      repo.findOneBy.mockResolvedValue(instructor);
+      accountRepo.findOne.mockResolvedValue(makeInstructorAccount());
+
+      const result = await service.getInstructorAccountForAdmin(instructor.id);
+
+      expect(repo.findOneBy).toHaveBeenCalledWith({ id: instructor.id });
+      expect(result).toMatchObject({ instructorId: instructor.id });
+    });
+
+    it('returns null to admin when instructor has no account', async () => {
+      repo.findOneBy.mockResolvedValue(instructor);
+      accountRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.getInstructorAccountForAdmin(instructor.id),
+      ).resolves.toBeNull();
+    });
+
+    it.each([
+      ['missing user', null],
+      ['learner user', makeUser()],
+      ['admin user', { ...makeUser(), role: UserRole.ADMIN }],
+    ])('throws NotFoundException for %s', async (_name, user) => {
+      repo.findOneBy.mockResolvedValue(user);
+
+      await expect(
+        service.getInstructorAccountForAdmin('not-an-instructor-id'),
+      ).rejects.toEqual(new NotFoundException('Instructor not found'));
     });
   });
 
