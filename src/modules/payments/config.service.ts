@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import {
   DEFAULT_PAYMENT_CONFIG,
+  EARNING_HOLD_DAYS_MIN,
   ListPaymentConfigAuditsQueryDto,
   MINIMUM_WITHDRAWAL_AMOUNT_MIN,
   MINIMUM_WITHDRAWAL_AMOUNT_STEP,
@@ -106,6 +107,7 @@ export class ConfigService implements OnModuleInit {
     current.allowedPrices = normalized.allowedPrices;
     current.freeCourseLimit = normalized.freeCourseLimit;
     current.minimumWithdrawalAmount = normalized.minimumWithdrawalAmount;
+    current.earningHoldDays = normalized.earningHoldDays;
     current.updatedById = actorId;
 
     const saved = await current.save();
@@ -236,12 +238,22 @@ export class ConfigService implements OnModuleInit {
       );
     }
 
+    if (
+      !Number.isInteger(dto.earningHoldDays) ||
+      dto.earningHoldDays < EARNING_HOLD_DAYS_MIN
+    ) {
+      throw new BadRequestException(
+        'Earning hold days must be a non-negative integer',
+      );
+    }
+
     return {
       platformFeePercent: dto.platformFeePercent,
       currency: 'VND',
       allowedPrices: [...dto.allowedPrices].sort((a, b) => a - b),
       freeCourseLimit: dto.freeCourseLimit,
       minimumWithdrawalAmount: dto.minimumWithdrawalAmount,
+      earningHoldDays: dto.earningHoldDays,
       updatedById: null,
     };
   }
@@ -256,6 +268,7 @@ export class ConfigService implements OnModuleInit {
       'allowedPrices',
       'freeCourseLimit',
       'minimumWithdrawalAmount',
+      'earningHoldDays',
     ];
 
     return fields.filter((field) => {
@@ -277,6 +290,8 @@ export class ConfigService implements OnModuleInit {
       allowedPrices: [...config.allowedPrices],
       freeCourseLimit: config.freeCourseLimit,
       minimumWithdrawalAmount: config.minimumWithdrawalAmount,
+      earningHoldDays:
+        config.earningHoldDays ?? DEFAULT_PAYMENT_CONFIG.earningHoldDays,
       updatedById: config.updatedById,
     };
   }

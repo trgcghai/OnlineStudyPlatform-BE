@@ -123,6 +123,7 @@ describe('PaymentsController', () => {
       allowedPrices: [0, 99000],
       freeCourseLimit: 3,
       minimumWithdrawalAmount: 1000000,
+      earningHoldDays: 7,
     };
     const response = {
       id: 'config-id',
