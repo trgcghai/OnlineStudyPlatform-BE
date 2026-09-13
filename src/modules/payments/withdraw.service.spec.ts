@@ -1,0 +1,292 @@
+import { BadRequestException } from '@nestjs/common';
+import { Repository } from 'typeorm';
+import { InstructorAccount } from '../users/entities/instructor-account.entity';
+import { User, UserRole, UserStatus } from '../users/entities/user.entity';
+import { ConfigService as PaymentConfigService } from './config.service';
+import { WithdrawRequestStatus } from './entities/withdraw-request.entity';
+import { WithdrawService } from './withdraw.service';
+
+describe('WithdrawService', () => {
+  let service: WithdrawService;
+  let withdrawRepo: {
+    create: jest.Mock;
+    save: jest.Mock;
+    createQueryBuilder: jest.Mock;
+  };
+  let usersRepo: { findOne: jest.Mock };
+  let accountRepo: { findOne: jest.Mock };
+  let configService: { getActiveConfig: jest.Mock };
+
+  const instructorId = '44444444-4444-4444-8444-444444444444';
+  const otherInstructorId = '55555555-5555-4555-8555-555555555555';
+  const requestId = '66666666-6666-4666-8666-666666666666';
+
+  const makeUser = (overrides: Partial<User> = {}): User => ({
+    id: instructorId,
+    name: 'Nguyen Van A',
+    email: 'instructor@example.com',
+    password: 'hashed-password',
+    role: UserRole.INSTRUCTOR,
+    status: UserStatus.ACTIVE,
+    avatar: null,
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    ...overrides,
+  });
+
+  const makeAccount = (
+    overrides: Partial<InstructorAccount> = {},
+  ): InstructorAccount => ({
+    id: '77777777-7777-4777-8777-777777777777',
+    instructorId,
+    instructor: makeUser(),
+    bankName: 'VCB',
+    bankAccountNumber: '123456789',
+    accountHolderName: 'NGUYEN VAN A',
+    bankCode: 'VCB',
+    branchName: null,
+    phoneNumber: null,
+    note: null,
+    createdAt: new Date('2026-01-02T00:00:00.000Z'),
+    updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+    ...overrides,
+  });
+
+  const makeWithdrawRequest = (overrides: Record<string, unknown> = {}) => ({
+    id: requestId,
+    instructorId,
+    instructor: makeUser(),
+    amount: 1500000,
+    currency: 'VND',
+    status: WithdrawRequestStatus.PENDING,
+    requestedAt: new Date('2026-09-13T09:00:00.000Z'),
+    note: 'Rut tien khoa hoc',
+    createdAt: new Date('2026-09-13T09:00:00.000Z'),
+    updatedAt: new Date('2026-09-13T09:00:00.000Z'),
+    ...overrides,
+  });
+
+  const makeConfig = () => ({
+    id: 'config-id',
+    platformFeePercent: 20,
+    currency: 'VND' as const,
+    allowedPrices: [0, 99000],
+    freeCourseLimit: 3,
+    minimumWithdrawalAmount: 1000000,
+    earningHoldDays: 7,
+    updatedById: null,
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+  });
+
+  const makeQueryBuilder = (items: unknown[], total = items.length) => {
+    const qb = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([items, total]),
+    };
+
+    return qb;
+  };
+
+  beforeEach(() => {
+    withdrawRepo = {
+      create: jest.fn((input: Record<string, unknown>) => input),
+      save: jest.fn((input: Record<string, unknown>) =>
+        Promise.resolve(makeWithdrawRequest(input)),
+      ),
+      createQueryBuilder: jest.fn(),
+    };
+    usersRepo = { findOne: jest.fn() };
+    accountRepo = { findOne: jest.fn().mockResolvedValue(makeAccount()) };
+    configService = {
+      getActiveConfig: jest.fn().mockResolvedValue(makeConfig()),
+    };
+
+    service = new WithdrawService(
+      withdrawRepo as unknown as Repository<never>,
+      usersRepo as unknown as Repository<User>,
+      accountRepo as unknown as Repository<InstructorAccount>,
+      configService as unknown as PaymentConfigService,
+    );
+  });
+
+  describe('create', () => {
+    it('creates a pending request with configured currency and backend requestedAt', async () => {
+      const before = Date.now();
+
+      const result = await service.create(makeUser(), {
+        amount: 1500000,
+        note: ' Rut tien khoa hoc ',
+      });
+
+      const createdInput = withdrawRepo.create.mock.calls[0][0];
+      expect(accountRepo.findOne).toHaveBeenCalledWith({
+        where: { instructorId },
+      });
+      expect(createdInput).toMatchObject({
+        instructorId,
+        amount: 1500000,
+        currency: 'VND',
+        status: WithdrawRequestStatus.PENDING,
+        note: 'Rut tien khoa hoc',
+      });
+      expect(createdInput.requestedAt.getTime()).toBeGreaterThanOrEqual(before);
+      expect(result).toMatchObject({
+        instructorId,
+        amount: 1500000,
+        currency: 'VND',
+        status: WithdrawRequestStatus.PENDING,
+      });
+    });
+
+    it('normalizes blank note to null', async () => {
+      await service.create(makeUser(), { amount: 1500000, note: '   ' });
+
+      expect(withdrawRepo.create.mock.calls[0][0]).toMatchObject({
+        note: null,
+      });
+    });
+
+    it('rejects non-instructor callers', async () => {
+      await expect(
+        service.create(makeUser({ role: UserRole.LEARNER }), {
+          amount: 1500000,
+        }),
+      ).rejects.toEqual(new BadRequestException('User is not an instructor'));
+      expect(withdrawRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects instructors without payout account configuration', async () => {
+      accountRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.create(makeUser(), { amount: 1500000 }),
+      ).rejects.toEqual(
+        new BadRequestException('Instructor payout account is required'),
+      );
+      expect(withdrawRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects amounts below configured minimum withdrawal amount', async () => {
+      await expect(
+        service.create(makeUser(), { amount: 999999 }),
+      ).rejects.toEqual(
+        new BadRequestException('Amount is below minimum withdrawal amount'),
+      );
+      expect(withdrawRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listMine', () => {
+    it('returns only current instructor requests sorted latest first', async () => {
+      const requests = [
+        makeWithdrawRequest({ requestedAt: new Date('2026-09-13T10:00:00Z') }),
+      ];
+      const qb = makeQueryBuilder(requests, 1);
+      withdrawRepo.createQueryBuilder.mockReturnValue(qb);
+
+      const result = await service.listMine(makeUser(), { page: 2, limit: 5 });
+
+      expect(qb.where).toHaveBeenCalledWith(
+        'withdraw.instructorId = :instructorId',
+        {
+          instructorId,
+        },
+      );
+      expect(qb.orderBy).toHaveBeenCalledWith('withdraw.requestedAt', 'DESC');
+      expect(qb.skip).toHaveBeenCalledWith(5);
+      expect(qb.take).toHaveBeenCalledWith(5);
+      expect(result).toMatchObject({
+        total: 1,
+        page: 2,
+        limit: 5,
+        totalPages: 1,
+      });
+      expect(result.items).toHaveLength(1);
+    });
+
+    it('rejects non-instructor callers', async () => {
+      await expect(
+        service.listMine(makeUser({ role: UserRole.LEARNER }), {
+          page: 1,
+          limit: 10,
+        }),
+      ).rejects.toEqual(new BadRequestException('User is not an instructor'));
+    });
+  });
+
+  describe('listAdmin', () => {
+    it('defaults status to pending and sorts amount descending', async () => {
+      const qb = makeQueryBuilder([makeWithdrawRequest()], 1);
+      withdrawRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await service.listAdmin({ page: 1, limit: 10 });
+
+      expect(qb.where).toHaveBeenCalledWith('withdraw.status = :status', {
+        status: WithdrawRequestStatus.PENDING,
+      });
+      expect(qb.orderBy).toHaveBeenCalledWith('withdraw.amount', 'DESC');
+    });
+
+    it('filters by instructor email and requested date range', async () => {
+      const qb = makeQueryBuilder([makeWithdrawRequest()], 1);
+      withdrawRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await service.listAdmin({
+        page: 1,
+        limit: 10,
+        instructorEmail: ' Instructor@Example.COM ',
+        requestedAtFrom: '2026-09-01T00:00:00.000Z',
+        requestedAtTo: '2026-09-30T23:59:59.999Z',
+      });
+
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'LOWER(instructor.email) LIKE :instructorEmail',
+        { instructorEmail: '%instructor@example.com%' },
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'withdraw.requestedAt >= :requestedAtFrom',
+        { requestedAtFrom: new Date('2026-09-01T00:00:00.000Z') },
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'withdraw.requestedAt <= :requestedAtTo',
+        { requestedAtTo: new Date('2026-09-30T23:59:59.999Z') },
+      );
+    });
+
+    it('sorts by amount ascending when requested', async () => {
+      const qb = makeQueryBuilder([makeWithdrawRequest()], 1);
+      withdrawRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await service.listAdmin({ page: 1, limit: 10, amountSort: 'asc' });
+
+      expect(qb.orderBy).toHaveBeenCalledWith('withdraw.amount', 'ASC');
+    });
+
+    it('returns instructor summary without requiring instructor id in response', async () => {
+      const qb = makeQueryBuilder([
+        makeWithdrawRequest({
+          instructorId: otherInstructorId,
+          instructor: makeUser({
+            id: otherInstructorId,
+            name: 'Tran Thi B',
+            email: 'teacher@example.com',
+          }),
+        }),
+      ]);
+      withdrawRepo.createQueryBuilder.mockReturnValue(qb);
+
+      const result = await service.listAdmin({ page: 1, limit: 10 });
+
+      expect(result.items[0].instructor).toEqual({
+        name: 'Tran Thi B',
+        email: 'teacher@example.com',
+      });
+    });
+  });
+});

@@ -4,11 +4,14 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Course } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { InstructorAccount } from '../users/entities/instructor-account.entity';
+import { User } from '../users/entities/user.entity';
 import { SePayAuthGuard } from '../../common/guards/sepay-auth.guard';
 import { ConfigService } from './config.service';
 import { PaymentAuditLog } from './entities/payment-audit.entity';
 import { PaymentProviderEvent } from './entities/payment-provider-event.entity';
 import { PaymentTransaction } from './entities/payment-transaction.entity';
+import { WithdrawRequest } from './entities/withdraw-request.entity';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 import { PaymentTransactionCleanupService } from './payment-transaction-cleanup.service';
@@ -18,6 +21,8 @@ import {
 } from './schemas/config-audit.schema';
 import { PaymentConfig, PaymentConfigSchema } from './schemas/config.schema';
 import { SePayWebhookController } from './sepay.controller';
+import { WithdrawController } from './withdraw.controller';
+import { WithdrawService } from './withdraw.service';
 
 @Module({
   imports: [
@@ -25,8 +30,11 @@ import { SePayWebhookController } from './sepay.controller';
       PaymentTransaction,
       PaymentAuditLog,
       PaymentProviderEvent,
+      WithdrawRequest,
       Course,
       Enrollment,
+      User,
+      InstructorAccount,
     ]),
     MongooseModule.forFeature([
       { name: PaymentConfig.name, schema: PaymentConfigSchema },
@@ -34,9 +42,10 @@ import { SePayWebhookController } from './sepay.controller';
     ]),
     NotificationsModule,
   ],
-  controllers: [PaymentsController, SePayWebhookController],
+  controllers: [PaymentsController, SePayWebhookController, WithdrawController],
   providers: [
     PaymentsService,
+    WithdrawService,
     PaymentTransactionCleanupService,
     SePayAuthGuard,
     ConfigService,

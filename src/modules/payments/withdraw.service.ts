@@ -1,0 +1,183 @@
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { InstructorAccount } from '../users/entities/instructor-account.entity';
+import { User, UserRole } from '../users/entities/user.entity';
+import { ConfigService as PaymentConfigService } from './config.service';
+import {
+  AdminWithdrawRequestItem,
+  AdminWithdrawRequestListResponse,
+  CreateWithdrawRequestDto,
+  ListAdminWithdrawRequestsQueryDto,
+  ListMyWithdrawRequestsQueryDto,
+  WithdrawRequestListResponse,
+  WithdrawRequestResponse,
+} from './dto/withdraw.dto';
+import {
+  WithdrawRequest,
+  WithdrawRequestStatus,
+} from './entities/withdraw-request.entity';
+
+@Injectable()
+export class WithdrawService {
+  constructor(
+    @InjectRepository(WithdrawRequest)
+    private readonly withdrawRepository: Repository<WithdrawRequest>,
+    @InjectRepository(User)
+    private readonly usersRepository: Repository<User>,
+    @InjectRepository(InstructorAccount)
+    private readonly accountRepository: Repository<InstructorAccount>,
+    private readonly paymentConfigService: PaymentConfigService,
+  ) {}
+
+  async create(
+    currentUser: Pick<User, 'id' | 'role'>,
+    dto: CreateWithdrawRequestDto,
+  ): Promise<WithdrawRequestResponse> {
+    this.assertInstructor(currentUser);
+
+    const [config, account] = await Promise.all([
+      this.paymentConfigService.getActiveConfig(),
+      this.accountRepository.findOne({
+        where: { instructorId: currentUser.id },
+      }),
+    ]);
+
+    if (!account) {
+      throw new BadRequestException('Instructor payout account is required');
+    }
+
+    if (dto.amount < config.minimumWithdrawalAmount) {
+      throw new BadRequestException(
+        'Amount is below minimum withdrawal amount',
+      );
+    }
+
+    const withdraw = this.withdrawRepository.create({
+      instructorId: currentUser.id,
+      amount: dto.amount,
+      currency: config.currency,
+      status: WithdrawRequestStatus.PENDING,
+      requestedAt: new Date(),
+      note: this.normalizeNote(dto.note),
+    });
+    const saved = await this.withdrawRepository.save(withdraw);
+
+    return this.toResponse(saved);
+  }
+
+  async listMine(
+    currentUser: Pick<User, 'id' | 'role'>,
+    query: ListMyWithdrawRequestsQueryDto,
+  ): Promise<WithdrawRequestListResponse> {
+    this.assertInstructor(currentUser);
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const [items, total] = await this.withdrawRepository
+      .createQueryBuilder('withdraw')
+      .where('withdraw.instructorId = :instructorId', {
+        instructorId: currentUser.id,
+      })
+      .orderBy('withdraw.requestedAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      items: items.map((item) => this.toResponse(item)),
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
+  async listAdmin(
+    query: ListAdminWithdrawRequestsQueryDto,
+  ): Promise<AdminWithdrawRequestListResponse> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const status = query.status ?? WithdrawRequestStatus.PENDING;
+    const amountSort = query.amountSort ?? 'desc';
+    const qb = this.withdrawRepository
+      .createQueryBuilder('withdraw')
+      .leftJoinAndSelect('withdraw.instructor', 'instructor')
+      .where('withdraw.status = :status', { status });
+
+    if (query.instructorEmail?.trim()) {
+      qb.andWhere('LOWER(instructor.email) LIKE :instructorEmail', {
+        instructorEmail: `%${query.instructorEmail.trim().toLowerCase()}%`,
+      });
+    }
+
+    if (query.requestedAtFrom) {
+      qb.andWhere('withdraw.requestedAt >= :requestedAtFrom', {
+        requestedAtFrom: new Date(query.requestedAtFrom),
+      });
+    }
+
+    if (query.requestedAtTo) {
+      qb.andWhere('withdraw.requestedAt <= :requestedAtTo', {
+        requestedAtTo: new Date(query.requestedAtTo),
+      });
+    }
+
+    const [items, total] = await qb
+      .orderBy('withdraw.amount', amountSort === 'asc' ? 'ASC' : 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      items: items.map((item) => this.toAdminResponse(item)),
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
+  private assertInstructor(currentUser: Pick<User, 'role'>): void {
+    if (currentUser.role !== UserRole.INSTRUCTOR) {
+      throw new BadRequestException('User is not an instructor');
+    }
+  }
+
+  private normalizeNote(note?: string): string | null {
+    const normalized = note?.trim();
+
+    return normalized ? normalized : null;
+  }
+
+  private toResponse(withdraw: WithdrawRequest): WithdrawRequestResponse {
+    return {
+      id: withdraw.id,
+      instructorId: withdraw.instructorId,
+      amount: withdraw.amount,
+      currency: withdraw.currency,
+      status: withdraw.status,
+      requestedAt: withdraw.requestedAt,
+      note: withdraw.note,
+      createdAt: withdraw.createdAt,
+      updatedAt: withdraw.updatedAt,
+    };
+  }
+
+  private toAdminResponse(withdraw: WithdrawRequest): AdminWithdrawRequestItem {
+    return {
+      id: withdraw.id,
+      amount: withdraw.amount,
+      currency: withdraw.currency,
+      status: withdraw.status,
+      requestedAt: withdraw.requestedAt,
+      note: withdraw.note,
+      createdAt: withdraw.createdAt,
+      updatedAt: withdraw.updatedAt,
+      instructor: {
+        name: withdraw.instructor.name,
+        email: withdraw.instructor.email,
+      },
+    };
+  }
+}
