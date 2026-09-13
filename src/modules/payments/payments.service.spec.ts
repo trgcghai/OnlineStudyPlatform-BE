@@ -508,6 +508,34 @@ describe('PaymentsService', () => {
         totalPages: 1,
       });
     });
+
+    it('treats a date-only dateTo filter as the end of that day', async () => {
+      const qb = makeQueryBuilder([], 0);
+      transactionsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await paymentsService.listAdminTransactions({
+        dateTo: '2026-09-12',
+      });
+
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'transaction.createdAt <= :dateTo',
+        { dateTo: new Date('2026-09-12T23:59:59.999Z') },
+      );
+    });
+
+    it('treats a date-only dateFrom filter as the start of that day', async () => {
+      const qb = makeQueryBuilder([], 0);
+      transactionsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await paymentsService.listAdminTransactions({
+        dateFrom: '2026-09-12',
+      });
+
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'transaction.createdAt >= :dateFrom',
+        { dateFrom: new Date('2026-09-12T00:00:00.000Z') },
+      );
+    });
   });
 
   describe('getAdminTransactionDetail', () => {
@@ -666,6 +694,35 @@ describe('PaymentsService', () => {
             status: PaymentStatus.PAID,
           }),
         }),
+      );
+    });
+
+    it('treats a date-only dateTo filter as the end of that received day', async () => {
+      const qb = makeQueryBuilder([], 0);
+      providerEventsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await paymentsService.listAdminProviderEvents({
+        dateTo: '2026-09-12',
+      });
+
+      expect(qb.andWhere).toHaveBeenCalledWith('event.receivedAt <= :dateTo', {
+        dateTo: new Date('2026-09-12T23:59:59.999Z'),
+      });
+    });
+
+    it('treats a date-only dateFrom filter as the start of that received day', async () => {
+      const qb = makeQueryBuilder([], 0);
+      providerEventsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await paymentsService.listAdminProviderEvents({
+        dateFrom: '2026-09-12',
+      });
+
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'event.receivedAt >= :dateFrom',
+        {
+          dateFrom: new Date('2026-09-12T00:00:00.000Z'),
+        },
       );
     });
   });

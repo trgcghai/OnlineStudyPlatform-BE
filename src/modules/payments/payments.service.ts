@@ -254,12 +254,12 @@ export class PaymentsService {
     }
     if (query.dateFrom) {
       qb.andWhere('transaction.createdAt >= :dateFrom', {
-        dateFrom: new Date(query.dateFrom),
+        dateFrom: this.parseDateFromStartOfDay(query.dateFrom),
       });
     }
     if (query.dateTo) {
       qb.andWhere('transaction.createdAt <= :dateTo', {
-        dateTo: new Date(query.dateTo),
+        dateTo: this.parseDateToEndOfDay(query.dateTo),
       });
     }
     if (query.learnerId) {
@@ -424,12 +424,12 @@ export class PaymentsService {
     }
     if (query.dateFrom) {
       qb.andWhere('event.receivedAt >= :dateFrom', {
-        dateFrom: new Date(query.dateFrom),
+        dateFrom: this.parseDateFromStartOfDay(query.dateFrom),
       });
     }
     if (query.dateTo) {
       qb.andWhere('event.receivedAt <= :dateTo', {
-        dateTo: new Date(query.dateTo),
+        dateTo: this.parseDateToEndOfDay(query.dateTo),
       });
     }
     if (query.transferType) {
@@ -682,6 +682,22 @@ export class PaymentsService {
     if (!value || value <= 0) return defaultLimit;
 
     return Math.min(value, maxLimit);
+  }
+
+  private parseDateFromStartOfDay(value: string): Date {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return new Date(`${value}T00:00:00.000Z`);
+    }
+
+    return new Date(value);
+  }
+
+  private parseDateToEndOfDay(value: string): Date {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return new Date(`${value}T23:59:59.999Z`);
+    }
+
+    return new Date(value);
   }
 
   private async saveProviderEventResult(
