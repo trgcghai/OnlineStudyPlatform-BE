@@ -30,6 +30,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
         if (Array.isArray(resp.message)) {
           details = resp.message as string[];
           message = 'Bad Request';
+        } else if (Array.isArray(resp.details)) {
+          details = resp.details as string[];
         }
       }
     }

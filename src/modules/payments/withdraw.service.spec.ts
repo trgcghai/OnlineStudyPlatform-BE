@@ -176,7 +176,10 @@ describe('WithdrawService', () => {
       await expect(
         service.create(makeUser(), { amount: 999999 }),
       ).rejects.toEqual(
-        new BadRequestException('Amount is below minimum withdrawal amount'),
+        new BadRequestException({
+          message: 'Amount is below minimum withdrawal amount',
+          details: ['minimumWithdrawalAmount=1000000', 'currency=VND'],
+        }),
       );
       expect(withdrawRepo.save).not.toHaveBeenCalled();
     });

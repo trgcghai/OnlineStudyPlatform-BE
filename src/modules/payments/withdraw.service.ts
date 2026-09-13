@@ -48,9 +48,13 @@ export class WithdrawService {
     }
 
     if (dto.amount < config.minimumWithdrawalAmount) {
-      throw new BadRequestException(
-        'Amount is below minimum withdrawal amount',
-      );
+      throw new BadRequestException({
+        message: 'Amount is below minimum withdrawal amount',
+        details: [
+          `minimumWithdrawalAmount=${config.minimumWithdrawalAmount}`,
+          `currency=${config.currency}`,
+        ],
+      });
     }
 
     const withdraw = this.withdrawRepository.create({
