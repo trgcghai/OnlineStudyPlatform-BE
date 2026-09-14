@@ -138,7 +138,8 @@ export class WithdrawService {
     }
 
     const [items, total] = await qb
-      .orderBy('withdraw.amount', amountSort === 'asc' ? 'ASC' : 'DESC')
+      .orderBy('withdraw.requestedAt', 'DESC')
+      .addOrderBy('withdraw.amount', amountSort === 'asc' ? 'ASC' : 'DESC')
       .skip((page - 1) * limit)
       .take(limit)
       .getManyAndCount();

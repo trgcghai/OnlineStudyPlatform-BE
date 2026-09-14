@@ -91,6 +91,7 @@ describe('WithdrawService', () => {
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
       skip: jest.fn().mockReturnThis(),
       take: jest.fn().mockReturnThis(),
       getManyAndCount: jest.fn().mockResolvedValue([items, total]),
@@ -232,7 +233,7 @@ describe('WithdrawService', () => {
   });
 
   describe('listAdmin', () => {
-    it('filters by pending status and sorts amount descending when requested', async () => {
+    it('filters by pending status and sorts latest first then amount descending by default', async () => {
       const qb = makeQueryBuilder([makeWithdrawRequest()], 1);
       withdrawRepo.createQueryBuilder.mockReturnValue(qb);
 
@@ -246,7 +247,8 @@ describe('WithdrawService', () => {
       expect(qb.andWhere).toHaveBeenCalledWith('withdraw.status = :status', {
         status: WithdrawRequestStatus.PENDING,
       });
-      expect(qb.orderBy).toHaveBeenCalledWith('withdraw.amount', 'DESC');
+      expect(qb.orderBy).toHaveBeenCalledWith('withdraw.requestedAt', 'DESC');
+      expect(qb.addOrderBy).toHaveBeenCalledWith('withdraw.amount', 'DESC');
     });
 
     it('does not filter status when status is omitted', async () => {
@@ -288,13 +290,14 @@ describe('WithdrawService', () => {
       );
     });
 
-    it('sorts by amount ascending when requested', async () => {
+    it('sorts latest first then amount ascending when requested', async () => {
       const qb = makeQueryBuilder([makeWithdrawRequest()], 1);
       withdrawRepo.createQueryBuilder.mockReturnValue(qb);
 
       await service.listAdmin({ page: 1, limit: 10, amountSort: 'asc' });
 
-      expect(qb.orderBy).toHaveBeenCalledWith('withdraw.amount', 'ASC');
+      expect(qb.orderBy).toHaveBeenCalledWith('withdraw.requestedAt', 'DESC');
+      expect(qb.addOrderBy).toHaveBeenCalledWith('withdraw.amount', 'ASC');
     });
 
     it('returns instructor summary without requiring instructor id in response', async () => {
