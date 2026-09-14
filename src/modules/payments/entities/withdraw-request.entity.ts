@@ -13,6 +13,7 @@ export enum WithdrawRequestStatus {
   PENDING = 'pending',
   PROCESSED = 'processed',
   CANCELLED = 'cancelled',
+  REJECTED = 'rejected',
 }
 
 @Entity('withdraw_requests')
@@ -45,6 +46,18 @@ export class WithdrawRequest {
 
   @Column({ type: 'text', nullable: true })
   note!: string | null;
+
+  @Column({ name: 'cancel_reason', type: 'text', nullable: true })
+  cancelReason!: string | null;
+
+  @Column({ name: 'cancelled_at', type: 'timestamp', nullable: true })
+  cancelledAt!: Date | null;
+
+  @Column({ name: 'reject_reason', type: 'text', nullable: true })
+  rejectReason!: string | null;
+
+  @Column({ name: 'rejected_at', type: 'timestamp', nullable: true })
+  rejectedAt!: Date | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;

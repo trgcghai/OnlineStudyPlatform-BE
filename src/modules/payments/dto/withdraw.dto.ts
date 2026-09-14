@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
   Max,
@@ -42,6 +43,26 @@ export class ListMyWithdrawRequestsQueryDto {
   @Min(1)
   @Max(100)
   limit: number = 10;
+}
+
+export class CancelWithdrawRequestDto {
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
+export class RejectWithdrawRequestDto {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  reason!: string;
 }
 
 export class ListAdminWithdrawRequestsQueryDto {
@@ -90,6 +111,10 @@ export interface WithdrawRequestResponse {
   status: WithdrawRequestStatus;
   requestedAt: Date;
   note: string | null;
+  cancelReason: string | null;
+  cancelledAt: Date | null;
+  rejectReason: string | null;
+  rejectedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -109,6 +134,10 @@ export interface AdminWithdrawRequestItem {
   status: WithdrawRequestStatus;
   requestedAt: Date;
   note: string | null;
+  cancelReason: string | null;
+  cancelledAt: Date | null;
+  rejectReason: string | null;
+  rejectedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   instructor: {

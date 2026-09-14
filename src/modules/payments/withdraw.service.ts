@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InstructorAccount } from '../users/entities/instructor-account.entity';
@@ -7,9 +12,11 @@ import { ConfigService as PaymentConfigService } from './config.service';
 import {
   AdminWithdrawRequestItem,
   AdminWithdrawRequestListResponse,
+  CancelWithdrawRequestDto,
   CreateWithdrawRequestDto,
   ListAdminWithdrawRequestsQueryDto,
   ListMyWithdrawRequestsQueryDto,
+  RejectWithdrawRequestDto,
   WithdrawRequestListResponse,
   WithdrawRequestResponse,
 } from './dto/withdraw.dto';
@@ -142,6 +149,90 @@ export class WithdrawService {
     };
   }
 
+  async cancel(
+    currentUser: Pick<User, 'id' | 'role'>,
+    id: string,
+    dto: CancelWithdrawRequestDto,
+  ): Promise<WithdrawRequestResponse> {
+    this.assertInstructor(currentUser);
+
+    const updateResult = await this.withdrawRepository.update(
+      {
+        id,
+        instructorId: currentUser.id,
+        status: WithdrawRequestStatus.PENDING,
+      },
+      {
+        status: WithdrawRequestStatus.CANCELLED,
+        cancelReason: this.normalizeNote(dto.reason),
+        cancelledAt: new Date(),
+      },
+    );
+
+    if (!updateResult.affected) {
+      const existing = await this.withdrawRepository.findOne({ where: { id } });
+
+      if (!existing) {
+        throw new NotFoundException('Withdraw request not found');
+      }
+
+      if (existing.instructorId !== currentUser.id) {
+        throw new ForbiddenException(
+          'Cannot cancel another instructor request',
+        );
+      }
+
+      throw new BadRequestException(
+        'Only pending withdraw requests can be cancelled',
+      );
+    }
+
+    const saved = await this.withdrawRepository.findOne({ where: { id } });
+
+    if (!saved) {
+      throw new NotFoundException('Withdraw request not found');
+    }
+
+    return this.toResponse(saved);
+  }
+
+  async reject(
+    id: string,
+    dto: RejectWithdrawRequestDto,
+  ): Promise<AdminWithdrawRequestItem> {
+    const updateResult = await this.withdrawRepository.update(
+      { id, status: WithdrawRequestStatus.PENDING },
+      {
+        status: WithdrawRequestStatus.REJECTED,
+        rejectReason: this.normalizeNote(dto.reason),
+        rejectedAt: new Date(),
+      },
+    );
+
+    if (!updateResult.affected) {
+      const existing = await this.withdrawRepository.findOne({ where: { id } });
+
+      if (!existing) {
+        throw new NotFoundException('Withdraw request not found');
+      }
+
+      throw new BadRequestException(
+        'Only pending withdraw requests can be rejected',
+      );
+    }
+
+    const saved = await this.withdrawRepository.findOne({
+      where: { id },
+      relations: { instructor: true },
+    });
+
+    if (!saved) {
+      throw new NotFoundException('Withdraw request not found');
+    }
+
+    return this.toAdminResponse(saved);
+  }
+
   private assertInstructor(currentUser: Pick<User, 'role'>): void {
     if (currentUser.role !== UserRole.INSTRUCTOR) {
       throw new BadRequestException('User is not an instructor');
@@ -163,6 +254,10 @@ export class WithdrawService {
       status: withdraw.status,
       requestedAt: withdraw.requestedAt,
       note: withdraw.note,
+      cancelReason: withdraw.cancelReason,
+      cancelledAt: withdraw.cancelledAt,
+      rejectReason: withdraw.rejectReason,
+      rejectedAt: withdraw.rejectedAt,
       createdAt: withdraw.createdAt,
       updatedAt: withdraw.updatedAt,
     };
@@ -176,6 +271,10 @@ export class WithdrawService {
       status: withdraw.status,
       requestedAt: withdraw.requestedAt,
       note: withdraw.note,
+      cancelReason: withdraw.cancelReason,
+      cancelledAt: withdraw.cancelledAt,
+      rejectReason: withdraw.rejectReason,
+      rejectedAt: withdraw.rejectedAt,
       createdAt: withdraw.createdAt,
       updatedAt: withdraw.updatedAt,
       instructor: {

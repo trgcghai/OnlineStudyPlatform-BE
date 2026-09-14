@@ -66,6 +66,8 @@ describe('WithdrawController', () => {
       create: jest.fn(),
       listMine: jest.fn(),
       listAdmin: jest.fn(),
+      cancel: jest.fn(),
+      reject: jest.fn(),
     } as unknown as jest.Mocked<WithdrawService>;
 
     const moduleRef = await Test.createTestingModule({
@@ -104,6 +106,14 @@ describe('WithdrawController', () => {
     expect(getMethodPath('listAdmin')).toBe('admin');
     expect(getMethodVerb('listAdmin')).toBe(RequestMethod.GET);
     expect(getMethodRoles('listAdmin')).toEqual([UserRole.ADMIN]);
+
+    expect(getMethodPath('cancel')).toBe(':id/cancel');
+    expect(getMethodVerb('cancel')).toBe(RequestMethod.POST);
+    expect(getMethodRoles('cancel')).toEqual([UserRole.INSTRUCTOR]);
+
+    expect(getMethodPath('reject')).toBe(':id/reject');
+    expect(getMethodVerb('reject')).toBe(RequestMethod.POST);
+    expect(getMethodRoles('reject')).toEqual([UserRole.ADMIN]);
   });
 
   it('delegates create to the withdraw service with current user and dto', async () => {
@@ -153,5 +163,65 @@ describe('WithdrawController', () => {
     await expect(controller.listAdmin(query)).resolves.toBe(response);
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(withdrawService.listAdmin).toHaveBeenCalledWith(query);
+  });
+
+  it('delegates cancel to the withdraw service with current user, id, and dto', async () => {
+    const currentUser = makeUser();
+    const requestId = '66666666-6666-4666-8666-666666666666';
+    const dto = { reason: 'Doi y' };
+    const response = {
+      id: requestId,
+      instructorId: currentUser.id,
+      amount: 1500000,
+      currency: 'VND',
+      status: WithdrawRequestStatus.CANCELLED,
+      requestedAt: new Date('2026-09-13T09:00:00.000Z'),
+      note: null,
+      cancelReason: dto.reason,
+      cancelledAt: new Date('2026-09-13T10:00:00.000Z'),
+      rejectReason: null,
+      rejectedAt: null,
+      createdAt: new Date('2026-09-13T09:00:00.000Z'),
+      updatedAt: new Date('2026-09-13T10:00:00.000Z'),
+    };
+    withdrawService.cancel.mockResolvedValue(response);
+
+    await expect(controller.cancel(currentUser, requestId, dto)).resolves.toBe(
+      response,
+    );
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(withdrawService.cancel).toHaveBeenCalledWith(
+      currentUser,
+      requestId,
+      dto,
+    );
+  });
+
+  it('delegates reject to the withdraw service with id and dto', async () => {
+    const requestId = '66666666-6666-4666-8666-666666666666';
+    const dto = { reason: 'Sai thong tin' };
+    const response = {
+      id: requestId,
+      amount: 1500000,
+      currency: 'VND',
+      status: WithdrawRequestStatus.REJECTED,
+      requestedAt: new Date('2026-09-13T09:00:00.000Z'),
+      note: null,
+      cancelReason: null,
+      cancelledAt: null,
+      rejectReason: dto.reason,
+      rejectedAt: new Date('2026-09-13T10:00:00.000Z'),
+      createdAt: new Date('2026-09-13T09:00:00.000Z'),
+      updatedAt: new Date('2026-09-13T10:00:00.000Z'),
+      instructor: {
+        name: 'Nguyen Van A',
+        email: 'instructor@example.com',
+      },
+    };
+    withdrawService.reject.mockResolvedValue(response);
+
+    await expect(controller.reject(requestId, dto)).resolves.toBe(response);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(withdrawService.reject).toHaveBeenCalledWith(requestId, dto);
   });
 });

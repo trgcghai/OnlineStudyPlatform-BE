@@ -1,4 +1,8 @@
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { InstructorAccount } from '../users/entities/instructor-account.entity';
 import { User, UserRole, UserStatus } from '../users/entities/user.entity';
@@ -11,6 +15,8 @@ describe('WithdrawService', () => {
   let withdrawRepo: {
     create: jest.Mock;
     save: jest.Mock;
+    findOne: jest.Mock;
+    update: jest.Mock;
     createQueryBuilder: jest.Mock;
   };
   let usersRepo: { findOne: jest.Mock };
@@ -99,6 +105,8 @@ describe('WithdrawService', () => {
       save: jest.fn((input: Record<string, unknown>) =>
         Promise.resolve(makeWithdrawRequest(input)),
       ),
+      findOne: jest.fn(),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       createQueryBuilder: jest.fn(),
     };
     usersRepo = { findOne: jest.fn() };
@@ -290,6 +298,160 @@ describe('WithdrawService', () => {
         name: 'Tran Thi B',
         email: 'teacher@example.com',
       });
+    });
+  });
+
+  describe('cancel', () => {
+    it('cancels the current instructor pending request', async () => {
+      const request = makeWithdrawRequest();
+      withdrawRepo.findOne.mockResolvedValue(
+        makeWithdrawRequest({
+          status: WithdrawRequestStatus.CANCELLED,
+          cancelReason: 'Doi y',
+          cancelledAt: new Date('2026-09-13T10:00:00.000Z'),
+        }),
+      );
+
+      const result = await service.cancel(makeUser(), requestId, {
+        reason: ' Doi y ',
+      });
+
+      expect(withdrawRepo.update).toHaveBeenCalledWith(
+        {
+          id: request.id,
+          instructorId,
+          status: WithdrawRequestStatus.PENDING,
+        },
+        {
+          status: WithdrawRequestStatus.CANCELLED,
+          cancelReason: 'Doi y',
+          cancelledAt: expect.any(Date),
+        },
+      );
+      expect(result).toMatchObject({
+        id: requestId,
+        status: WithdrawRequestStatus.CANCELLED,
+        cancelReason: 'Doi y',
+      });
+    });
+
+    it('normalizes blank cancel reason to null', async () => {
+      withdrawRepo.findOne.mockResolvedValue(
+        makeWithdrawRequest({ status: WithdrawRequestStatus.CANCELLED }),
+      );
+
+      await service.cancel(makeUser(), requestId, { reason: '   ' });
+
+      expect(withdrawRepo.update.mock.calls[0][1]).toMatchObject({
+        cancelReason: null,
+      });
+    });
+
+    it('rejects non-instructor callers', async () => {
+      await expect(
+        service.cancel(makeUser({ role: UserRole.LEARNER }), requestId, {}),
+      ).rejects.toEqual(new BadRequestException('User is not an instructor'));
+      expect(withdrawRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('throws not found when the request does not exist', async () => {
+      withdrawRepo.update.mockResolvedValue({ affected: 0 });
+      withdrawRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.cancel(makeUser(), requestId, {})).rejects.toEqual(
+        new NotFoundException('Withdraw request not found'),
+      );
+      expect(withdrawRepo.update).toHaveBeenCalled();
+    });
+
+    it('forbids cancelling another instructor request', async () => {
+      withdrawRepo.update.mockResolvedValue({ affected: 0 });
+      withdrawRepo.findOne.mockResolvedValue(
+        makeWithdrawRequest({ instructorId: otherInstructorId }),
+      );
+
+      await expect(service.cancel(makeUser(), requestId, {})).rejects.toEqual(
+        new ForbiddenException('Cannot cancel another instructor request'),
+      );
+      expect(withdrawRepo.update).toHaveBeenCalled();
+    });
+
+    it('rejects non-pending requests', async () => {
+      withdrawRepo.update.mockResolvedValue({ affected: 0 });
+      withdrawRepo.findOne.mockResolvedValue(
+        makeWithdrawRequest({ status: WithdrawRequestStatus.CANCELLED }),
+      );
+
+      await expect(service.cancel(makeUser(), requestId, {})).rejects.toEqual(
+        new BadRequestException(
+          'Only pending withdraw requests can be cancelled',
+        ),
+      );
+      expect(withdrawRepo.update).toHaveBeenCalled();
+    });
+  });
+
+  describe('reject', () => {
+    it('rejects a pending request with instructor summary', async () => {
+      withdrawRepo.findOne.mockResolvedValue(
+        makeWithdrawRequest({
+          status: WithdrawRequestStatus.REJECTED,
+          rejectReason: 'Sai thong tin',
+          rejectedAt: new Date('2026-09-13T10:00:00.000Z'),
+          instructor: makeUser({
+            name: 'Tran Thi B',
+            email: 'teacher@example.com',
+          }),
+        }),
+      );
+
+      const result = await service.reject(requestId, {
+        reason: ' Sai thong tin ',
+      });
+
+      expect(withdrawRepo.update).toHaveBeenCalledWith(
+        { id: requestId, status: WithdrawRequestStatus.PENDING },
+        {
+          status: WithdrawRequestStatus.REJECTED,
+          rejectReason: 'Sai thong tin',
+          rejectedAt: expect.any(Date),
+        },
+      );
+      expect(result).toMatchObject({
+        id: requestId,
+        status: WithdrawRequestStatus.REJECTED,
+        rejectReason: 'Sai thong tin',
+        instructor: {
+          name: 'Tran Thi B',
+          email: 'teacher@example.com',
+        },
+      });
+    });
+
+    it('throws not found when the request does not exist', async () => {
+      withdrawRepo.update.mockResolvedValue({ affected: 0 });
+      withdrawRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.reject(requestId, { reason: 'Sai thong tin' }),
+      ).rejects.toEqual(new NotFoundException('Withdraw request not found'));
+      expect(withdrawRepo.update).toHaveBeenCalled();
+    });
+
+    it('rejects non-pending requests', async () => {
+      withdrawRepo.update.mockResolvedValue({ affected: 0 });
+      withdrawRepo.findOne.mockResolvedValue(
+        makeWithdrawRequest({ status: WithdrawRequestStatus.CANCELLED }),
+      );
+
+      await expect(
+        service.reject(requestId, { reason: 'Sai thong tin' }),
+      ).rejects.toEqual(
+        new BadRequestException(
+          'Only pending withdraw requests can be rejected',
+        ),
+      );
+      expect(withdrawRepo.update).toHaveBeenCalled();
     });
   });
 });
