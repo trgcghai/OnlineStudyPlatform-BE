@@ -16,7 +16,8 @@ export type PaymentConfigCurrency =
   (typeof PAYMENT_CONFIG_SUPPORTED_CURRENCIES)[number];
 export const MINIMUM_WITHDRAWAL_AMOUNT_MIN = 1000000; // 1 million VND
 export const MINIMUM_WITHDRAWAL_AMOUNT_STEP = 100000; // 100k VND
-export const EARNING_HOLD_DAYS_MIN = 7; // 7 days
+export const EARNING_HOLD_DAYS_MIN = 0;
+export const DEFAULT_EARNING_HOLD_DAYS = 7;
 
 export const DEFAULT_PAYMENT_CONFIG = {
   platformFeePercent: 20,
@@ -24,7 +25,7 @@ export const DEFAULT_PAYMENT_CONFIG = {
   allowedPrices: [0, 99000, 199000, 299000, 499000, 799000, 999000],
   freeCourseLimit: 3,
   minimumWithdrawalAmount: MINIMUM_WITHDRAWAL_AMOUNT_MIN,
-  earningHoldDays: EARNING_HOLD_DAYS_MIN,
+  earningHoldDays: DEFAULT_EARNING_HOLD_DAYS,
   updatedById: null,
 } as const;
 

@@ -24,7 +24,7 @@ export class PaymentConfig {
   @Prop({ required: true, type: Number })
   minimumWithdrawalAmount!: number;
 
-  @Prop({ required: true, type: Number, default: 7 })
+  @Prop({ required: true, type: Number, default: 7, min: 0 })
   earningHoldDays!: number;
 
   @Prop({ required: false, type: String, default: null })

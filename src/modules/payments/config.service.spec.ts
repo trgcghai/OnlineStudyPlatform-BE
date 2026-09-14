@@ -199,6 +199,28 @@ describe('ConfigService', () => {
     expect(result.earningHoldDays).toBe(14);
   });
 
+  it('allows earning hold days to be zero while keeping the default at seven days', async () => {
+    const current = createConfig();
+    const saved = createConfig({
+      earningHoldDays: 0,
+      updatedById: ACTOR_ID,
+    });
+    current.save = jest.fn().mockResolvedValue(saved);
+    configModel.findOne.mockReturnValue(mockQuery(current));
+    auditModel.create.mockResolvedValue({
+      _id: { toString: () => 'audit-id' },
+    });
+
+    const result = await service.updateConfig(ACTOR_ID, ACTOR_EMAIL, {
+      ...updateDto,
+      earningHoldDays: 0,
+    });
+
+    expect(DEFAULT_PAYMENT_CONFIG.earningHoldDays).toBe(7);
+    expect(current.earningHoldDays).toBe(0);
+    expect(result.earningHoldDays).toBe(0);
+  });
+
   it('returns current config without audit for no-op update', async () => {
     const current = createConfig({ updatedById: ACTOR_ID });
     configModel.findOne.mockReturnValue(mockQuery(current));
