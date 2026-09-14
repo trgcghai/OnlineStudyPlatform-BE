@@ -232,16 +232,34 @@ describe('WithdrawService', () => {
   });
 
   describe('listAdmin', () => {
-    it('defaults status to pending and sorts amount descending', async () => {
+    it('filters by pending status and sorts amount descending when requested', async () => {
+      const qb = makeQueryBuilder([makeWithdrawRequest()], 1);
+      withdrawRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await service.listAdmin({
+        page: 1,
+        limit: 10,
+        status: WithdrawRequestStatus.PENDING,
+      });
+
+      expect(qb.where).toHaveBeenCalledWith('1 = 1');
+      expect(qb.andWhere).toHaveBeenCalledWith('withdraw.status = :status', {
+        status: WithdrawRequestStatus.PENDING,
+      });
+      expect(qb.orderBy).toHaveBeenCalledWith('withdraw.amount', 'DESC');
+    });
+
+    it('does not filter status when status is omitted', async () => {
       const qb = makeQueryBuilder([makeWithdrawRequest()], 1);
       withdrawRepo.createQueryBuilder.mockReturnValue(qb);
 
       await service.listAdmin({ page: 1, limit: 10 });
 
-      expect(qb.where).toHaveBeenCalledWith('withdraw.status = :status', {
-        status: WithdrawRequestStatus.PENDING,
-      });
-      expect(qb.orderBy).toHaveBeenCalledWith('withdraw.amount', 'DESC');
+      expect(qb.where).toHaveBeenCalledWith('1 = 1');
+      expect(qb.andWhere).not.toHaveBeenCalledWith(
+        'withdraw.status = :status',
+        expect.any(Object),
+      );
     });
 
     it('filters by instructor email and requested date range', async () => {

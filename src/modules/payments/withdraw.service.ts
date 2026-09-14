@@ -109,12 +109,15 @@ export class WithdrawService {
   ): Promise<AdminWithdrawRequestListResponse> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
-    const status = query.status ?? WithdrawRequestStatus.PENDING;
     const amountSort = query.amountSort ?? 'desc';
     const qb = this.withdrawRepository
       .createQueryBuilder('withdraw')
       .leftJoinAndSelect('withdraw.instructor', 'instructor')
-      .where('withdraw.status = :status', { status });
+      .where('1 = 1');
+
+    if (query.status) {
+      qb.andWhere('withdraw.status = :status', { status: query.status });
+    }
 
     if (query.instructorEmail?.trim()) {
       qb.andWhere('LOWER(instructor.email) LIKE :instructorEmail', {

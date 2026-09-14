@@ -75,7 +75,7 @@ export class ListAdminWithdrawRequestsQueryDto {
 
   @IsOptional()
   @IsEnum(WithdrawRequestStatus)
-  status: WithdrawRequestStatus = WithdrawRequestStatus.PENDING;
+  status?: WithdrawRequestStatus;
 
   @IsOptional()
   @IsDateString()
