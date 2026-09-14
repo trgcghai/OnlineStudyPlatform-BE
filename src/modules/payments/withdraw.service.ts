@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { InstructorAccount } from '../users/entities/instructor-account.entity';
 import { User, UserRole } from '../users/entities/user.entity';
 import { ConfigService as PaymentConfigService } from './config.service';
@@ -24,17 +24,18 @@ import {
   WithdrawRequest,
   WithdrawRequestStatus,
 } from './entities/withdraw-request.entity';
+import { InstructorBalanceService } from './instructor-balance.service';
 
 @Injectable()
 export class WithdrawService {
   constructor(
     @InjectRepository(WithdrawRequest)
     private readonly withdrawRepository: Repository<WithdrawRequest>,
-    @InjectRepository(User)
-    private readonly usersRepository: Repository<User>,
     @InjectRepository(InstructorAccount)
     private readonly accountRepository: Repository<InstructorAccount>,
     private readonly paymentConfigService: PaymentConfigService,
+    private readonly dataSource: DataSource,
+    private readonly instructorBalanceService: InstructorBalanceService,
   ) {}
 
   async create(
@@ -235,6 +236,29 @@ export class WithdrawService {
     }
 
     return this.toAdminResponse(saved);
+  }
+
+  async recordProcessedDebit(id: string): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const withdraw = await manager.getRepository(WithdrawRequest).findOne({
+        where: { id },
+      });
+
+      if (!withdraw) {
+        throw new NotFoundException('Withdraw request not found');
+      }
+
+      if (withdraw.status !== WithdrawRequestStatus.PROCESSED) {
+        throw new BadRequestException(
+          'Only processed withdraw requests can create balance debit entries',
+        );
+      }
+
+      await this.instructorBalanceService.recordWithdrawDebit(
+        manager,
+        withdraw,
+      );
+    });
   }
 
   private assertInstructor(currentUser: Pick<User, 'role'>): void {

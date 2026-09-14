@@ -7,6 +7,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { UserRole } from '../users/entities/user.entity';
 import { ConfigService } from './config.service';
 import { PaymentConfigAuditResponse } from './dto/config.dto';
+import { InstructorBalanceService } from './instructor-balance.service';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 
@@ -23,6 +24,7 @@ function getMethodRoles(methodName: string): unknown {
 describe('PaymentsController', () => {
   let controller: PaymentsController;
   let configService: jest.Mocked<ConfigService>;
+  let instructorBalanceService: jest.Mocked<InstructorBalanceService>;
   let paymentsService: jest.Mocked<PaymentsService>;
   const transactionId = '33333333-3333-4333-8333-333333333333';
 
@@ -43,12 +45,20 @@ describe('PaymentsController', () => {
       listAdminProviderEvents: jest.fn(),
       getAdminProviderEventDetail: jest.fn(),
     } as unknown as jest.Mocked<PaymentsService>;
+    instructorBalanceService = {
+      getSummary: jest.fn(),
+      listHistory: jest.fn(),
+    } as unknown as jest.Mocked<InstructorBalanceService>;
 
     const moduleRef = await Test.createTestingModule({
       controllers: [PaymentsController],
       providers: [
         { provide: ConfigService, useValue: configService },
         { provide: PaymentsService, useValue: paymentsService },
+        {
+          provide: InstructorBalanceService,
+          useValue: instructorBalanceService,
+        },
         Reflector,
       ],
     }).compile();

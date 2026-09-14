@@ -8,10 +8,12 @@ import { InstructorAccount } from '../users/entities/instructor-account.entity';
 import { User } from '../users/entities/user.entity';
 import { SePayAuthGuard } from '../../common/guards/sepay-auth.guard';
 import { ConfigService } from './config.service';
+import { InstructorBalanceLedger } from './entities/instructor-balance-ledger.entity';
 import { PaymentAuditLog } from './entities/payment-audit.entity';
 import { PaymentProviderEvent } from './entities/payment-provider-event.entity';
 import { PaymentTransaction } from './entities/payment-transaction.entity';
 import { WithdrawRequest } from './entities/withdraw-request.entity';
+import { InstructorBalanceService } from './instructor-balance.service';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 import { PaymentTransactionCleanupService } from './payment-transaction-cleanup.service';
@@ -31,6 +33,7 @@ import { WithdrawService } from './withdraw.service';
       PaymentAuditLog,
       PaymentProviderEvent,
       WithdrawRequest,
+      InstructorBalanceLedger,
       Course,
       Enrollment,
       User,
@@ -46,6 +49,7 @@ import { WithdrawService } from './withdraw.service';
   providers: [
     PaymentsService,
     WithdrawService,
+    InstructorBalanceService,
     PaymentTransactionCleanupService,
     SePayAuthGuard,
     ConfigService,

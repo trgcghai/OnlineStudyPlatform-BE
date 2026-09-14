@@ -9,6 +9,7 @@ import { User, UserRole, UserStatus } from '../users/entities/user.entity';
 import { ConfigService as PaymentConfigService } from './config.service';
 import { WithdrawRequestStatus } from './entities/withdraw-request.entity';
 import { WithdrawService } from './withdraw.service';
+import { ListAdminWithdrawRequestsQueryDto } from 'src/modules/payments/dto/withdraw.dto';
 
 describe('WithdrawService', () => {
   let service: WithdrawService;
@@ -19,9 +20,10 @@ describe('WithdrawService', () => {
     update: jest.Mock;
     createQueryBuilder: jest.Mock;
   };
-  let usersRepo: { findOne: jest.Mock };
   let accountRepo: { findOne: jest.Mock };
   let configService: { getActiveConfig: jest.Mock };
+  let dataSource: { transaction: jest.Mock };
+  let instructorBalanceService: { recordWithdrawDebit: jest.Mock };
 
   const instructorId = '44444444-4444-4444-8444-444444444444';
   const otherInstructorId = '55555555-5555-4555-8555-555555555555';
@@ -110,17 +112,23 @@ describe('WithdrawService', () => {
       update: jest.fn().mockResolvedValue({ affected: 1 }),
       createQueryBuilder: jest.fn(),
     };
-    usersRepo = { findOne: jest.fn() };
     accountRepo = { findOne: jest.fn().mockResolvedValue(makeAccount()) };
     configService = {
       getActiveConfig: jest.fn().mockResolvedValue(makeConfig()),
     };
+    dataSource = {
+      transaction: jest.fn((callback: (manager: unknown) => Promise<unknown>) =>
+        callback({}),
+      ),
+    };
+    instructorBalanceService = { recordWithdrawDebit: jest.fn() };
 
     service = new WithdrawService(
       withdrawRepo as unknown as Repository<never>,
-      usersRepo as unknown as Repository<User>,
       accountRepo as unknown as Repository<InstructorAccount>,
       configService as unknown as PaymentConfigService,
+      dataSource as never,
+      instructorBalanceService as never,
     );
   });
 
@@ -241,7 +249,7 @@ describe('WithdrawService', () => {
         page: 1,
         limit: 10,
         status: WithdrawRequestStatus.PENDING,
-      });
+      } as ListAdminWithdrawRequestsQueryDto);
 
       expect(qb.where).toHaveBeenCalledWith('1 = 1');
       expect(qb.andWhere).toHaveBeenCalledWith('withdraw.status = :status', {
@@ -255,7 +263,10 @@ describe('WithdrawService', () => {
       const qb = makeQueryBuilder([makeWithdrawRequest()], 1);
       withdrawRepo.createQueryBuilder.mockReturnValue(qb);
 
-      await service.listAdmin({ page: 1, limit: 10 });
+      await service.listAdmin({
+        page: 1,
+        limit: 10,
+      } as ListAdminWithdrawRequestsQueryDto);
 
       expect(qb.where).toHaveBeenCalledWith('1 = 1');
       expect(qb.andWhere).not.toHaveBeenCalledWith(
@@ -274,7 +285,7 @@ describe('WithdrawService', () => {
         instructorEmail: ' Instructor@Example.COM ',
         requestedAtFrom: '2026-09-01T00:00:00.000Z',
         requestedAtTo: '2026-09-30T23:59:59.999Z',
-      });
+      } as ListAdminWithdrawRequestsQueryDto);
 
       expect(qb.andWhere).toHaveBeenCalledWith(
         'LOWER(instructor.email) LIKE :instructorEmail',
@@ -313,7 +324,10 @@ describe('WithdrawService', () => {
       ]);
       withdrawRepo.createQueryBuilder.mockReturnValue(qb);
 
-      const result = await service.listAdmin({ page: 1, limit: 10 });
+      const result = await service.listAdmin({
+        page: 1,
+        limit: 10,
+      } as ListAdminWithdrawRequestsQueryDto);
 
       expect(result.items[0].instructor).toEqual({
         name: 'Tran Thi B',
@@ -473,6 +487,74 @@ describe('WithdrawService', () => {
         ),
       );
       expect(withdrawRepo.update).toHaveBeenCalled();
+    });
+  });
+
+  describe('recordProcessedDebit', () => {
+    it('creates a ledger debit for processed withdrawals', async () => {
+      const withdraw = makeWithdrawRequest({
+        status: WithdrawRequestStatus.PROCESSED,
+        amount: 1500000,
+      });
+      const managerWithdrawRepo = {
+        findOne: jest.fn().mockResolvedValue(withdraw),
+      };
+      const manager = {
+        getRepository: jest.fn().mockReturnValue(managerWithdrawRepo),
+      };
+      dataSource.transaction.mockImplementation(
+        (callback: (txManager: typeof manager) => Promise<unknown>) =>
+          callback(manager),
+      );
+
+      await service.recordProcessedDebit(requestId);
+
+      expect(managerWithdrawRepo.findOne).toHaveBeenCalledWith({
+        where: { id: requestId },
+      });
+      expect(instructorBalanceService.recordWithdrawDebit).toHaveBeenCalledWith(
+        manager,
+        withdraw,
+      );
+    });
+
+    it('rejects debit creation for non-processed withdrawals', async () => {
+      const managerWithdrawRepo = {
+        findOne: jest.fn().mockResolvedValue(makeWithdrawRequest()),
+      };
+      const manager = {
+        getRepository: jest.fn().mockReturnValue(managerWithdrawRepo),
+      };
+      dataSource.transaction.mockImplementation(
+        (callback: (txManager: typeof manager) => Promise<unknown>) =>
+          callback(manager),
+      );
+
+      await expect(service.recordProcessedDebit(requestId)).rejects.toEqual(
+        new BadRequestException(
+          'Only processed withdraw requests can create balance debit entries',
+        ),
+      );
+      expect(
+        instructorBalanceService.recordWithdrawDebit,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('throws not found when the withdrawal does not exist', async () => {
+      const managerWithdrawRepo = {
+        findOne: jest.fn().mockResolvedValue(null),
+      };
+      const manager = {
+        getRepository: jest.fn().mockReturnValue(managerWithdrawRepo),
+      };
+      dataSource.transaction.mockImplementation(
+        (callback: (txManager: typeof manager) => Promise<unknown>) =>
+          callback(manager),
+      );
+
+      await expect(service.recordProcessedDebit(requestId)).rejects.toEqual(
+        new NotFoundException('Withdraw request not found'),
+      );
     });
   });
 });
