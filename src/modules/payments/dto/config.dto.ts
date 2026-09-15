@@ -14,17 +14,43 @@ import {
 export const PAYMENT_CONFIG_SUPPORTED_CURRENCIES = ['VND'] as const;
 export type PaymentConfigCurrency =
   (typeof PAYMENT_CONFIG_SUPPORTED_CURRENCIES)[number];
-export const MINIMUM_WITHDRAWAL_AMOUNT_MIN = 1000000; // 1 million VND
-export const MINIMUM_WITHDRAWAL_AMOUNT_STEP = 100000; // 100k VND
-export const EARNING_HOLD_DAYS_MIN = 0;
+export type PaymentConfigEnvironment = 'development' | 'production';
 export const DEFAULT_EARNING_HOLD_DAYS = 7;
+
+export interface PaymentConfigPolicy {
+  environment: PaymentConfigEnvironment;
+  minimumWithdrawalAmountMin: number;
+  minimumWithdrawalAmountStep: number;
+  earningHoldDaysMin: number;
+}
+
+export const BASE_PAYMENT_CONFIG_POLICY = {
+  currency: 'VND' as PaymentConfigCurrency,
+} as const;
+
+export const DEVELOPMENT_PAYMENT_CONFIG_POLICY = {
+  ...BASE_PAYMENT_CONFIG_POLICY,
+  environment: 'development',
+  minimumWithdrawalAmountMin: 1000,
+  minimumWithdrawalAmountStep: 1000,
+  earningHoldDaysMin: 0,
+} as const satisfies PaymentConfigPolicy & typeof BASE_PAYMENT_CONFIG_POLICY;
+
+export const PRODUCTION_PAYMENT_CONFIG_POLICY = {
+  ...BASE_PAYMENT_CONFIG_POLICY,
+  environment: 'production',
+  minimumWithdrawalAmountMin: 1000000,
+  minimumWithdrawalAmountStep: 100000,
+  earningHoldDaysMin: 7,
+} as const satisfies PaymentConfigPolicy & typeof BASE_PAYMENT_CONFIG_POLICY;
 
 export const DEFAULT_PAYMENT_CONFIG = {
   platformFeePercent: 20,
   currency: 'VND' as PaymentConfigCurrency,
   allowedPrices: [0, 99000, 199000, 299000, 499000, 799000, 999000],
   freeCourseLimit: 3,
-  minimumWithdrawalAmount: MINIMUM_WITHDRAWAL_AMOUNT_MIN,
+  minimumWithdrawalAmount:
+    PRODUCTION_PAYMENT_CONFIG_POLICY.minimumWithdrawalAmountMin,
   earningHoldDays: DEFAULT_EARNING_HOLD_DAYS,
   updatedById: null,
 } as const;
@@ -52,12 +78,12 @@ export class UpdatePaymentConfigDto {
   freeCourseLimit!: number | null;
 
   @IsInt()
-  @Min(MINIMUM_WITHDRAWAL_AMOUNT_MIN)
+  @Min(DEVELOPMENT_PAYMENT_CONFIG_POLICY.minimumWithdrawalAmountMin)
   minimumWithdrawalAmount!: number;
 
   @Type(() => Number)
   @IsInt()
-  @Min(EARNING_HOLD_DAYS_MIN)
+  @Min(DEVELOPMENT_PAYMENT_CONFIG_POLICY.earningHoldDaysMin)
   earningHoldDays!: number;
 }
 

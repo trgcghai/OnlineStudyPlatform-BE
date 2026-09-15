@@ -23,7 +23,10 @@ describe('WithdrawService', () => {
   let accountRepo: { findOne: jest.Mock };
   let configService: { getActiveConfig: jest.Mock };
   let dataSource: { transaction: jest.Mock };
-  let instructorBalanceService: { recordWithdrawDebit: jest.Mock };
+  let instructorBalanceService: {
+    getSummary: jest.Mock;
+    recordWithdrawDebit: jest.Mock;
+  };
 
   const instructorId = '44444444-4444-4444-8444-444444444444';
   const otherInstructorId = '55555555-5555-4555-8555-555555555555';
@@ -121,7 +124,18 @@ describe('WithdrawService', () => {
         callback({}),
       ),
     };
-    instructorBalanceService = { recordWithdrawDebit: jest.fn() };
+    instructorBalanceService = {
+      getSummary: jest.fn().mockResolvedValue({
+        totalBalance: 3000000,
+        currentBalance: 3000000,
+        withdrawableBalance: 3000000,
+        nonWithdrawableBalance: 0,
+        totalEarned: 3000000,
+        totalWithdrawn: 0,
+        currency: 'VND',
+      }),
+      recordWithdrawDebit: jest.fn(),
+    };
 
     service = new WithdrawService(
       withdrawRepo as unknown as Repository<never>,
@@ -197,6 +211,31 @@ describe('WithdrawService', () => {
           message: 'Amount is below minimum withdrawal amount',
           details: ['minimumWithdrawalAmount=1000000', 'currency=VND'],
         }),
+      );
+      expect(withdrawRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects amounts above the instructor withdrawable balance', async () => {
+      instructorBalanceService.getSummary.mockResolvedValue({
+        totalBalance: 2000000,
+        currentBalance: 2000000,
+        withdrawableBalance: 1200000,
+        nonWithdrawableBalance: 800000,
+        totalEarned: 2000000,
+        totalWithdrawn: 0,
+        currency: 'VND',
+      });
+
+      await expect(
+        service.create(makeUser(), { amount: 1500000 }),
+      ).rejects.toEqual(
+        new BadRequestException({
+          message: 'Amount exceeds withdrawable balance',
+          details: ['withdrawableBalance=1200000', 'currency=VND'],
+        }),
+      );
+      expect(instructorBalanceService.getSummary).toHaveBeenCalledWith(
+        makeUser(),
       );
       expect(withdrawRepo.save).not.toHaveBeenCalled();
     });

@@ -65,6 +65,18 @@ export class WithdrawService {
       });
     }
 
+    const balance = await this.instructorBalanceService.getSummary(currentUser);
+
+    if (dto.amount > balance.withdrawableBalance) {
+      throw new BadRequestException({
+        message: 'Amount exceeds withdrawable balance',
+        details: [
+          `withdrawableBalance=${balance.withdrawableBalance}`,
+          `currency=${balance.currency}`,
+        ],
+      });
+    }
+
     const withdraw = this.withdrawRepository.create({
       instructorId: currentUser.id,
       amount: dto.amount,

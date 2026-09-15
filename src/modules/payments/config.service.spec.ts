@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { ConfigService as NestConfigService } from '@nestjs/config';
 import { getModelToken } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
 import { ConfigService } from './config.service';
@@ -45,6 +46,7 @@ function createConfig(overrides: Partial<PaymentConfig> = {}) {
 
 describe('ConfigService', () => {
   let service: ConfigService;
+  let nestConfigService: { getOrThrow: jest.Mock };
   let configModel: {
     findOne: jest.Mock;
     create: jest.Mock;
@@ -65,6 +67,7 @@ describe('ConfigService', () => {
   };
 
   beforeEach(async () => {
+    nestConfigService = { getOrThrow: jest.fn().mockReturnValue('production') };
     configModel = {
       findOne: jest.fn(),
       create: jest.fn(),
@@ -78,6 +81,7 @@ describe('ConfigService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         ConfigService,
+        { provide: NestConfigService, useValue: nestConfigService },
         { provide: getModelToken(PaymentConfig.name), useValue: configModel },
         {
           provide: getModelToken(PaymentConfigAudit.name),
@@ -103,6 +107,24 @@ describe('ConfigService', () => {
       allowedPrices: [...DEFAULT_PAYMENT_CONFIG.allowedPrices],
       singletonKey: 'active',
     });
+  });
+
+  it('creates development default config with lower withdrawal minimum', async () => {
+    nestConfigService.getOrThrow.mockReturnValue('development');
+    configModel.findOne.mockReturnValue(mockQuery(null));
+    configModel.create.mockResolvedValue(
+      createConfig({ minimumWithdrawalAmount: 1000, earningHoldDays: 7 }),
+    );
+
+    await service.onModuleInit();
+
+    expect(configModel.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        minimumWithdrawalAmount: 1000,
+        earningHoldDays: 7,
+        singletonKey: 'active',
+      }),
+    );
   });
 
   it('does not create default config when config already exists', async () => {
@@ -199,7 +221,8 @@ describe('ConfigService', () => {
     expect(result.earningHoldDays).toBe(14);
   });
 
-  it('allows earning hold days to be zero while keeping the default at seven days', async () => {
+  it('allows earning hold days to be zero in development while keeping the default at seven days', async () => {
+    nestConfigService.getOrThrow.mockReturnValue('development');
     const current = createConfig();
     const saved = createConfig({
       earningHoldDays: 0,
@@ -219,6 +242,51 @@ describe('ConfigService', () => {
     expect(DEFAULT_PAYMENT_CONFIG.earningHoldDays).toBe(7);
     expect(current.earningHoldDays).toBe(0);
     expect(result.earningHoldDays).toBe(0);
+  });
+
+  it('allows the development withdrawal minimum and step', async () => {
+    nestConfigService.getOrThrow.mockReturnValue('development');
+    const current = createConfig();
+    const saved = createConfig({
+      minimumWithdrawalAmount: 1000,
+      updatedById: ACTOR_ID,
+    });
+    current.save = jest.fn().mockResolvedValue(saved);
+    configModel.findOne.mockReturnValue(mockQuery(current));
+    auditModel.create.mockResolvedValue({
+      _id: { toString: () => 'audit-id' },
+    });
+
+    const result = await service.updateConfig(ACTOR_ID, ACTOR_EMAIL, {
+      ...updateDto,
+      minimumWithdrawalAmount: 1000,
+    });
+
+    expect(current.minimumWithdrawalAmount).toBe(1000);
+    expect(result.minimumWithdrawalAmount).toBe(1000);
+  });
+
+  it('rejects development withdrawal amount when it does not follow the development step', async () => {
+    nestConfigService.getOrThrow.mockReturnValue('development');
+    configModel.findOne.mockReturnValue(mockQuery(createConfig()));
+
+    await expect(
+      service.updateConfig(ACTOR_ID, ACTOR_EMAIL, {
+        ...updateDto,
+        minimumWithdrawalAmount: 1500,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects production earning hold days below seven days', async () => {
+    configModel.findOne.mockReturnValue(mockQuery(createConfig()));
+
+    await expect(
+      service.updateConfig(ACTOR_ID, ACTOR_EMAIL, {
+        ...updateDto,
+        earningHoldDays: 0,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('returns current config without audit for no-op update', async () => {
