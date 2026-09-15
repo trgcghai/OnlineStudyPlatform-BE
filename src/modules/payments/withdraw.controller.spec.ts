@@ -68,6 +68,8 @@ describe('WithdrawController', () => {
       listAdmin: jest.fn(),
       cancel: jest.fn(),
       reject: jest.fn(),
+      process: jest.fn(),
+      markProcessed: jest.fn(),
     } as unknown as jest.Mocked<WithdrawService>;
 
     const moduleRef = await Test.createTestingModule({
@@ -114,6 +116,14 @@ describe('WithdrawController', () => {
     expect(getMethodPath('reject')).toBe(':id/reject');
     expect(getMethodVerb('reject')).toBe(RequestMethod.POST);
     expect(getMethodRoles('reject')).toEqual([UserRole.ADMIN]);
+
+    expect(getMethodPath('process')).toBe(':id/process');
+    expect(getMethodVerb('process')).toBe(RequestMethod.POST);
+    expect(getMethodRoles('process')).toEqual([UserRole.ADMIN]);
+
+    expect(getMethodPath('markProcessed')).toBe(':id/mark-processed');
+    expect(getMethodVerb('markProcessed')).toBe(RequestMethod.POST);
+    expect(getMethodRoles('markProcessed')).toEqual([UserRole.ADMIN]);
   });
 
   it('delegates create to the withdraw service with current user and dto', async () => {
@@ -127,6 +137,14 @@ describe('WithdrawController', () => {
       status: WithdrawRequestStatus.PENDING,
       requestedAt: new Date('2026-09-13T09:00:00.000Z'),
       note: dto.note,
+      cancelReason: null,
+      cancelledAt: null,
+      rejectReason: null,
+      rejectedAt: null,
+      processingAt: null,
+      processedAt: null,
+      payoutReference: null,
+      payoutDescription: null,
       createdAt: new Date('2026-09-13T09:00:00.000Z'),
       updatedAt: new Date('2026-09-13T09:00:00.000Z'),
     };
@@ -181,6 +199,10 @@ describe('WithdrawController', () => {
       cancelledAt: new Date('2026-09-13T10:00:00.000Z'),
       rejectReason: null,
       rejectedAt: null,
+      processingAt: null,
+      processedAt: null,
+      payoutReference: null,
+      payoutDescription: null,
       createdAt: new Date('2026-09-13T09:00:00.000Z'),
       updatedAt: new Date('2026-09-13T10:00:00.000Z'),
     };
@@ -211,6 +233,10 @@ describe('WithdrawController', () => {
       cancelledAt: null,
       rejectReason: dto.reason,
       rejectedAt: new Date('2026-09-13T10:00:00.000Z'),
+      processingAt: null,
+      processedAt: null,
+      payoutReference: null,
+      payoutDescription: null,
       createdAt: new Date('2026-09-13T09:00:00.000Z'),
       updatedAt: new Date('2026-09-13T10:00:00.000Z'),
       instructor: {
@@ -223,5 +249,77 @@ describe('WithdrawController', () => {
     await expect(controller.reject(requestId, dto)).resolves.toBe(response);
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(withdrawService.reject).toHaveBeenCalledWith(requestId, dto);
+  });
+
+  it('delegates process to the withdraw service with id', async () => {
+    const requestId = '66666666-6666-4666-8666-666666666666';
+    const response = {
+      id: requestId,
+      amount: 1500000,
+      currency: 'VND',
+      status: WithdrawRequestStatus.PROCESSING,
+      requestedAt: new Date('2026-09-13T09:00:00.000Z'),
+      note: null,
+      cancelReason: null,
+      cancelledAt: null,
+      rejectReason: null,
+      rejectedAt: null,
+      processingAt: new Date('2026-09-13T10:00:00.000Z'),
+      processedAt: null,
+      payoutReference: null,
+      payoutDescription: 'PAYOUT-WD-66666666',
+      createdAt: new Date('2026-09-13T09:00:00.000Z'),
+      updatedAt: new Date('2026-09-13T10:00:00.000Z'),
+      instructor: {
+        name: 'Nguyen Van A',
+        email: 'instructor@example.com',
+      },
+      qrImageUrl: 'https://vietqr.app/img?acc=123456789',
+      payoutAccount: {
+        bankName: 'VCB',
+        bankCode: 'VCB',
+        bankAccountNumber: '123456789',
+        accountHolderName: 'NGUYEN VAN A',
+      },
+    };
+    withdrawService.process.mockResolvedValue(response);
+
+    await expect(controller.process(requestId)).resolves.toBe(response);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(withdrawService.process).toHaveBeenCalledWith(requestId);
+  });
+
+  it('delegates markProcessed to the withdraw service with id and dto', async () => {
+    const requestId = '66666666-6666-4666-8666-666666666666';
+    const dto = { payoutReference: 'FT123456' };
+    const response = {
+      id: requestId,
+      amount: 1500000,
+      currency: 'VND',
+      status: WithdrawRequestStatus.PROCESSED,
+      requestedAt: new Date('2026-09-13T09:00:00.000Z'),
+      note: null,
+      cancelReason: null,
+      cancelledAt: null,
+      rejectReason: null,
+      rejectedAt: null,
+      processingAt: new Date('2026-09-13T10:00:00.000Z'),
+      processedAt: new Date('2026-09-13T11:00:00.000Z'),
+      payoutReference: 'FT123456',
+      payoutDescription: 'PAYOUT-WD-66666666',
+      createdAt: new Date('2026-09-13T09:00:00.000Z'),
+      updatedAt: new Date('2026-09-13T11:00:00.000Z'),
+      instructor: {
+        name: 'Nguyen Van A',
+        email: 'instructor@example.com',
+      },
+    };
+    withdrawService.markProcessed.mockResolvedValue(response);
+
+    await expect(controller.markProcessed(requestId, dto)).resolves.toBe(
+      response,
+    );
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(withdrawService.markProcessed).toHaveBeenCalledWith(requestId, dto);
   });
 });

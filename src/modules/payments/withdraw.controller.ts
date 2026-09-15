@@ -18,6 +18,7 @@ import {
   CreateWithdrawRequestDto,
   ListAdminWithdrawRequestsQueryDto,
   ListMyWithdrawRequestsQueryDto,
+  MarkWithdrawProcessedDto,
   RejectWithdrawRequestDto,
 } from './dto/withdraw.dto';
 import { WithdrawService } from './withdraw.service';
@@ -68,5 +69,20 @@ export class WithdrawController {
     @Body() dto: RejectWithdrawRequestDto,
   ) {
     return this.withdrawService.reject(id, dto);
+  }
+
+  @Post(':id/process')
+  @Roles(UserRole.ADMIN)
+  process(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.withdrawService.process(id);
+  }
+
+  @Post(':id/mark-processed')
+  @Roles(UserRole.ADMIN)
+  markProcessed(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: MarkWithdrawProcessedDto,
+  ) {
+    return this.withdrawService.markProcessed(id, dto);
   }
 }

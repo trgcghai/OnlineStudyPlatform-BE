@@ -72,6 +72,14 @@ describe('WithdrawService', () => {
     status: WithdrawRequestStatus.PENDING,
     requestedAt: new Date('2026-09-13T09:00:00.000Z'),
     note: 'Rut tien khoa hoc',
+    cancelReason: null,
+    cancelledAt: null,
+    rejectReason: null,
+    rejectedAt: null,
+    processingAt: null,
+    processedAt: null,
+    payoutReference: null,
+    payoutDescription: null,
     createdAt: new Date('2026-09-13T09:00:00.000Z'),
     updatedAt: new Date('2026-09-13T09:00:00.000Z'),
     ...overrides,
@@ -172,6 +180,10 @@ describe('WithdrawService', () => {
         amount: 1500000,
         currency: 'VND',
         status: WithdrawRequestStatus.PENDING,
+        processingAt: null,
+        processedAt: null,
+        payoutReference: null,
+        payoutDescription: null,
       });
     });
 
@@ -526,6 +538,189 @@ describe('WithdrawService', () => {
         ),
       );
       expect(withdrawRepo.update).toHaveBeenCalled();
+    });
+  });
+
+  describe('process', () => {
+    it('moves a pending request to processing and returns VietQR payout detail', async () => {
+      withdrawRepo.findOne
+        .mockResolvedValueOnce(makeWithdrawRequest())
+        .mockResolvedValueOnce(
+          makeWithdrawRequest({
+            status: WithdrawRequestStatus.PROCESSING,
+            processingAt: new Date('2026-09-13T10:00:00.000Z'),
+            payoutDescription: 'PAYOUT-WD-66666666',
+            instructor: makeUser({
+              name: 'Tran Thi B',
+              email: 'teacher@example.com',
+            }),
+          }),
+        );
+
+      const result = await service.process(requestId);
+
+      expect(accountRepo.findOne).toHaveBeenCalledWith({
+        where: { instructorId },
+      });
+      expect(withdrawRepo.update).toHaveBeenCalledWith(
+        { id: requestId, status: WithdrawRequestStatus.PENDING },
+        {
+          status: WithdrawRequestStatus.PROCESSING,
+          processingAt: expect.any(Date),
+          payoutDescription: 'PAYOUT-WD-66666666',
+        },
+      );
+      expect(result).toMatchObject({
+        id: requestId,
+        status: WithdrawRequestStatus.PROCESSING,
+        payoutDescription: 'PAYOUT-WD-66666666',
+        payoutAccount: {
+          bankName: 'VCB',
+          bankCode: 'VCB',
+          bankAccountNumber: '123456789',
+          accountHolderName: 'NGUYEN VAN A',
+        },
+      });
+      expect(result.qrImageUrl).toContain('https://vietqr.app/img?');
+      expect(result.qrImageUrl).toContain('acc=123456789');
+      expect(result.qrImageUrl).toContain('bank=VCB');
+      expect(result.qrImageUrl).toContain('amount=1500000');
+    });
+
+    it('returns existing payout detail for an already processing request', async () => {
+      withdrawRepo.findOne.mockResolvedValue(
+        makeWithdrawRequest({
+          status: WithdrawRequestStatus.PROCESSING,
+          payoutDescription: 'PAYOUT-WD-66666666',
+          processingAt: new Date('2026-09-13T10:00:00.000Z'),
+        }),
+      );
+
+      const result = await service.process(requestId);
+
+      expect(withdrawRepo.update).not.toHaveBeenCalled();
+      expect(result.status).toBe(WithdrawRequestStatus.PROCESSING);
+      expect(result.payoutDescription).toBe('PAYOUT-WD-66666666');
+    });
+
+    it('rejects processing when instructor payout account is incomplete', async () => {
+      withdrawRepo.findOne.mockResolvedValue(makeWithdrawRequest());
+      accountRepo.findOne.mockResolvedValue(makeAccount({ bankCode: null }));
+
+      await expect(service.process(requestId)).rejects.toEqual(
+        new BadRequestException('Instructor payout account is incomplete'),
+      );
+      expect(withdrawRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects invalid status for processing', async () => {
+      withdrawRepo.findOne.mockResolvedValue(
+        makeWithdrawRequest({ status: WithdrawRequestStatus.REJECTED }),
+      );
+
+      await expect(service.process(requestId)).rejects.toEqual(
+        new BadRequestException(
+          'Only pending withdraw requests can start processing',
+        ),
+      );
+    });
+  });
+
+  describe('markProcessed', () => {
+    it('marks a processing withdrawal as processed and records debit in one transaction', async () => {
+      const processingWithdraw = makeWithdrawRequest({
+        status: WithdrawRequestStatus.PROCESSING,
+        payoutDescription: 'PAYOUT-WD-66666666',
+      });
+      const processedWithdraw = makeWithdrawRequest({
+        status: WithdrawRequestStatus.PROCESSED,
+        payoutReference: 'FT123456',
+        processedAt: new Date('2026-09-13T11:00:00.000Z'),
+        instructor: makeUser({
+          name: 'Tran Thi B',
+          email: 'teacher@example.com',
+        }),
+      });
+      const managerWithdrawRepo = {
+        findOne: jest.fn().mockResolvedValue(processingWithdraw),
+        save: jest.fn().mockResolvedValue(processedWithdraw),
+      };
+      const manager = {
+        getRepository: jest.fn().mockReturnValue(managerWithdrawRepo),
+      };
+      dataSource.transaction.mockImplementation(
+        (callback: (txManager: typeof manager) => Promise<unknown>) =>
+          callback(manager),
+      );
+      withdrawRepo.findOne.mockResolvedValue(processedWithdraw);
+
+      const result = await service.markProcessed(requestId, {
+        payoutReference: ' FT123456 ',
+      });
+
+      expect(managerWithdrawRepo.findOne).toHaveBeenCalledWith({
+        where: { id: requestId },
+      });
+      expect(managerWithdrawRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: WithdrawRequestStatus.PROCESSED,
+          payoutReference: 'FT123456',
+          processedAt: expect.any(Date),
+        }),
+      );
+      expect(instructorBalanceService.recordWithdrawDebit).toHaveBeenCalledWith(
+        manager,
+        expect.objectContaining({ status: WithdrawRequestStatus.PROCESSED }),
+      );
+      expect(result).toMatchObject({
+        status: WithdrawRequestStatus.PROCESSED,
+        payoutReference: 'FT123456',
+      });
+    });
+
+    it('normalizes blank payout reference to null', async () => {
+      const processingWithdraw = makeWithdrawRequest({
+        status: WithdrawRequestStatus.PROCESSING,
+      });
+      const managerWithdrawRepo = {
+        findOne: jest.fn().mockResolvedValue(processingWithdraw),
+        save: jest.fn((input: unknown) => Promise.resolve(input)),
+      };
+      const manager = {
+        getRepository: jest.fn().mockReturnValue(managerWithdrawRepo),
+      };
+      dataSource.transaction.mockImplementation(
+        (callback: (txManager: typeof manager) => Promise<unknown>) =>
+          callback(manager),
+      );
+      withdrawRepo.findOne.mockResolvedValue(
+        makeWithdrawRequest({ status: WithdrawRequestStatus.PROCESSED }),
+      );
+
+      await service.markProcessed(requestId, { payoutReference: '   ' });
+
+      expect(managerWithdrawRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ payoutReference: null }),
+      );
+    });
+
+    it('rejects mark processed for non-processing withdrawals', async () => {
+      const managerWithdrawRepo = {
+        findOne: jest.fn().mockResolvedValue(makeWithdrawRequest()),
+      };
+      const manager = {
+        getRepository: jest.fn().mockReturnValue(managerWithdrawRepo),
+      };
+      dataSource.transaction.mockImplementation(
+        (callback: (txManager: typeof manager) => Promise<unknown>) =>
+          callback(manager),
+      );
+
+      await expect(service.markProcessed(requestId, {})).rejects.toEqual(
+        new BadRequestException(
+          'Only processing withdraw requests can be marked processed',
+        ),
+      );
     });
   });
 

@@ -65,6 +65,16 @@ export class RejectWithdrawRequestDto {
   reason!: string;
 }
 
+export class MarkWithdrawProcessedDto {
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @MaxLength(120)
+  payoutReference?: string;
+}
+
 export class ListAdminWithdrawRequestsQueryDto {
   @IsOptional()
   @Transform(({ value }: { value: unknown }) =>
@@ -115,6 +125,10 @@ export interface WithdrawRequestResponse {
   cancelledAt: Date | null;
   rejectReason: string | null;
   rejectedAt: Date | null;
+  processingAt: Date | null;
+  processedAt: Date | null;
+  payoutReference: string | null;
+  payoutDescription: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -138,6 +152,10 @@ export interface AdminWithdrawRequestItem {
   cancelledAt: Date | null;
   rejectReason: string | null;
   rejectedAt: Date | null;
+  processingAt: Date | null;
+  processedAt: Date | null;
+  payoutReference: string | null;
+  payoutDescription: string | null;
   createdAt: Date;
   updatedAt: Date;
   instructor: {
@@ -152,4 +170,15 @@ export interface AdminWithdrawRequestListResponse {
   page: number;
   limit: number;
   totalPages: number;
+}
+
+export interface AdminWithdrawPayoutResponse extends AdminWithdrawRequestItem {
+  payoutDescription: string;
+  qrImageUrl: string;
+  payoutAccount: {
+    bankName: string;
+    bankCode: string;
+    bankAccountNumber: string;
+    accountHolderName: string;
+  };
 }

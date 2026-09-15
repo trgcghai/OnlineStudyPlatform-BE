@@ -11,6 +11,7 @@ import { User } from '../../users/entities/user.entity';
 
 export enum WithdrawRequestStatus {
   PENDING = 'pending',
+  PROCESSING = 'processing',
   PROCESSED = 'processed',
   CANCELLED = 'cancelled',
   REJECTED = 'rejected',
@@ -58,6 +59,28 @@ export class WithdrawRequest {
 
   @Column({ name: 'rejected_at', type: 'timestamp', nullable: true })
   rejectedAt!: Date | null;
+
+  @Column({ name: 'processing_at', type: 'timestamp', nullable: true })
+  processingAt!: Date | null;
+
+  @Column({ name: 'processed_at', type: 'timestamp', nullable: true })
+  processedAt!: Date | null;
+
+  @Column({
+    name: 'payout_reference',
+    type: 'varchar',
+    length: 120,
+    nullable: true,
+  })
+  payoutReference!: string | null;
+
+  @Column({
+    name: 'payout_description',
+    type: 'varchar',
+    length: 120,
+    nullable: true,
+  })
+  payoutDescription!: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;

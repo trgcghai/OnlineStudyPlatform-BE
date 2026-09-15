@@ -12,10 +12,12 @@ import { ConfigService as PaymentConfigService } from './config.service';
 import {
   AdminWithdrawRequestItem,
   AdminWithdrawRequestListResponse,
+  AdminWithdrawPayoutResponse,
   CancelWithdrawRequestDto,
   CreateWithdrawRequestDto,
   ListAdminWithdrawRequestsQueryDto,
   ListMyWithdrawRequestsQueryDto,
+  MarkWithdrawProcessedDto,
   RejectWithdrawRequestDto,
   WithdrawRequestListResponse,
   WithdrawRequestResponse,
@@ -25,6 +27,9 @@ import {
   WithdrawRequestStatus,
 } from './entities/withdraw-request.entity';
 import { InstructorBalanceService } from './instructor-balance.service';
+
+const VIETQR_IMAGE_URL = 'https://vietqr.app/img';
+const PAYOUT_STORE_NAME = 'KLTN LMS';
 
 @Injectable()
 export class WithdrawService {
@@ -250,6 +255,96 @@ export class WithdrawService {
     return this.toAdminResponse(saved);
   }
 
+  async process(id: string): Promise<AdminWithdrawPayoutResponse> {
+    const withdraw = await this.withdrawRepository.findOne({
+      where: { id },
+      relations: { instructor: true },
+    });
+
+    if (!withdraw) {
+      throw new NotFoundException('Withdraw request not found');
+    }
+
+    if (withdraw.status === WithdrawRequestStatus.PROCESSING) {
+      return this.toPayoutResponse(
+        withdraw,
+        await this.getValidPayoutAccount(withdraw.instructorId),
+      );
+    }
+
+    if (withdraw.status !== WithdrawRequestStatus.PENDING) {
+      throw new BadRequestException(
+        'Only pending withdraw requests can start processing',
+      );
+    }
+
+    const account = await this.getValidPayoutAccount(withdraw.instructorId);
+    const payoutDescription = this.buildPayoutDescription(withdraw.id);
+    const updateResult = await this.withdrawRepository.update(
+      { id, status: WithdrawRequestStatus.PENDING },
+      {
+        status: WithdrawRequestStatus.PROCESSING,
+        processingAt: new Date(),
+        payoutDescription,
+      },
+    );
+
+    if (!updateResult.affected) {
+      throw new BadRequestException(
+        'Only pending withdraw requests can start processing',
+      );
+    }
+
+    const saved = await this.withdrawRepository.findOne({
+      where: { id },
+      relations: { instructor: true },
+    });
+
+    if (!saved) {
+      throw new NotFoundException('Withdraw request not found');
+    }
+
+    return this.toPayoutResponse(saved, account);
+  }
+
+  async markProcessed(
+    id: string,
+    dto: MarkWithdrawProcessedDto,
+  ): Promise<AdminWithdrawRequestItem> {
+    await this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(WithdrawRequest);
+      const withdraw = await repo.findOne({ where: { id } });
+
+      if (!withdraw) {
+        throw new NotFoundException('Withdraw request not found');
+      }
+
+      if (withdraw.status !== WithdrawRequestStatus.PROCESSING) {
+        throw new BadRequestException(
+          'Only processing withdraw requests can be marked processed',
+        );
+      }
+
+      withdraw.status = WithdrawRequestStatus.PROCESSED;
+      withdraw.processedAt = new Date();
+      withdraw.payoutReference = this.normalizeNote(dto.payoutReference);
+
+      const saved = await repo.save(withdraw);
+      await this.instructorBalanceService.recordWithdrawDebit(manager, saved);
+    });
+
+    const saved = await this.withdrawRepository.findOne({
+      where: { id },
+      relations: { instructor: true },
+    });
+
+    if (!saved) {
+      throw new NotFoundException('Withdraw request not found');
+    }
+
+    return this.toAdminResponse(saved);
+  }
+
   async recordProcessedDebit(id: string): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
       const withdraw = await manager.getRepository(WithdrawRequest).findOne({
@@ -285,6 +380,52 @@ export class WithdrawService {
     return normalized ? normalized : null;
   }
 
+  private async getValidPayoutAccount(
+    instructorId: string,
+  ): Promise<InstructorAccount> {
+    const account = await this.accountRepository.findOne({
+      where: { instructorId },
+    });
+
+    if (!account) {
+      throw new BadRequestException('Instructor payout account is required');
+    }
+
+    if (
+      !account.bankCode?.trim() ||
+      !account.bankAccountNumber.trim() ||
+      !account.accountHolderName.trim()
+    ) {
+      throw new BadRequestException('Instructor payout account is incomplete');
+    }
+
+    return account;
+  }
+
+  private buildPayoutDescription(id: string): string {
+    return `PAYOUT-WD-${id.slice(0, 8)}`;
+  }
+
+  private buildVietQrUrl(
+    withdraw: WithdrawRequest,
+    account: InstructorAccount,
+  ): string {
+    const params = new URLSearchParams({
+      acc: account.bankAccountNumber,
+      bank: account.bankCode ?? '',
+      amount: String(withdraw.amount),
+      des:
+        withdraw.payoutDescription ?? this.buildPayoutDescription(withdraw.id),
+      template: 'compact',
+      showinfo: 'true',
+      fullacc: 'true',
+      holder: account.accountHolderName,
+      store: PAYOUT_STORE_NAME,
+    });
+
+    return `${VIETQR_IMAGE_URL}?${params.toString()}`;
+  }
+
   private toResponse(withdraw: WithdrawRequest): WithdrawRequestResponse {
     return {
       id: withdraw.id,
@@ -298,6 +439,10 @@ export class WithdrawService {
       cancelledAt: withdraw.cancelledAt,
       rejectReason: withdraw.rejectReason,
       rejectedAt: withdraw.rejectedAt,
+      processingAt: withdraw.processingAt,
+      processedAt: withdraw.processedAt,
+      payoutReference: withdraw.payoutReference,
+      payoutDescription: withdraw.payoutDescription,
       createdAt: withdraw.createdAt,
       updatedAt: withdraw.updatedAt,
     };
@@ -315,11 +460,33 @@ export class WithdrawService {
       cancelledAt: withdraw.cancelledAt,
       rejectReason: withdraw.rejectReason,
       rejectedAt: withdraw.rejectedAt,
+      processingAt: withdraw.processingAt,
+      processedAt: withdraw.processedAt,
+      payoutReference: withdraw.payoutReference,
+      payoutDescription: withdraw.payoutDescription,
       createdAt: withdraw.createdAt,
       updatedAt: withdraw.updatedAt,
       instructor: {
         name: withdraw.instructor.name,
         email: withdraw.instructor.email,
+      },
+    };
+  }
+
+  private toPayoutResponse(
+    withdraw: WithdrawRequest,
+    account: InstructorAccount,
+  ): AdminWithdrawPayoutResponse {
+    return {
+      ...this.toAdminResponse(withdraw),
+      payoutDescription:
+        withdraw.payoutDescription ?? this.buildPayoutDescription(withdraw.id),
+      qrImageUrl: this.buildVietQrUrl(withdraw, account),
+      payoutAccount: {
+        bankName: account.bankName,
+        bankCode: account.bankCode ?? '',
+        bankAccountNumber: account.bankAccountNumber,
+        accountHolderName: account.accountHolderName,
       },
     };
   }
