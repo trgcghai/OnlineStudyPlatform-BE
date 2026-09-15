@@ -18,6 +18,7 @@ describe('UsersController', () => {
     updateProfile: jest.Mock;
     getMyInstructorAccount: jest.Mock;
     upsertMyInstructorAccount: jest.Mock;
+    listBanks: jest.Mock;
     changePassword: jest.Mock;
     uploadAvatar: jest.Mock;
   };
@@ -29,6 +30,7 @@ describe('UsersController', () => {
       updateProfile: jest.fn(),
       getMyInstructorAccount: jest.fn(),
       upsertMyInstructorAccount: jest.fn(),
+      listBanks: jest.fn(),
       changePassword: jest.fn(),
       uploadAvatar: jest.fn(),
     };
@@ -74,9 +76,9 @@ describe('UsersController', () => {
 
   it('delegates upsertMyInstructorAccount with current instructor id and dto', async () => {
     const dto: UpsertInstructorAccountDto = {
-      bankName: 'VCB',
       bankAccountNumber: '123456789',
       accountHolderName: 'NGUYEN VAN A',
+      bankCode: 'VCB',
     };
 
     await controller.upsertMyInstructorAccount('instructor-id', dto);
@@ -85,6 +87,16 @@ describe('UsersController', () => {
       'instructor-id',
       dto,
     );
+  });
+
+  it('delegates bank list loading to users service', async () => {
+    const banks = [
+      { name: 'Bank', code: 'VCB', bin: '970436', shortName: 'Vietcombank' },
+    ];
+    service.listBanks.mockResolvedValue(banks);
+
+    await expect(controller.listBanks()).resolves.toBe(banks);
+    expect(service.listBanks).toHaveBeenCalledWith();
   });
 
   it('requires Instructor role for instructor account self endpoints', () => {

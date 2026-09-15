@@ -14,11 +14,6 @@ export class UpsertInstructorAccountDto {
   @Transform(trimString)
   @IsString()
   @Length(1, 120)
-  bankName!: string;
-
-  @Transform(trimString)
-  @IsString()
-  @Length(1, 120)
   bankAccountNumber!: string;
 
   @Transform(trimString)
@@ -26,11 +21,10 @@ export class UpsertInstructorAccountDto {
   @Length(1, 120)
   accountHolderName!: string;
 
-  @Transform(optionalTrimmedString)
-  @IsOptional()
+  @Transform(trimString)
   @IsString()
   @Length(1, 120)
-  bankCode?: string | null;
+  bankCode!: string;
 
   @Transform(optionalTrimmedString)
   @IsOptional()
@@ -63,4 +57,11 @@ export interface InstructorAccountResponse {
   note: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface BankOptionResponse {
+  name: string;
+  code: string;
+  bin: string;
+  shortName: string;
 }

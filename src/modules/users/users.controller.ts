@@ -60,6 +60,11 @@ export class UsersController {
     return this.usersService.updateProfile(userId, updateProfileDto);
   }
 
+  @Get('banks')
+  listBanks() {
+    return this.usersService.listBanks();
+  }
+
   @Get('me/instructor-account')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.INSTRUCTOR)
