@@ -21,6 +21,7 @@ import { QuizzesModule } from './modules/quizzes/quizzes.module';
 import { SeedsModule } from './common/seeds/seeds.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PaymentsModule } from './modules/payments/payments.module';
+import { AiChatModule } from './modules/ai-chat/ai-chat.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
     NotificationsModule,
     QuizzesModule,
     PaymentsModule,
+    AiChatModule,
     SeedsModule,
   ],
   controllers: [AppController],
