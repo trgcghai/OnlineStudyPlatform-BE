@@ -6,13 +6,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService as NestConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, DataSource, Repository } from 'typeorm';
 import { FREE_COURSE_PRICE } from '../../common/constants/course.constant';
 import { Course, CourseStatus } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ConfigService as PaymentConfigService } from './config.service';
 import {
   CheckoutResponse,
   LearnerPaymentTransactionItem,
@@ -41,6 +42,7 @@ import {
   PaymentStatus,
   PaymentTransaction,
 } from './entities/payment-transaction.entity';
+import { InstructorBalanceService } from './instructor-balance.service';
 
 const DUPLICATE_ENROLLMENT_ERROR = 'Bạn đã đăng ký khóa học này';
 const COURSE_NOT_FOUND_ERROR = 'Course not found';
@@ -88,8 +90,10 @@ export class PaymentsService {
     @InjectRepository(Enrollment)
     private readonly enrollmentsRepository: Repository<Enrollment>,
     private readonly notificationsService: NotificationsService,
-    private readonly configService: ConfigService,
+    private readonly configService: NestConfigService,
     private readonly dataSource: DataSource,
+    private readonly paymentConfigService: PaymentConfigService,
+    private readonly instructorBalanceService: InstructorBalanceService,
   ) {}
 
   async createCheckout(
@@ -824,6 +828,33 @@ export class PaymentsService {
           reason: 'Payment confirmed by SePay',
         }),
       );
+
+      const course = await manager.getRepository(Course).findOne({
+        where: { id: saved.courseId },
+      });
+
+      if (!course) {
+        throw new NotFoundException('Course not found for paid transaction');
+      }
+
+      const config = await this.paymentConfigService.getActiveConfig();
+      const platformFeeAmount = Math.round(
+        (saved.amount * config.platformFeePercent) / 100,
+      );
+      const netAmount = saved.amount - platformFeeAmount;
+      const paidAt = saved.paidAt ?? new Date();
+      const availableAt = new Date(
+        paidAt.getTime() + config.earningHoldDays * 24 * 60 * 60 * 1000,
+      );
+
+      await this.instructorBalanceService.recordEarningCredit({
+        manager,
+        payment: saved,
+        course,
+        platformFeeAmount,
+        netAmount,
+        availableAt,
+      });
 
       const enrollmentsRepository = manager.getRepository(Enrollment);
       const existing = await enrollmentsRepository.findOne({

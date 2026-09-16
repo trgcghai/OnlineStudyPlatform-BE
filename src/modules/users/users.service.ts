@@ -7,13 +7,16 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectModel } from '@nestjs/mongoose';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
 import type Redis from 'ioredis';
 import type { Client as MinioClient } from 'minio';
+import { Model } from 'mongoose';
 import { Repository } from 'typeorm';
 import { REFRESH_SESSION_KEY_PREFIX } from '../../common/constants/auth.constant';
 import { MINIO_CLIENT } from '../../common/constants/file.constant';
@@ -31,18 +34,40 @@ import {
   UpdateProfileDto,
   UserResponse,
 } from './dto/user.dto';
+import {
+  InstructorAccountResponse,
+  UpsertInstructorAccountDto,
+} from './dto/instructor-account.dto';
+import { InstructorAccount } from './entities/instructor-account.entity';
 import { User, UserRole, UserStatus } from './entities/user.entity';
+import {
+  normalizeVietQrBankResponse,
+  validateBankOptions,
+} from '../../common/utils/bank-catalog.util';
+import {
+  BankCatalog,
+  BankCatalogDocument,
+  BankOption,
+} from './schemas/bank-catalog.schema';
 
 const BCRYPT_SALT_ROUNDS = 10;
+const VIETQR_BANKS_URL = 'https://vietqr.app/banks.json';
+const BANK_CATALOG_SOURCE = 'vietqr';
 
 @Injectable()
 export class UsersService {
+  private bankCache: BankOption[] | null = null;
+
   constructor(
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
+    @InjectRepository(InstructorAccount)
+    private readonly instructorAccountsRepository: Repository<InstructorAccount>,
     private readonly configService: ConfigService,
     @Inject(MINIO_CLIENT) private readonly minioClient: MinioClient,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    @InjectModel(BankCatalog.name)
+    private readonly bankCatalogModel: Model<BankCatalogDocument>,
   ) {}
 
   async findByEmail(email: string): Promise<User | null> {
@@ -53,6 +78,23 @@ export class UsersService {
 
   async findById(id: string): Promise<User | null> {
     return this.usersRepository.findOneBy({ id });
+  }
+
+  async listBanks(): Promise<BankOption[]> {
+    if (this.bankCache) return [...this.bankCache];
+
+    try {
+      const banks = await this.fetchVietQrBanks();
+      this.bankCache = banks;
+      await this.upsertBankCatalog(banks);
+
+      return [...banks];
+    } catch {
+      const banks = await this.loadBankCatalogFallback();
+      this.bankCache = banks;
+
+      return [...banks];
+    }
   }
 
   async create(
@@ -265,6 +307,47 @@ export class UsersService {
     return this.toUserResponse(savedUser);
   }
 
+  async getMyInstructorAccount(
+    instructorId: string,
+  ): Promise<InstructorAccountResponse | null> {
+    const account = await this.instructorAccountsRepository.findOne({
+      where: { instructorId },
+    });
+
+    return account ? this.toInstructorAccountResponse(account) : null;
+  }
+
+  async upsertMyInstructorAccount(
+    instructorId: string,
+    dto: UpsertInstructorAccountDto,
+  ): Promise<InstructorAccountResponse> {
+    const existing = await this.instructorAccountsRepository.findOne({
+      where: { instructorId },
+    });
+    const normalized = await this.normalizeInstructorAccountDto(dto);
+    const account =
+      existing ?? this.instructorAccountsRepository.create({ instructorId });
+
+    Object.assign(account, normalized);
+
+    const saved = await this.instructorAccountsRepository.save(account);
+    return this.toInstructorAccountResponse(saved);
+  }
+
+  async getInstructorAccountForAdmin(
+    instructorId: string,
+  ): Promise<InstructorAccountResponse | null> {
+    const instructor = await this.usersRepository.findOneBy({
+      id: instructorId,
+    });
+
+    if (!instructor || instructor.role !== UserRole.INSTRUCTOR) {
+      throw new NotFoundException('Instructor not found');
+    }
+
+    return this.getMyInstructorAccount(instructorId);
+  }
+
   async changePassword(
     userId: string,
     changePasswordDto: ChangePasswordDto,
@@ -416,6 +499,85 @@ export class UsersService {
     } catch {
       // Best-effort cleanup; login/refresh are already blocked by user status.
     }
+  }
+
+  private async normalizeInstructorAccountDto(dto: UpsertInstructorAccountDto) {
+    const bankCode = dto.bankCode.trim();
+    const bank = (await this.listBanks()).find(
+      (item) => item.code === bankCode,
+    );
+
+    if (!bank) {
+      throw new BadRequestException('Bank code is not supported');
+    }
+
+    return {
+      bankName: bank.name,
+      bankAccountNumber: dto.bankAccountNumber.trim(),
+      accountHolderName: dto.accountHolderName.trim(),
+      bankCode,
+      branchName: this.optionalAccountField(dto.branchName),
+      phoneNumber: this.optionalAccountField(dto.phoneNumber),
+      note: this.optionalAccountField(dto.note),
+    };
+  }
+
+  private async fetchVietQrBanks(): Promise<BankOption[]> {
+    const response = await fetch(VIETQR_BANKS_URL);
+    if (!response.ok) {
+      throw new Error(`VietQR bank fetch failed: ${response.status}`);
+    }
+
+    return normalizeVietQrBankResponse(await response.json());
+  }
+
+  private async upsertBankCatalog(banks: BankOption[]): Promise<void> {
+    await this.bankCatalogModel
+      .findOneAndUpdate(
+        { source: BANK_CATALOG_SOURCE },
+        { source: BANK_CATALOG_SOURCE, banks, fetchedAt: new Date() },
+        { upsert: true, new: true },
+      )
+      .exec();
+  }
+
+  private async loadBankCatalogFallback(): Promise<BankOption[]> {
+    const fallback = await this.bankCatalogModel
+      .findOne({ source: BANK_CATALOG_SOURCE })
+      .exec();
+
+    if (!fallback) {
+      throw new ServiceUnavailableException('Bank list is not available');
+    }
+
+    return validateBankOptions(fallback.banks);
+  }
+
+  private optionalAccountField(
+    value: string | null | undefined,
+  ): string | null {
+    if (value === null || value === undefined) return null;
+
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private toInstructorAccountResponse(
+    account: InstructorAccount,
+  ): InstructorAccountResponse {
+    return {
+      id: account.id,
+      instructorId: account.instructorId,
+      bankName: account.bankName,
+      bankAccountNumber: account.bankAccountNumber,
+      accountHolderName: account.accountHolderName,
+      bankCode: account.bankCode,
+      branchName: account.branchName,
+      phoneNumber: account.phoneNumber,
+      note: account.note,
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    };
   }
 
   private toUserResponse(user: User): UserResponse {

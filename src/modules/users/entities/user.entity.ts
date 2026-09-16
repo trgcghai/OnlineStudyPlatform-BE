@@ -3,9 +3,11 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  OneToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { InstructorAccount } from './instructor-account.entity';
 
 export enum UserRole {
   ADMIN = 'Admin',
@@ -41,6 +43,9 @@ export class User {
 
   @Column({ type: 'enum', enum: UserStatus, default: UserStatus.ACTIVE })
   status!: UserStatus;
+
+  @OneToOne(() => InstructorAccount, (account) => account.instructor)
+  instructorAccount?: InstructorAccount;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
