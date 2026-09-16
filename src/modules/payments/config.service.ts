@@ -1,16 +1,18 @@
 import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
+import { ConfigService as NestConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import {
   DEFAULT_PAYMENT_CONFIG,
+  DEVELOPMENT_PAYMENT_CONFIG_POLICY,
   ListPaymentConfigAuditsQueryDto,
-  MINIMUM_WITHDRAWAL_AMOUNT_MIN,
-  MINIMUM_WITHDRAWAL_AMOUNT_STEP,
   PaymentConfigAuditListResult,
+  PaymentConfigPolicy,
   PaymentConfigAuditResponse,
   PaymentConfigCurrency,
   PaymentConfigResponse,
   PaymentConfigSnapshot,
+  PRODUCTION_PAYMENT_CONFIG_POLICY,
   UpdatePaymentConfigDto,
 } from './dto/config.dto';
 import {
@@ -30,6 +32,7 @@ export class ConfigService implements OnModuleInit {
     private readonly configModel: Model<PaymentConfigDocument>,
     @InjectModel(PaymentConfigAudit.name)
     private readonly auditModel: Model<PaymentConfigAuditDocument>,
+    private readonly nestConfigService: NestConfigService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -46,9 +49,10 @@ export class ConfigService implements OnModuleInit {
     }
 
     try {
+      const defaultConfig = this.getDefaultPaymentConfig();
       const created = await this.configModel.create({
-        ...DEFAULT_PAYMENT_CONFIG,
-        allowedPrices: [...DEFAULT_PAYMENT_CONFIG.allowedPrices],
+        ...defaultConfig,
+        allowedPrices: [...defaultConfig.allowedPrices],
         singletonKey: PAYMENT_CONFIG_SINGLETON_KEY,
       });
       this.cachedConfig = this.toConfigResponse(created);
@@ -106,6 +110,7 @@ export class ConfigService implements OnModuleInit {
     current.allowedPrices = normalized.allowedPrices;
     current.freeCourseLimit = normalized.freeCourseLimit;
     current.minimumWithdrawalAmount = normalized.minimumWithdrawalAmount;
+    current.earningHoldDays = normalized.earningHoldDays;
     current.updatedById = actorId;
 
     const saved = await current.save();
@@ -226,13 +231,24 @@ export class ConfigService implements OnModuleInit {
       );
     }
 
+    const policy = this.getPaymentConfigPolicy();
+
     if (
       !Number.isInteger(dto.minimumWithdrawalAmount) ||
-      dto.minimumWithdrawalAmount < MINIMUM_WITHDRAWAL_AMOUNT_MIN ||
-      dto.minimumWithdrawalAmount % MINIMUM_WITHDRAWAL_AMOUNT_STEP !== 0
+      dto.minimumWithdrawalAmount < policy.minimumWithdrawalAmountMin ||
+      dto.minimumWithdrawalAmount % policy.minimumWithdrawalAmountStep !== 0
     ) {
       throw new BadRequestException(
-        'Minimum withdrawal amount must be at least 1000000 and use 100000 increments',
+        `Minimum withdrawal amount must be at least ${policy.minimumWithdrawalAmountMin} and use ${policy.minimumWithdrawalAmountStep} increments`,
+      );
+    }
+
+    if (
+      !Number.isInteger(dto.earningHoldDays) ||
+      dto.earningHoldDays < policy.earningHoldDaysMin
+    ) {
+      throw new BadRequestException(
+        `Earning hold days must be an integer greater than or equal to ${policy.earningHoldDaysMin}`,
       );
     }
 
@@ -242,8 +258,28 @@ export class ConfigService implements OnModuleInit {
       allowedPrices: [...dto.allowedPrices].sort((a, b) => a - b),
       freeCourseLimit: dto.freeCourseLimit,
       minimumWithdrawalAmount: dto.minimumWithdrawalAmount,
+      earningHoldDays: dto.earningHoldDays,
       updatedById: null,
     };
+  }
+
+  private getDefaultPaymentConfig(): PaymentConfigSnapshot {
+    return {
+      ...DEFAULT_PAYMENT_CONFIG,
+      allowedPrices: [...DEFAULT_PAYMENT_CONFIG.allowedPrices],
+      minimumWithdrawalAmount:
+        this.getPaymentConfigPolicy().minimumWithdrawalAmountMin,
+    };
+  }
+
+  private getPaymentConfigPolicy(): PaymentConfigPolicy {
+    const env = this.nestConfigService.getOrThrow<string>('NODE_ENV');
+
+    if (env === 'development') {
+      return DEVELOPMENT_PAYMENT_CONFIG_POLICY;
+    }
+
+    return PRODUCTION_PAYMENT_CONFIG_POLICY;
   }
 
   private getChangedFields(
@@ -256,6 +292,7 @@ export class ConfigService implements OnModuleInit {
       'allowedPrices',
       'freeCourseLimit',
       'minimumWithdrawalAmount',
+      'earningHoldDays',
     ];
 
     return fields.filter((field) => {
@@ -277,6 +314,8 @@ export class ConfigService implements OnModuleInit {
       allowedPrices: [...config.allowedPrices],
       freeCourseLimit: config.freeCourseLimit,
       minimumWithdrawalAmount: config.minimumWithdrawalAmount,
+      earningHoldDays:
+        config.earningHoldDays ?? DEFAULT_PAYMENT_CONFIG.earningHoldDays,
       updatedById: config.updatedById,
     };
   }

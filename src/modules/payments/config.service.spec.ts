@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { ConfigService as NestConfigService } from '@nestjs/config';
 import { getModelToken } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
 import { ConfigService } from './config.service';
@@ -45,6 +46,7 @@ function createConfig(overrides: Partial<PaymentConfig> = {}) {
 
 describe('ConfigService', () => {
   let service: ConfigService;
+  let nestConfigService: { getOrThrow: jest.Mock };
   let configModel: {
     findOne: jest.Mock;
     create: jest.Mock;
@@ -61,9 +63,11 @@ describe('ConfigService', () => {
     allowedPrices: [199000, 0, 99000],
     freeCourseLimit: 5,
     minimumWithdrawalAmount: 2000000,
+    earningHoldDays: 14,
   };
 
   beforeEach(async () => {
+    nestConfigService = { getOrThrow: jest.fn().mockReturnValue('production') };
     configModel = {
       findOne: jest.fn(),
       create: jest.fn(),
@@ -77,6 +81,7 @@ describe('ConfigService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         ConfigService,
+        { provide: NestConfigService, useValue: nestConfigService },
         { provide: getModelToken(PaymentConfig.name), useValue: configModel },
         {
           provide: getModelToken(PaymentConfigAudit.name),
@@ -102,6 +107,24 @@ describe('ConfigService', () => {
       allowedPrices: [...DEFAULT_PAYMENT_CONFIG.allowedPrices],
       singletonKey: 'active',
     });
+  });
+
+  it('creates development default config with lower withdrawal minimum', async () => {
+    nestConfigService.getOrThrow.mockReturnValue('development');
+    configModel.findOne.mockReturnValue(mockQuery(null));
+    configModel.create.mockResolvedValue(
+      createConfig({ minimumWithdrawalAmount: 1000, earningHoldDays: 7 }),
+    );
+
+    await service.onModuleInit();
+
+    expect(configModel.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        minimumWithdrawalAmount: 1000,
+        earningHoldDays: 7,
+        singletonKey: 'active',
+      }),
+    );
   });
 
   it('does not create default config when config already exists', async () => {
@@ -139,6 +162,7 @@ describe('ConfigService', () => {
       allowedPrices: DEFAULT_PAYMENT_CONFIG.allowedPrices,
       freeCourseLimit: DEFAULT_PAYMENT_CONFIG.freeCourseLimit,
       minimumWithdrawalAmount: DEFAULT_PAYMENT_CONFIG.minimumWithdrawalAmount,
+      earningHoldDays: DEFAULT_PAYMENT_CONFIG.earningHoldDays,
       updatedById: null,
     });
     expect(configModel.findOne).toHaveBeenCalledTimes(1);
@@ -164,6 +188,7 @@ describe('ConfigService', () => {
       allowedPrices: [0, 99000, 199000],
       freeCourseLimit: 5,
       minimumWithdrawalAmount: 2000000,
+      earningHoldDays: 14,
       updatedById: ACTOR_ID,
     });
     current.save = jest.fn().mockResolvedValue(saved);
@@ -176,6 +201,7 @@ describe('ConfigService', () => {
 
     expect(current.platformFeePercent).toBe(15);
     expect(current.allowedPrices).toEqual([0, 99000, 199000]);
+    expect(current.earningHoldDays).toBe(14);
     expect(current.updatedById).toBe(ACTOR_ID);
     expect(auditModel.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -187,10 +213,80 @@ describe('ConfigService', () => {
           'allowedPrices',
           'freeCourseLimit',
           'minimumWithdrawalAmount',
+          'earningHoldDays',
         ]),
       }),
     );
     expect(result.platformFeePercent).toBe(15);
+    expect(result.earningHoldDays).toBe(14);
+  });
+
+  it('allows earning hold days to be zero in development while keeping the default at seven days', async () => {
+    nestConfigService.getOrThrow.mockReturnValue('development');
+    const current = createConfig();
+    const saved = createConfig({
+      earningHoldDays: 0,
+      updatedById: ACTOR_ID,
+    });
+    current.save = jest.fn().mockResolvedValue(saved);
+    configModel.findOne.mockReturnValue(mockQuery(current));
+    auditModel.create.mockResolvedValue({
+      _id: { toString: () => 'audit-id' },
+    });
+
+    const result = await service.updateConfig(ACTOR_ID, ACTOR_EMAIL, {
+      ...updateDto,
+      earningHoldDays: 0,
+    });
+
+    expect(DEFAULT_PAYMENT_CONFIG.earningHoldDays).toBe(7);
+    expect(current.earningHoldDays).toBe(0);
+    expect(result.earningHoldDays).toBe(0);
+  });
+
+  it('allows the development withdrawal minimum and step', async () => {
+    nestConfigService.getOrThrow.mockReturnValue('development');
+    const current = createConfig();
+    const saved = createConfig({
+      minimumWithdrawalAmount: 1000,
+      updatedById: ACTOR_ID,
+    });
+    current.save = jest.fn().mockResolvedValue(saved);
+    configModel.findOne.mockReturnValue(mockQuery(current));
+    auditModel.create.mockResolvedValue({
+      _id: { toString: () => 'audit-id' },
+    });
+
+    const result = await service.updateConfig(ACTOR_ID, ACTOR_EMAIL, {
+      ...updateDto,
+      minimumWithdrawalAmount: 1000,
+    });
+
+    expect(current.minimumWithdrawalAmount).toBe(1000);
+    expect(result.minimumWithdrawalAmount).toBe(1000);
+  });
+
+  it('rejects development withdrawal amount when it does not follow the development step', async () => {
+    nestConfigService.getOrThrow.mockReturnValue('development');
+    configModel.findOne.mockReturnValue(mockQuery(createConfig()));
+
+    await expect(
+      service.updateConfig(ACTOR_ID, ACTOR_EMAIL, {
+        ...updateDto,
+        minimumWithdrawalAmount: 1500,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects production earning hold days below seven days', async () => {
+    configModel.findOne.mockReturnValue(mockQuery(createConfig()));
+
+    await expect(
+      service.updateConfig(ACTOR_ID, ACTOR_EMAIL, {
+        ...updateDto,
+        earningHoldDays: 0,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('returns current config without audit for no-op update', async () => {
@@ -203,6 +299,7 @@ describe('ConfigService', () => {
       allowedPrices: [...DEFAULT_PAYMENT_CONFIG.allowedPrices],
       freeCourseLimit: DEFAULT_PAYMENT_CONFIG.freeCourseLimit,
       minimumWithdrawalAmount: DEFAULT_PAYMENT_CONFIG.minimumWithdrawalAmount,
+      earningHoldDays: DEFAULT_PAYMENT_CONFIG.earningHoldDays,
     });
 
     expect(current.save).not.toHaveBeenCalled();
@@ -220,6 +317,7 @@ describe('ConfigService', () => {
       allowedPrices: [...DEFAULT_PAYMENT_CONFIG.allowedPrices],
       freeCourseLimit: DEFAULT_PAYMENT_CONFIG.freeCourseLimit,
       minimumWithdrawalAmount: DEFAULT_PAYMENT_CONFIG.minimumWithdrawalAmount,
+      earningHoldDays: DEFAULT_PAYMENT_CONFIG.earningHoldDays,
     });
 
     expect(current.updatedById).toBeNull();
@@ -272,6 +370,8 @@ describe('ConfigService', () => {
     ['negative free course limit', { freeCourseLimit: -1 }],
     ['minimum withdrawal below policy', { minimumWithdrawalAmount: 999999 }],
     ['minimum withdrawal off step', { minimumWithdrawalAmount: 1050000 }],
+    ['negative earning hold days', { earningHoldDays: -1 }],
+    ['non-integer earning hold days', { earningHoldDays: 1.5 }],
   ])('rejects %s', async (_name, patch) => {
     configModel.findOne.mockReturnValue(mockQuery(createConfig()));
     const validDto: UpdatePaymentConfigDto = {
@@ -280,6 +380,7 @@ describe('ConfigService', () => {
       allowedPrices: [0, 99000],
       freeCourseLimit: 3,
       minimumWithdrawalAmount: 1000000,
+      earningHoldDays: 7,
     };
 
     await expect(

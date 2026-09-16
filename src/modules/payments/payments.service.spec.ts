@@ -57,6 +57,8 @@ describe('PaymentsService', () => {
     get: jest.Mock;
     getOrThrow: jest.Mock;
   };
+  let paymentConfigService: { getActiveConfig: jest.Mock };
+  let instructorBalanceService: { recordEarningCredit: jest.Mock };
   let dataSource: { transaction: jest.Mock };
 
   const learnerId = '11111111-1111-4111-8111-111111111111';
@@ -187,6 +189,15 @@ describe('PaymentsService', () => {
         return values[key];
       }),
     };
+    paymentConfigService = {
+      getActiveConfig: jest.fn().mockResolvedValue({
+        platformFeePercent: 20,
+        currency: 'VND',
+        minimumWithdrawalAmount: 1000000,
+        earningHoldDays: 7,
+      }),
+    };
+    instructorBalanceService = { recordEarningCredit: jest.fn() };
     dataSource = {
       transaction: jest.fn(),
     };
@@ -200,6 +211,8 @@ describe('PaymentsService', () => {
       notificationsService as unknown as NotificationsService,
       configService as unknown as ConfigService,
       dataSource as unknown as DataSource,
+      paymentConfigService as never,
+      instructorBalanceService as never,
     );
   });
 
@@ -990,6 +1003,9 @@ describe('PaymentsService', () => {
           Promise.resolve({ ...input, id: 'e1' }),
         ),
       };
+      const courseRepo = {
+        findOne: jest.fn().mockResolvedValue(makeCourse()),
+      };
       const txFindOne = jest
         .fn()
         .mockResolvedValueOnce(makeTransaction())
@@ -1005,6 +1021,7 @@ describe('PaymentsService', () => {
           }
           if (repo === PaymentAuditLog) return auditRepo;
           if (repo === Enrollment) return enrollmentRepo;
+          if (repo === Course) return courseRepo;
           return null;
         }),
       };
@@ -1013,7 +1030,7 @@ describe('PaymentsService', () => {
           callback(manager),
       );
 
-      return { txSave, enrollmentRepo, txFindOne };
+      return { txSave, enrollmentRepo, txFindOne, courseRepo, manager };
     };
 
     it('confirms a pending transaction and creates the enrollment', async () => {
@@ -1062,6 +1079,35 @@ describe('PaymentsService', () => {
           title: 'Thanh toán thành công',
           actionUrl: `/learner/courses/${courseId}/learn`,
         }),
+      );
+    });
+
+    it('records instructor earning credit when payment is confirmed as paid', async () => {
+      const { courseRepo, manager } = configureHappyPath();
+
+      await paymentsService.processSePayWebhook(makeSePayPayload());
+
+      expect(courseRepo.findOne).toHaveBeenCalledWith({
+        where: { id: courseId },
+      });
+      expect(instructorBalanceService.recordEarningCredit).toHaveBeenCalledWith(
+        {
+          manager,
+          payment: expect.objectContaining({
+            id: transactionId,
+            amount: 99000,
+            status: PaymentStatus.PAID,
+          }),
+          course: expect.objectContaining({ id: courseId, instructorId }),
+          platformFeeAmount: 19800,
+          netAmount: 79200,
+          availableAt: expect.any(Date),
+        },
+      );
+      const earningInput = instructorBalanceService.recordEarningCredit.mock
+        .calls[0][0] as { payment: PaymentTransaction; availableAt: Date };
+      expect(earningInput.availableAt.getTime()).toBe(
+        earningInput.payment.paidAt!.getTime() + 7 * 24 * 60 * 60 * 1000,
       );
     });
 

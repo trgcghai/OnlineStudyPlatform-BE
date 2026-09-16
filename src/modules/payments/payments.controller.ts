@@ -17,6 +17,7 @@ import {
   ListPaymentConfigAuditsQueryDto,
   UpdatePaymentConfigDto,
 } from './dto/config.dto';
+import { ListInstructorBalanceHistoryQueryDto } from './dto/instructor-balance.dto';
 import {
   ListAdminPaymentProviderEventsQueryDto,
   ListAdminPaymentTransactionsQueryDto,
@@ -26,6 +27,7 @@ import {
   ListLearnerPaymentTransactionsQueryDto,
 } from './dto/payment.dto';
 import { ConfigService } from './config.service';
+import { InstructorBalanceService } from './instructor-balance.service';
 import { PaymentsService } from './payments.service';
 
 @Controller('payments')
@@ -34,6 +36,7 @@ export class PaymentsController {
   constructor(
     private readonly paymentsService: PaymentsService,
     private readonly configService: ConfigService,
+    private readonly instructorBalanceService: InstructorBalanceService,
   ) {}
 
   @Post('checkout')
@@ -79,6 +82,23 @@ export class PaymentsController {
   @Roles(UserRole.INSTRUCTOR)
   getCoursePricing() {
     return this.configService.getCoursePricingReference();
+  }
+
+  @Get('instructor/balance/summary')
+  @Roles(UserRole.INSTRUCTOR)
+  getInstructorBalanceSummary(
+    @CurrentUser() currentUser: { id: string; role: UserRole },
+  ) {
+    return this.instructorBalanceService.getSummary(currentUser);
+  }
+
+  @Get('instructor/balance/history')
+  @Roles(UserRole.INSTRUCTOR)
+  listInstructorBalanceHistory(
+    @CurrentUser() currentUser: { id: string; role: UserRole },
+    @Query() query: ListInstructorBalanceHistoryQueryDto,
+  ) {
+    return this.instructorBalanceService.listHistory(currentUser, query);
   }
 
   @Get('config')
