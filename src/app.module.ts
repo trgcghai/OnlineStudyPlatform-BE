@@ -12,6 +12,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { CoursesModule } from './modules/courses/courses.module';
 import { LessonsModule } from './modules/lessons/lessons.module';
 import { EnrollmentsModule } from './modules/enrollments/enrollments.module';
+import { CartModule } from './modules/cart/cart.module';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -54,6 +55,7 @@ import { AiChatModule } from './modules/ai-chat/ai-chat.module';
     CoursesModule,
     LessonsModule,
     EnrollmentsModule,
+    CartModule,
     LearningModule,
     DashboardModule,
     NotificationsModule,
