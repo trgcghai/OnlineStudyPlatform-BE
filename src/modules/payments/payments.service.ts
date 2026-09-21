@@ -10,7 +10,7 @@ import { ConfigService as NestConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, DataSource, Repository } from 'typeorm';
 import { FREE_COURSE_PRICE } from '../../common/constants/course.constant';
-import { Course, CourseStatus } from '../courses/entities/course.entity';
+import { CourseStatus } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { CartItem } from '../cart/entities/cart-item.entity';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -49,11 +49,7 @@ import {
 } from './entities/payment-transaction.entity';
 import { InstructorBalanceService } from './instructor-balance.service';
 
-const DUPLICATE_ENROLLMENT_ERROR = 'Bạn đã đăng ký khóa học này';
-const COURSE_NOT_FOUND_ERROR = 'Course not found';
 const TRANSACTION_NOT_FOUND_ERROR = 'Payment transaction not found';
-const PUBLISHED_ONLY_ERROR = 'Chỉ có thể thanh toán cho khóa học đã xuất bản';
-const FREE_COURSE_ERROR = 'Khóa học miễn phí không cần thanh toán';
 const PAYMENT_CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const VIET_QR_URL = 'https://vietqr.app/img';
 const SE_PAY_MEMO_PREFIX = 'SEVQR';
@@ -90,8 +86,6 @@ export class PaymentsService {
     private readonly auditsRepository: Repository<PaymentAuditLog>,
     @InjectRepository(PaymentProviderEvent)
     private readonly providerEventsRepository: Repository<PaymentProviderEvent>,
-    @InjectRepository(Course)
-    private readonly coursesRepository: Repository<Course>,
     @InjectRepository(Enrollment)
     private readonly enrollmentsRepository: Repository<Enrollment>,
     private readonly notificationsService: NotificationsService,
@@ -166,7 +160,6 @@ export class PaymentsService {
       const paymentCode = await this.generateUniquePaymentCode();
       const transaction = manager.getRepository(PaymentTransaction).create({
         learnerId,
-        courseId: orderItems[0].courseId,
         orderId: savedOrder.id,
         amount: totalAmount,
         currency: 'VND',
@@ -203,76 +196,6 @@ export class PaymentsService {
       savedTransaction.order = { ...savedOrder, items: orderItems };
       return this.toCheckoutResponse(savedTransaction);
     });
-  }
-
-  async createCheckout(
-    learnerId: string,
-    courseId: string,
-  ): Promise<CheckoutResponse> {
-    const course = await this.coursesRepository.findOne({
-      where: { id: courseId },
-    });
-
-    if (!course) {
-      throw new NotFoundException(COURSE_NOT_FOUND_ERROR);
-    }
-
-    if (course.status !== CourseStatus.PUBLISHED) {
-      throw new BadRequestException(PUBLISHED_ONLY_ERROR);
-    }
-
-    if (course.price <= FREE_COURSE_PRICE) {
-      throw new BadRequestException(FREE_COURSE_ERROR);
-    }
-
-    const existingEnrollment = await this.enrollmentsRepository.findOne({
-      where: { learnerId, courseId },
-    });
-
-    if (existingEnrollment) {
-      throw new ConflictException(DUPLICATE_ENROLLMENT_ERROR);
-    }
-
-    const existingPending = await this.transactionsRepository.findOne({
-      where: { learnerId, courseId, status: PaymentStatus.PENDING },
-      order: { createdAt: 'DESC' },
-    });
-
-    if (existingPending) {
-      const refreshed = await this.expireIfNeeded(existingPending);
-      if (refreshed.status === PaymentStatus.PENDING) {
-        return this.toCheckoutResponse(refreshed);
-      }
-    }
-
-    const paymentCode = await this.generateUniquePaymentCode();
-    const transaction = this.transactionsRepository.create({
-      learnerId,
-      courseId,
-      orderId: null,
-      amount: course.price,
-      currency: 'VND',
-      status: PaymentStatus.PENDING,
-      paymentCode,
-      provider: 'sepay',
-      providerTransactionId: null,
-      providerGateway: null,
-      providerReferenceCode: null,
-      expiresAt: this.computeExpiresAt(),
-      paidAt: null,
-    });
-
-    const saved = await this.transactionsRepository.save(transaction);
-    await this.writeAudit(
-      saved,
-      PaymentAuditActorType.SYSTEM,
-      null,
-      null,
-      PaymentStatus.PENDING,
-      'Checkout created',
-    );
-
-    return this.toCheckoutResponse(saved);
   }
 
   async getOwnedTransaction(
@@ -336,7 +259,9 @@ export class PaymentsService {
     );
     const qb = this.transactionsRepository
       .createQueryBuilder('transaction')
-      .leftJoinAndSelect('transaction.course', 'course')
+      .leftJoinAndSelect('transaction.order', 'order')
+      .leftJoinAndSelect('order.items', 'orderItem')
+      .leftJoinAndSelect('orderItem.course', 'orderCourse')
       .where('transaction.learnerId = :learnerId', { learnerId })
       .orderBy('transaction.createdAt', 'DESC')
       .skip((page - 1) * limit)
@@ -367,7 +292,10 @@ export class PaymentsService {
     const qb = this.transactionsRepository
       .createQueryBuilder('transaction')
       .leftJoinAndSelect('transaction.learner', 'learner')
-      .leftJoinAndSelect('transaction.course', 'course')
+      .leftJoinAndSelect('transaction.order', 'order')
+      .leftJoinAndSelect('order.items', 'orderItem')
+      .leftJoinAndSelect('orderItem.course', 'orderCourse')
+      .leftJoinAndSelect('orderItem.instructor', 'orderInstructor')
       .orderBy('transaction.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
@@ -391,7 +319,7 @@ export class PaymentsService {
       });
     }
     if (query.courseId?.trim()) {
-      qb.andWhere('"transaction"."course_id"::text ILIKE :courseId', {
+      qb.andWhere('"orderItem"."course_id"::text ILIKE :courseId', {
         courseId: `%${query.courseId.trim()}%`,
       });
     }
@@ -418,7 +346,7 @@ export class PaymentsService {
             .orWhere('"transaction"."learner_id"::text ILIKE :search', {
               search,
             })
-            .orWhere('"transaction"."course_id"::text ILIKE :search', {
+            .orWhere('"orderItem"."course_id"::text ILIKE :search', {
               search,
             });
         }),
@@ -431,7 +359,7 @@ export class PaymentsService {
       items: items.map((transaction) => ({
         id: transaction.id,
         learnerId: transaction.learnerId,
-        courseId: transaction.courseId,
+        orderId: transaction.orderId,
         amount: transaction.amount,
         currency: transaction.currency,
         status: transaction.status,
@@ -451,9 +379,7 @@ export class PaymentsService {
               email: transaction.learner.email,
             }
           : null,
-        course: transaction.course
-          ? { id: transaction.course.id, title: transaction.course.title }
-          : null,
+        order: this.toOrderSummary(transaction.order),
       })),
       total,
       page,
@@ -467,7 +393,6 @@ export class PaymentsService {
       where: { id: transactionId },
       relations: {
         learner: true,
-        course: true,
         order: { items: { course: true, instructor: true } },
       },
     });
@@ -490,7 +415,6 @@ export class PaymentsService {
     return {
       id: transaction.id,
       learnerId: transaction.learnerId,
-      courseId: transaction.courseId,
       orderId: transaction.orderId ?? null,
       amount: transaction.amount,
       currency: transaction.currency,
@@ -511,9 +435,7 @@ export class PaymentsService {
             email: transaction.learner.email,
           }
         : null,
-      course: transaction.course
-        ? { id: transaction.course.id, title: transaction.course.title }
-        : null,
+      order: this.toOrderSummary(transaction.order),
       audits: audits.map((audit) => ({
         id: audit.id,
         fromStatus: audit.fromStatus,
@@ -630,7 +552,11 @@ export class PaymentsService {
   async getAdminProviderEventDetail(eventId: string): Promise<unknown> {
     const event = await this.providerEventsRepository.findOne({
       where: { id: eventId },
-      relations: { paymentTransaction: true },
+      relations: {
+        paymentTransaction: {
+          order: { items: { course: true, instructor: true } },
+        },
+      },
     });
 
     if (!event) {
@@ -657,7 +583,8 @@ export class PaymentsService {
             id: event.paymentTransaction.id,
             paymentCode: event.paymentTransaction.paymentCode,
             status: event.paymentTransaction.status,
-            courseId: event.paymentTransaction.courseId,
+            orderId: event.paymentTransaction.orderId,
+            order: this.toOrderSummary(event.paymentTransaction.order),
             learnerId: event.paymentTransaction.learnerId,
             amount: event.paymentTransaction.amount,
             currency: event.paymentTransaction.currency,
@@ -966,118 +893,69 @@ export class PaymentsService {
         }),
       );
 
-      if (saved.orderId) {
-        const order = await manager.getRepository(Order).findOne({
-          where: { id: saved.orderId },
-          lock: { mode: 'pessimistic_write' },
-        });
-
-        if (!order) {
-          throw new NotFoundException('Order not found for paid transaction');
-        }
-
-        order.items = await manager.getRepository(OrderItem).find({
-          where: { orderId: order.id },
-          relations: { course: true, instructor: true },
-        });
-
-        order.status = OrderStatus.PAID;
-        order.paidAt = saved.paidAt;
-        await manager.getRepository(Order).save(order);
-
-        const config = await this.paymentConfigService.getActiveConfig();
-        const enrollmentsRepository = manager.getRepository(Enrollment);
-
-        for (const item of order.items) {
-          const platformFeeAmount = Math.round(
-            (item.unitPrice * config.platformFeePercent) / 100,
-          );
-          const netAmount = item.unitPrice - platformFeeAmount;
-          const paidAt = saved.paidAt ?? new Date();
-          const availableAt = new Date(
-            paidAt.getTime() + config.earningHoldDays * 24 * 60 * 60 * 1000,
-          );
-
-          await this.instructorBalanceService.recordEarningCredit({
-            manager,
-            payment: saved,
-            course: item.course,
-            orderItemId: item.id,
-            grossAmount: item.unitPrice,
-            platformFeeAmount,
-            netAmount,
-            availableAt,
-          });
-
-          const existing = await enrollmentsRepository.findOne({
-            where: { learnerId: saved.learnerId, courseId: item.courseId },
-          });
-          if (!existing) {
-            await enrollmentsRepository.save(
-              enrollmentsRepository.create({
-                learnerId: saved.learnerId,
-                courseId: item.courseId,
-                progress: '0.00',
-                completedAt: null,
-              }),
-            );
-          }
-        }
-
-        return {
-          confirmed: true,
-          result: PaymentProviderEventResult.PROCESSED_PAID,
-          reason: null,
-        };
+      if (!saved.orderId) {
+        throw new NotFoundException('Payment has no order for confirmation');
       }
 
-      const course = await manager.getRepository(Course).findOne({
-        where: { id: saved.courseId },
+      const order = await manager.getRepository(Order).findOne({
+        where: { id: saved.orderId },
+        lock: { mode: 'pessimistic_write' },
       });
 
-      if (!course) {
-        throw new NotFoundException('Course not found for paid transaction');
+      if (!order) {
+        throw new NotFoundException('Order not found for paid transaction');
       }
+
+      order.items = await manager.getRepository(OrderItem).find({
+        where: { orderId: order.id },
+        relations: { course: true, instructor: true },
+      });
+      if (order.items.length === 0) {
+        throw new NotFoundException('Order has no items for paid transaction');
+      }
+
+      order.status = OrderStatus.PAID;
+      order.paidAt = saved.paidAt;
+      await manager.getRepository(Order).save(order);
 
       const config = await this.paymentConfigService.getActiveConfig();
-      const platformFeeAmount = Math.round(
-        (saved.amount * config.platformFeePercent) / 100,
-      );
-      const netAmount = saved.amount - platformFeeAmount;
-      const paidAt = saved.paidAt ?? new Date();
-      const availableAt = new Date(
-        paidAt.getTime() + config.earningHoldDays * 24 * 60 * 60 * 1000,
-      );
-
-      await this.instructorBalanceService.recordEarningCredit({
-        manager,
-        payment: saved,
-        course,
-        platformFeeAmount,
-        netAmount,
-        availableAt,
-      });
-
       const enrollmentsRepository = manager.getRepository(Enrollment);
-      const existing = await enrollmentsRepository.findOne({
-        where: { learnerId: saved.learnerId, courseId: saved.courseId },
-      });
-      if (existing) {
-        return {
-          confirmed: true,
-          result: PaymentProviderEventResult.PROCESSED_PAID,
-          reason: null,
-        };
-      }
 
-      await enrollmentsRepository.save(
-        enrollmentsRepository.create({
-          learnerId: saved.learnerId,
-          courseId: saved.courseId,
-          progress: '0.00',
-          completedAt: null,
-        }),
-      );
+      for (const item of order.items) {
+        const platformFeeAmount = Math.round(
+          (item.unitPrice * config.platformFeePercent) / 100,
+        );
+        const netAmount = item.unitPrice - platformFeeAmount;
+        const paidAt = saved.paidAt ?? new Date();
+        const availableAt = new Date(
+          paidAt.getTime() + config.earningHoldDays * 24 * 60 * 60 * 1000,
+        );
+
+        await this.instructorBalanceService.recordEarningCredit({
+          manager,
+          payment: saved,
+          course: item.course,
+          orderItemId: item.id,
+          grossAmount: item.unitPrice,
+          platformFeeAmount,
+          netAmount,
+          availableAt,
+        });
+
+        const existing = await enrollmentsRepository.findOne({
+          where: { learnerId: saved.learnerId, courseId: item.courseId },
+        });
+        if (!existing) {
+          await enrollmentsRepository.save(
+            enrollmentsRepository.create({
+              learnerId: saved.learnerId,
+              courseId: item.courseId,
+              progress: '0.00',
+              completedAt: null,
+            }),
+          );
+        }
+      }
 
       return {
         confirmed: true,
@@ -1100,9 +978,9 @@ export class PaymentsService {
         : 'Bạn đã đăng ký khóa học. Chúc bạn học tập vui vẻ!',
       actionUrl: isMultiCourse
         ? '/learner/courses'
-        : `/learner/courses/${transaction.courseId}/learn`,
+        : `/learner/courses/${orderItems[0]?.courseId}/learn`,
       metadata: {
-        courseId: transaction.courseId,
+        courseId: orderItems[0]?.courseId ?? null,
         transactionId: transaction.id,
         orderId: transaction.orderId,
       },
@@ -1116,7 +994,6 @@ export class PaymentsService {
     const transaction = await this.transactionsRepository.findOne({
       where: { id: transactionId },
       relations: {
-        course: true,
         order: { items: { course: true, instructor: true } },
       },
     });
@@ -1273,10 +1150,13 @@ export class PaymentsService {
   private toTransactionResponse(
     transaction: PaymentTransaction,
   ): PaymentTransactionResponse {
+    if (!transaction.orderId) {
+      throw new NotFoundException('Payment transaction has no order');
+    }
+
     return {
       id: transaction.id,
       learnerId: transaction.learnerId,
-      courseId: transaction.courseId,
       orderId: transaction.orderId,
       amount: transaction.amount,
       currency: transaction.currency,
@@ -1295,6 +1175,22 @@ export class PaymentsService {
     };
   }
 
+  private toOrderSummary(order: Order | null | undefined) {
+    return order
+      ? {
+          id: order.id,
+          totalAmount: order.totalAmount,
+          itemCount: order.items?.length ?? 0,
+          items: (order.items ?? []).map((item) => ({
+            courseId: item.courseId,
+            courseTitle: item.course?.title ?? 'Khóa học không xác định',
+            instructorName: item.instructor?.name ?? null,
+            unitPrice: item.unitPrice,
+          })),
+        }
+      : null;
+  }
+
   private toOrderItemResponses(items: OrderItem[]): PaymentOrderItemResponse[] {
     return items.map((item) => ({
       id: item.id,
@@ -1310,7 +1206,11 @@ export class PaymentsService {
   ): LearnerPaymentTransactionItem {
     return {
       id: transaction.id,
-      courseTitle: transaction.course?.title ?? 'Khóa học không xác định',
+      courseTitle:
+        transaction.order?.items
+          ?.map((item) => item.course?.title)
+          .filter(Boolean)
+          .join(', ') ?? 'Khóa học không xác định',
       amount: transaction.amount,
       status: transaction.status,
       createdAt: transaction.createdAt,

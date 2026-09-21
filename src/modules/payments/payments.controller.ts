@@ -22,10 +22,7 @@ import {
   ListAdminPaymentProviderEventsQueryDto,
   ListAdminPaymentTransactionsQueryDto,
 } from './dto/admin-payment.dto';
-import {
-  CheckoutCourseDto,
-  ListLearnerPaymentTransactionsQueryDto,
-} from './dto/payment.dto';
+import { ListLearnerPaymentTransactionsQueryDto } from './dto/payment.dto';
 import { ConfigService } from './config.service';
 import { InstructorBalanceService } from './instructor-balance.service';
 import { PaymentsService } from './payments.service';
@@ -38,15 +35,6 @@ export class PaymentsController {
     private readonly configService: ConfigService,
     private readonly instructorBalanceService: InstructorBalanceService,
   ) {}
-
-  @Post('checkout')
-  @Roles(UserRole.LEARNER)
-  createCheckout(
-    @CurrentUser('id') learnerId: string,
-    @Body() dto: CheckoutCourseDto,
-  ) {
-    return this.paymentsService.createCheckout(learnerId, dto.courseId);
-  }
 
   @Get('transactions')
   @Roles(UserRole.LEARNER)

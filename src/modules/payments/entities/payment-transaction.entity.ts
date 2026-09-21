@@ -9,7 +9,6 @@ import {
   Unique,
   UpdateDateColumn,
 } from 'typeorm';
-import { Course } from '../../courses/entities/course.entity';
 import { Order } from '../../orders/entities/order.entity';
 import { User } from '../../users/entities/user.entity';
 
@@ -34,13 +33,6 @@ export class PaymentTransaction {
   @ManyToOne(() => User, { nullable: false, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'learner_id' })
   learner!: User;
-
-  @Column({ name: 'course_id', type: 'uuid' })
-  courseId!: string;
-
-  @ManyToOne(() => Course, { nullable: false, onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'course_id' })
-  course!: Course;
 
   @Column({ name: 'order_id', type: 'uuid', nullable: true })
   orderId!: string | null;
