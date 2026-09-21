@@ -68,47 +68,49 @@ describe('PaymentsService', () => {
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
   const paymentCode = 'KLTN20260910120000ABC123';
 
-  const makeCourse = (overrides: Partial<Course> = {}): Course => ({
-    id: courseId,
-    title: 'Lap trinh NestJS',
-    description: 'Khoa hoc nhap mon NestJS',
-    category: 'Backend',
-    thumbnail: null,
-    status: CourseStatus.PUBLISHED,
-    rejectReason: null,
-    learningOrder: CourseLearningOrder.FREE,
-    price: 99000,
-    instructorId,
-    instructor: {
-      id: instructorId,
-      name: 'Nguyen Van A',
-      email: 'instructor@example.com',
-    } as never,
-    createdAt: new Date('2026-08-01T00:00:00.000Z'),
-    updatedAt: new Date('2026-08-01T00:00:00.000Z'),
-    ...overrides,
-  });
+  const makeCourse = (overrides: Partial<Course> = {}): Course =>
+    ({
+      id: courseId,
+      title: 'Lap trinh NestJS',
+      description: 'Khoa hoc nhap mon NestJS',
+      category: 'Backend',
+      thumbnail: null,
+      status: CourseStatus.PUBLISHED,
+      rejectReason: null,
+      learningOrder: CourseLearningOrder.FREE,
+      price: 99000,
+      instructorId,
+      instructor: {
+        id: instructorId,
+        name: 'Nguyen Van A',
+        email: 'instructor@example.com',
+      } as never,
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-08-01T00:00:00.000Z'),
+      ...overrides,
+    }) as Course;
 
   const makeTransaction = (
     overrides: Partial<PaymentTransaction> = {},
-  ): PaymentTransaction => ({
-    id: transactionId,
-    learnerId,
-    courseId,
-    amount: 99000,
-    currency: 'VND',
-    status: PaymentStatus.PENDING,
-    paymentCode,
-    provider: 'sepay',
-    providerTransactionId: null,
-    providerGateway: null,
-    providerReferenceCode: null,
-    expiresAt,
-    paidAt: null,
-    createdAt: new Date('2026-09-10T12:00:00.000Z'),
-    updatedAt: new Date('2026-09-10T12:00:00.000Z'),
-    ...overrides,
-  });
+  ): PaymentTransaction =>
+    ({
+      id: transactionId,
+      learnerId,
+      courseId,
+      amount: 99000,
+      currency: 'VND',
+      status: PaymentStatus.PENDING,
+      paymentCode,
+      provider: 'sepay',
+      providerTransactionId: null,
+      providerGateway: null,
+      providerReferenceCode: null,
+      expiresAt,
+      paidAt: null,
+      createdAt: new Date('2026-09-10T12:00:00.000Z'),
+      updatedAt: new Date('2026-09-10T12:00:00.000Z'),
+      ...overrides,
+    }) as PaymentTransaction;
 
   const makeSePayPayload = (
     overrides: Partial<SePayWebhookPayload> = {},

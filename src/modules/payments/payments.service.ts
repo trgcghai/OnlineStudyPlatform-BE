@@ -969,13 +969,17 @@ export class PaymentsService {
       if (saved.orderId) {
         const order = await manager.getRepository(Order).findOne({
           where: { id: saved.orderId },
-          relations: { items: { course: true, instructor: true } },
           lock: { mode: 'pessimistic_write' },
         });
 
         if (!order) {
           throw new NotFoundException('Order not found for paid transaction');
         }
+
+        order.items = await manager.getRepository(OrderItem).find({
+          where: { orderId: order.id },
+          relations: { course: true, instructor: true },
+        });
 
         order.status = OrderStatus.PAID;
         order.paidAt = saved.paidAt;
