@@ -10,6 +10,7 @@ import {
   PaymentTransaction,
 } from './entities/payment-transaction.entity';
 import { PaymentTransactionCleanupService } from './payment-transaction-cleanup.service';
+import { Order } from '../orders/entities/order.entity';
 
 type CronMethod = (...args: unknown[]) => unknown;
 
@@ -32,32 +33,37 @@ describe('PaymentTransactionCleanupService', () => {
     create: jest.Mock;
     save: jest.Mock;
   };
+  let transactionalOrdersRepository: {
+    findOne: jest.Mock;
+    save: jest.Mock;
+  };
   let loggerErrorSpy: jest.SpiedFunction<Logger['error']>;
 
   const now = new Date('2026-09-12T10:00:00.000Z');
 
   const makeTransaction = (
     overrides: Partial<Omit<PaymentTransaction, 'course' | 'learner'>> = {},
-  ): PaymentTransaction => ({
-    id: '33333333-3333-4333-8333-333333333333',
-    learnerId: '11111111-1111-4111-8111-111111111111',
-    learner: {} as never,
-    courseId: '22222222-2222-4222-8222-222222222222',
-    course: {} as never,
-    amount: 99000,
-    currency: 'VND',
-    status: PaymentStatus.PENDING,
-    paymentCode: 'KLTN20260912100000ABC123',
-    provider: 'sepay',
-    providerTransactionId: null,
-    providerGateway: null,
-    providerReferenceCode: null,
-    expiresAt: new Date('2026-09-12T09:55:00.000Z'),
-    paidAt: null,
-    createdAt: new Date('2026-09-12T09:20:00.000Z'),
-    updatedAt: new Date('2026-09-12T09:20:00.000Z'),
-    ...overrides,
-  });
+  ): PaymentTransaction =>
+    ({
+      id: '33333333-3333-4333-8333-333333333333',
+      learnerId: '11111111-1111-4111-8111-111111111111',
+      learner: {} as never,
+      courseId: '22222222-2222-4222-8222-222222222222',
+      course: {} as never,
+      amount: 99000,
+      currency: 'VND',
+      status: PaymentStatus.PENDING,
+      paymentCode: 'KLTN20260912100000ABC123',
+      provider: 'sepay',
+      providerTransactionId: null,
+      providerGateway: null,
+      providerReferenceCode: null,
+      expiresAt: new Date('2026-09-12T09:55:00.000Z'),
+      paidAt: null,
+      createdAt: new Date('2026-09-12T09:20:00.000Z'),
+      updatedAt: new Date('2026-09-12T09:20:00.000Z'),
+      ...overrides,
+    }) as PaymentTransaction;
 
   beforeEach(() => {
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
@@ -76,6 +82,10 @@ describe('PaymentTransactionCleanupService', () => {
       create: jest.fn((input: Partial<PaymentAuditLog>) => input),
       save: jest.fn(),
     };
+    transactionalOrdersRepository = {
+      findOne: jest.fn(),
+      save: jest.fn(),
+    };
     transactionManager = {
       getRepository: jest.fn((entity) => {
         if (entity === PaymentTransaction) {
@@ -83,6 +93,9 @@ describe('PaymentTransactionCleanupService', () => {
         }
         if (entity === PaymentAuditLog) {
           return transactionalAuditsRepository;
+        }
+        if (entity === Order) {
+          return transactionalOrdersRepository;
         }
         throw new Error('Unexpected repository');
       }),

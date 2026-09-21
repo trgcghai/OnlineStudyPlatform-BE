@@ -12,7 +12,11 @@ import { Brackets, DataSource, Repository } from 'typeorm';
 import { FREE_COURSE_PRICE } from '../../common/constants/course.constant';
 import { Course, CourseStatus } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
+import { CartItem } from '../cart/entities/cart-item.entity';
 import { NotificationsService } from '../notifications/notifications.service';
+import { Order } from '../orders/entities/order.entity';
+import { OrderItem } from '../orders/entities/order-item.entity';
+import { OrderStatus } from '../orders/entities/order-status.enum';
 import { ConfigService as PaymentConfigService } from './config.service';
 import {
   CheckoutResponse,
@@ -20,6 +24,7 @@ import {
   LearnerPaymentTransactionListResponse,
   ListLearnerPaymentTransactionsQueryDto,
   PaymentTransactionResponse,
+  PaymentOrderItemResponse,
   SE_PAY_TRANSFER_IN,
   SePayWebhookPayload,
 } from './dto/payment.dto';
@@ -96,6 +101,110 @@ export class PaymentsService {
     private readonly instructorBalanceService: InstructorBalanceService,
   ) {}
 
+  async createCartCheckout(learnerId: string): Promise<CheckoutResponse> {
+    return this.dataSource.transaction(async (manager) => {
+      const cartItems = await manager.getRepository(CartItem).find({
+        where: { learnerId },
+        relations: { course: { instructor: true } },
+        order: { createdAt: 'ASC' },
+      });
+
+      if (cartItems.length === 0) {
+        throw new BadRequestException('Giỏ hàng đang trống');
+      }
+
+      const enrollmentRepository = manager.getRepository(Enrollment);
+      for (const item of cartItems) {
+        const course = item.course;
+        if (!course || course.status !== CourseStatus.PUBLISHED) {
+          throw new BadRequestException(
+            `Khóa học không còn khả dụng: ${item.courseId}`,
+          );
+        }
+        if (course.price <= FREE_COURSE_PRICE) {
+          throw new BadRequestException(
+            `Khóa học miễn phí không thể thanh toán: ${course.title}`,
+          );
+        }
+        const enrolled = await enrollmentRepository.exists({
+          where: { learnerId, courseId: item.courseId },
+        });
+        if (enrolled) {
+          throw new ConflictException(
+            `Bạn đã đăng ký khóa học: ${course.title}`,
+          );
+        }
+      }
+
+      const totalAmount = cartItems.reduce(
+        (total, item) => total + item.course.price,
+        0,
+      );
+      const order = manager.getRepository(Order).create({
+        learnerId,
+        totalAmount,
+        currency: 'VND',
+        status: OrderStatus.PENDING,
+        expiresAt: this.computeExpiresAt(),
+        paidAt: null,
+      });
+      const savedOrder = await manager.getRepository(Order).save(order);
+      const orderItems = await manager.getRepository(OrderItem).save(
+        cartItems.map((item) =>
+          manager.getRepository(OrderItem).create({
+            orderId: savedOrder.id,
+            courseId: item.courseId,
+            instructorId: item.course.instructorId,
+            unitPrice: item.course.price,
+            createdAt: item.createdAt,
+            course: item.course,
+            instructor: item.course.instructor,
+          }),
+        ),
+      );
+
+      const paymentCode = await this.generateUniquePaymentCode();
+      const transaction = manager.getRepository(PaymentTransaction).create({
+        learnerId,
+        courseId: orderItems[0].courseId,
+        orderId: savedOrder.id,
+        amount: totalAmount,
+        currency: 'VND',
+        status: PaymentStatus.PENDING,
+        paymentCode,
+        provider: 'sepay',
+        providerTransactionId: null,
+        providerGateway: null,
+        providerReferenceCode: null,
+        expiresAt: savedOrder.expiresAt,
+        paidAt: null,
+        order: savedOrder,
+      });
+      const savedTransaction = await manager
+        .getRepository(PaymentTransaction)
+        .save(transaction);
+
+      await manager.getRepository(PaymentAuditLog).save(
+        manager.getRepository(PaymentAuditLog).create({
+          transactionId: savedTransaction.id,
+          actorType: PaymentAuditActorType.SYSTEM,
+          actorId: null,
+          fromStatus: null,
+          toStatus: PaymentStatus.PENDING,
+          amount: savedTransaction.amount,
+          paymentCode: savedTransaction.paymentCode,
+          providerTransactionId: null,
+          reason: 'Cart checkout created',
+        }),
+      );
+
+      await manager.getRepository(CartItem).remove(cartItems);
+
+      savedTransaction.order = { ...savedOrder, items: orderItems };
+      return this.toCheckoutResponse(savedTransaction);
+    });
+  }
+
   async createCheckout(
     learnerId: string,
     courseId: string,
@@ -140,6 +249,7 @@ export class PaymentsService {
     const transaction = this.transactionsRepository.create({
       learnerId,
       courseId,
+      orderId: null,
       amount: course.price,
       currency: 'VND',
       status: PaymentStatus.PENDING,
@@ -193,6 +303,15 @@ export class PaymentsService {
 
     transaction.status = PaymentStatus.CANCELLED;
     const saved = await this.transactionsRepository.save(transaction);
+    if (saved.orderId) {
+      const order = await this.dataSource.getRepository(Order).findOne({
+        where: { id: saved.orderId },
+      });
+      if (order?.status === OrderStatus.PENDING) {
+        order.status = OrderStatus.CANCELLED;
+        await this.dataSource.getRepository(Order).save(order);
+      }
+    }
     await this.writeAudit(
       saved,
       PaymentAuditActorType.LEARNER,
@@ -346,7 +465,11 @@ export class PaymentsService {
   async getAdminTransactionDetail(transactionId: string): Promise<unknown> {
     const transaction = await this.transactionsRepository.findOne({
       where: { id: transactionId },
-      relations: { learner: true, course: true },
+      relations: {
+        learner: true,
+        course: true,
+        order: { items: { course: true, instructor: true } },
+      },
     });
 
     if (!transaction) {
@@ -368,6 +491,7 @@ export class PaymentsService {
       id: transaction.id,
       learnerId: transaction.learnerId,
       courseId: transaction.courseId,
+      orderId: transaction.orderId ?? null,
       amount: transaction.amount,
       currency: transaction.currency,
       status: transaction.status,
@@ -651,7 +775,11 @@ export class PaymentsService {
     );
 
     if (confirmation.confirmed) {
-      await this.notifyPaymentSuccess(transaction);
+      const notifiedTransaction = await this.transactionsRepository.findOne({
+        where: { id: transaction.id },
+        relations: { order: { items: true } },
+      });
+      await this.notifyPaymentSuccess(notifiedTransaction ?? transaction);
     }
   }
 
@@ -731,6 +859,15 @@ export class PaymentsService {
     transaction.providerReferenceCode = payload.referenceCode ?? null;
     transaction.paidAt = null;
     const saved = await this.transactionsRepository.save(transaction);
+    if (saved.orderId) {
+      const order = await this.dataSource.getRepository(Order).findOne({
+        where: { id: saved.orderId },
+      });
+      if (order?.status === OrderStatus.PENDING) {
+        order.status = OrderStatus.FAILED;
+        await this.dataSource.getRepository(Order).save(order);
+      }
+    }
     await this.writeAudit(
       saved,
       PaymentAuditActorType.SEPAY,
@@ -829,6 +966,67 @@ export class PaymentsService {
         }),
       );
 
+      if (saved.orderId) {
+        const order = await manager.getRepository(Order).findOne({
+          where: { id: saved.orderId },
+          relations: { items: { course: true, instructor: true } },
+          lock: { mode: 'pessimistic_write' },
+        });
+
+        if (!order) {
+          throw new NotFoundException('Order not found for paid transaction');
+        }
+
+        order.status = OrderStatus.PAID;
+        order.paidAt = saved.paidAt;
+        await manager.getRepository(Order).save(order);
+
+        const config = await this.paymentConfigService.getActiveConfig();
+        const enrollmentsRepository = manager.getRepository(Enrollment);
+
+        for (const item of order.items) {
+          const platformFeeAmount = Math.round(
+            (item.unitPrice * config.platformFeePercent) / 100,
+          );
+          const netAmount = item.unitPrice - platformFeeAmount;
+          const paidAt = saved.paidAt ?? new Date();
+          const availableAt = new Date(
+            paidAt.getTime() + config.earningHoldDays * 24 * 60 * 60 * 1000,
+          );
+
+          await this.instructorBalanceService.recordEarningCredit({
+            manager,
+            payment: saved,
+            course: item.course,
+            orderItemId: item.id,
+            grossAmount: item.unitPrice,
+            platformFeeAmount,
+            netAmount,
+            availableAt,
+          });
+
+          const existing = await enrollmentsRepository.findOne({
+            where: { learnerId: saved.learnerId, courseId: item.courseId },
+          });
+          if (!existing) {
+            await enrollmentsRepository.save(
+              enrollmentsRepository.create({
+                learnerId: saved.learnerId,
+                courseId: item.courseId,
+                progress: '0.00',
+                completedAt: null,
+              }),
+            );
+          }
+        }
+
+        return {
+          confirmed: true,
+          result: PaymentProviderEventResult.PROCESSED_PAID,
+          reason: null,
+        };
+      }
+
       const course = await manager.getRepository(Course).findOne({
         where: { id: saved.courseId },
       });
@@ -888,14 +1086,21 @@ export class PaymentsService {
   private async notifyPaymentSuccess(
     transaction: PaymentTransaction,
   ): Promise<void> {
+    const orderItems = transaction.order?.items ?? [];
+    const isMultiCourse = orderItems.length > 1;
     await this.notificationsService.createDirectNotification({
       userId: transaction.learnerId,
       title: 'Thanh toán thành công',
-      message: 'Bạn đã đăng ký khóa học. Chúc bạn học tập vui vẻ!',
-      actionUrl: `/learner/courses/${transaction.courseId}/learn`,
+      message: isMultiCourse
+        ? 'Bạn đã đăng ký các khóa học. Chúc bạn học tập vui vẻ!'
+        : 'Bạn đã đăng ký khóa học. Chúc bạn học tập vui vẻ!',
+      actionUrl: isMultiCourse
+        ? '/learner/courses'
+        : `/learner/courses/${transaction.courseId}/learn`,
       metadata: {
         courseId: transaction.courseId,
         transactionId: transaction.id,
+        orderId: transaction.orderId,
       },
     });
   }
@@ -906,6 +1111,10 @@ export class PaymentsService {
   ): Promise<PaymentTransaction> {
     const transaction = await this.transactionsRepository.findOne({
       where: { id: transactionId },
+      relations: {
+        course: true,
+        order: { items: { course: true, instructor: true } },
+      },
     });
 
     if (!transaction) {
@@ -931,6 +1140,15 @@ export class PaymentsService {
 
     transaction.status = PaymentStatus.EXPIRED;
     const saved = await this.transactionsRepository.save(transaction);
+    if (saved.orderId) {
+      const order = await this.dataSource.getRepository(Order).findOne({
+        where: { id: saved.orderId },
+      });
+      if (order?.status === OrderStatus.PENDING) {
+        order.status = OrderStatus.EXPIRED;
+        await this.dataSource.getRepository(Order).save(order);
+      }
+    }
     await this.writeAudit(
       saved,
       PaymentAuditActorType.SYSTEM,
@@ -1055,6 +1273,7 @@ export class PaymentsService {
       id: transaction.id,
       learnerId: transaction.learnerId,
       courseId: transaction.courseId,
+      orderId: transaction.orderId,
       amount: transaction.amount,
       currency: transaction.currency,
       status: transaction.status,
@@ -1066,7 +1285,20 @@ export class PaymentsService {
       expiresAt: transaction.expiresAt,
       paidAt: transaction.paidAt,
       createdAt: transaction.createdAt,
+      orderItems: transaction.order?.items
+        ? this.toOrderItemResponses(transaction.order.items)
+        : [],
     };
+  }
+
+  private toOrderItemResponses(items: OrderItem[]): PaymentOrderItemResponse[] {
+    return items.map((item) => ({
+      id: item.id,
+      courseId: item.courseId,
+      courseTitle: item.course?.title ?? 'Khóa học không xác định',
+      instructorName: item.instructor?.name ?? null,
+      unitPrice: item.unitPrice,
+    }));
   }
 
   private toLearnerPaymentTransactionItem(

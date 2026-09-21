@@ -10,6 +10,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { Course } from '../../courses/entities/course.entity';
+import { Order } from '../../orders/entities/order.entity';
 import { User } from '../../users/entities/user.entity';
 
 export enum PaymentStatus {
@@ -40,6 +41,13 @@ export class PaymentTransaction {
   @ManyToOne(() => Course, { nullable: false, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'course_id' })
   course!: Course;
+
+  @Column({ name: 'order_id', type: 'uuid', nullable: true })
+  orderId!: string | null;
+
+  @ManyToOne(() => Order, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'order_id' })
+  order!: Order | null;
 
   @Column({ type: 'int' })
   amount!: number;

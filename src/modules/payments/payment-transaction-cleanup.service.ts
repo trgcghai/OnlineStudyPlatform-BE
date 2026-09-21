@@ -10,6 +10,8 @@ import {
   PaymentStatus,
   PaymentTransaction,
 } from './entities/payment-transaction.entity';
+import { Order } from '../orders/entities/order.entity';
+import { OrderStatus } from '../orders/entities/order-status.enum';
 
 const PAYMENT_CLEANUP_BATCH_SIZE = 100;
 const PAYMENT_CLEANUP_REASON =
@@ -62,6 +64,7 @@ export class PaymentTransactionCleanupService {
     return this.dataSource.transaction(async (manager) => {
       const transactionsRepository = manager.getRepository(PaymentTransaction);
       const auditsRepository = manager.getRepository(PaymentAuditLog);
+      const ordersRepository = manager.getRepository(Order);
       const transaction = await transactionsRepository.findOne({
         where: { id: transactionId },
         lock: { mode: 'pessimistic_write' },
@@ -73,6 +76,16 @@ export class PaymentTransactionCleanupService {
 
       transaction.status = PaymentStatus.EXPIRED;
       const saved = await transactionsRepository.save(transaction);
+
+      if (saved.orderId) {
+        const order = await ordersRepository.findOne({
+          where: { id: saved.orderId },
+        });
+        if (order?.status === OrderStatus.PENDING) {
+          order.status = OrderStatus.EXPIRED;
+          await ordersRepository.save(order);
+        }
+      }
 
       await auditsRepository.save(
         auditsRepository.create({

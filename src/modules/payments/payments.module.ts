@@ -4,6 +4,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Course } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { Order } from '../orders/entities/order.entity';
+import { OrderItem } from '../orders/entities/order-item.entity';
 import { InstructorAccount } from '../users/entities/instructor-account.entity';
 import { User } from '../users/entities/user.entity';
 import { SePayAuthGuard } from '../../common/guards/sepay-auth.guard';
@@ -38,6 +40,8 @@ import { WithdrawService } from './withdraw.service';
       Enrollment,
       User,
       InstructorAccount,
+      Order,
+      OrderItem,
     ]),
     MongooseModule.forFeature([
       { name: PaymentConfig.name, schema: PaymentConfigSchema },

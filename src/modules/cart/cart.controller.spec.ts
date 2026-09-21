@@ -2,6 +2,7 @@ import { HttpStatus } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { CartController } from './cart.controller';
 import { CartService } from './cart.service';
+import { PaymentsService } from '../payments/payments.service';
 
 const learnerId = '11111111-1111-4111-8111-111111111111';
 const courseId = '33333333-3333-4333-8333-333333333333';
@@ -13,6 +14,7 @@ describe('CartController', () => {
     addItem: jest.Mock;
     removeItem: jest.Mock;
   };
+  let paymentsService: { createCartCheckout: jest.Mock };
 
   beforeEach(async () => {
     service = {
@@ -20,10 +22,14 @@ describe('CartController', () => {
       addItem: jest.fn(),
       removeItem: jest.fn(),
     };
+    paymentsService = { createCartCheckout: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [CartController],
-      providers: [{ provide: CartService, useValue: service }],
+      providers: [
+        { provide: CartService, useValue: service },
+        { provide: PaymentsService, useValue: paymentsService },
+      ],
     }).compile();
 
     controller = module.get(CartController);
@@ -61,5 +67,13 @@ describe('CartController', () => {
       CartController.prototype.removeItem,
     );
     expect(descriptor).toBe(HttpStatus.NO_CONTENT);
+  });
+
+  it('checks out the current learner cart', async () => {
+    paymentsService.createCartCheckout.mockResolvedValue({ id: 'transaction' });
+
+    await controller.checkout(learnerId);
+
+    expect(paymentsService.createCartCheckout).toHaveBeenCalledWith(learnerId);
   });
 });

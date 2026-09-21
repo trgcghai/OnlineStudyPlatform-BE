@@ -653,7 +653,11 @@ describe('PaymentsService', () => {
 
       expect(transactionsRepository.findOne).toHaveBeenCalledWith({
         where: { id: transactionId },
-        relations: { learner: true, course: true },
+        relations: {
+          learner: true,
+          course: true,
+          order: { items: { course: true, instructor: true } },
+        },
       });
       expect(auditsRepository.find).toHaveBeenCalledWith({
         where: { transactionId },

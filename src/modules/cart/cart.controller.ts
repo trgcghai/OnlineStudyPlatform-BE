@@ -16,6 +16,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { UserRole } from '../users/entities/user.entity';
+import { PaymentsService } from '../payments/payments.service';
 import { CartService } from './cart.service';
 import { AddCartItemDto, ListCartQueryDto } from './dto/cart.dto';
 
@@ -23,7 +24,15 @@ import { AddCartItemDto, ListCartQueryDto } from './dto/cart.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.LEARNER)
 export class CartController {
-  constructor(private readonly cartService: CartService) {}
+  constructor(
+    private readonly cartService: CartService,
+    private readonly paymentsService: PaymentsService,
+  ) {}
+
+  @Post('checkout')
+  checkout(@CurrentUser('id') learnerId: string) {
+    return this.paymentsService.createCartCheckout(learnerId);
+  }
 
   @Get()
   listCart(

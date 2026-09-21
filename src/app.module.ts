@@ -23,6 +23,7 @@ import { SeedsModule } from './common/seeds/seeds.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { AiChatModule } from './modules/ai-chat/ai-chat.module';
+import { OrdersModule } from './modules/orders/orders.module';
 
 @Module({
   imports: [
@@ -47,7 +48,10 @@ import { AiChatModule } from './modules/ai-chat/ai-chat.module';
         password: configService.getOrThrow<string>('DB_PASSWORD'),
         database: configService.getOrThrow<string>('DB_NAME'),
         autoLoadEntities: true,
-        synchronize: true,
+        synchronize:
+          configService.get<string>('DB_SYNCHRONIZE') === 'true' ||
+          (configService.get<string>('DB_SYNCHRONIZE') === undefined &&
+            configService.get<string>('NODE_ENV') !== 'production'),
       }),
     }),
     UsersModule,
@@ -62,6 +66,7 @@ import { AiChatModule } from './modules/ai-chat/ai-chat.module';
     QuizzesModule,
     PaymentsModule,
     AiChatModule,
+    OrdersModule,
     SeedsModule,
   ],
   controllers: [AppController],
