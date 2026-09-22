@@ -12,6 +12,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { CoursesModule } from './modules/courses/courses.module';
 import { LessonsModule } from './modules/lessons/lessons.module';
 import { EnrollmentsModule } from './modules/enrollments/enrollments.module';
+import { CartModule } from './modules/cart/cart.module';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -22,6 +23,7 @@ import { SeedsModule } from './common/seeds/seeds.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { AiChatModule } from './modules/ai-chat/ai-chat.module';
+import { OrdersModule } from './modules/orders/orders.module';
 
 @Module({
   imports: [
@@ -46,7 +48,10 @@ import { AiChatModule } from './modules/ai-chat/ai-chat.module';
         password: configService.getOrThrow<string>('DB_PASSWORD'),
         database: configService.getOrThrow<string>('DB_NAME'),
         autoLoadEntities: true,
-        synchronize: true,
+        synchronize:
+          configService.get<string>('DB_SYNCHRONIZE') === 'true' ||
+          (configService.get<string>('DB_SYNCHRONIZE') === undefined &&
+            configService.get<string>('NODE_ENV') !== 'production'),
       }),
     }),
     UsersModule,
@@ -54,12 +59,14 @@ import { AiChatModule } from './modules/ai-chat/ai-chat.module';
     CoursesModule,
     LessonsModule,
     EnrollmentsModule,
+    CartModule,
     LearningModule,
     DashboardModule,
     NotificationsModule,
     QuizzesModule,
     PaymentsModule,
     AiChatModule,
+    OrdersModule,
     SeedsModule,
   ],
   controllers: [AppController],

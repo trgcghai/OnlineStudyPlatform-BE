@@ -8,6 +8,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Course } from '../../courses/entities/course.entity';
+import { OrderItem } from '../../orders/entities/order-item.entity';
 import { User } from '../../users/entities/user.entity';
 import { PaymentTransaction } from './payment-transaction.entity';
 import { WithdrawRequest } from './withdraw-request.entity';
@@ -22,9 +23,9 @@ export enum InstructorBalanceLedgerType {
   'instructorId',
   'createdAt',
 ])
-@Index('UQ_instructor_balance_ledger_payment', ['paymentTransactionId'], {
+@Index('UQ_instructor_balance_ledger_order_item', ['orderItemId'], {
   unique: true,
-  where: 'payment_transaction_id IS NOT NULL',
+  where: 'order_item_id IS NOT NULL',
 })
 @Index('UQ_instructor_balance_ledger_withdraw', ['withdrawRequestId'], {
   unique: true,
@@ -72,6 +73,13 @@ export class InstructorBalanceLedger {
   @ManyToOne(() => PaymentTransaction, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'payment_transaction_id' })
   paymentTransaction!: PaymentTransaction | null;
+
+  @Column({ name: 'order_item_id', type: 'uuid', nullable: true })
+  orderItemId!: string | null;
+
+  @ManyToOne(() => OrderItem, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'order_item_id' })
+  orderItem!: OrderItem | null;
 
   @Column({ name: 'withdraw_request_id', type: 'uuid', nullable: true })
   withdrawRequestId!: string | null;

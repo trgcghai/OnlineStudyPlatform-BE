@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
@@ -12,6 +11,8 @@ import {
   CourseStatus,
 } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
+import { Order } from '../orders/entities/order.entity';
+import { OrderItem } from '../orders/entities/order-item.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SE_PAY_TRANSFER_IN, SePayWebhookPayload } from './dto/payment.dto';
 import {
@@ -45,7 +46,6 @@ describe('PaymentsService', () => {
     find: jest.Mock;
     createQueryBuilder: jest.Mock;
   };
-  let coursesRepository: { findOne: jest.Mock };
   let enrollmentsRepository: {
     findAll: never;
     findOne: jest.Mock;
@@ -68,47 +68,72 @@ describe('PaymentsService', () => {
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
   const paymentCode = 'KLTN20260910120000ABC123';
 
-  const makeCourse = (overrides: Partial<Course> = {}): Course => ({
-    id: courseId,
-    title: 'Lap trinh NestJS',
-    description: 'Khoa hoc nhap mon NestJS',
-    category: 'Backend',
-    thumbnail: null,
-    status: CourseStatus.PUBLISHED,
-    rejectReason: null,
-    learningOrder: CourseLearningOrder.FREE,
-    price: 99000,
-    instructorId,
-    instructor: {
-      id: instructorId,
-      name: 'Nguyen Van A',
-      email: 'instructor@example.com',
-    } as never,
-    createdAt: new Date('2026-08-01T00:00:00.000Z'),
-    updatedAt: new Date('2026-08-01T00:00:00.000Z'),
-    ...overrides,
-  });
+  const makeCourse = (overrides: Partial<Course> = {}): Course =>
+    ({
+      id: courseId,
+      title: 'Lap trinh NestJS',
+      description: 'Khoa hoc nhap mon NestJS',
+      category: 'Backend',
+      thumbnail: null,
+      status: CourseStatus.PUBLISHED,
+      rejectReason: null,
+      learningOrder: CourseLearningOrder.FREE,
+      price: 99000,
+      instructorId,
+      instructor: {
+        id: instructorId,
+        name: 'Nguyen Van A',
+        email: 'instructor@example.com',
+      } as never,
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-08-01T00:00:00.000Z'),
+      ...overrides,
+    }) as Course;
 
   const makeTransaction = (
-    overrides: Partial<PaymentTransaction> = {},
-  ): PaymentTransaction => ({
-    id: transactionId,
-    learnerId,
-    courseId,
-    amount: 99000,
-    currency: 'VND',
-    status: PaymentStatus.PENDING,
-    paymentCode,
-    provider: 'sepay',
-    providerTransactionId: null,
-    providerGateway: null,
-    providerReferenceCode: null,
-    expiresAt,
-    paidAt: null,
-    createdAt: new Date('2026-09-10T12:00:00.000Z'),
-    updatedAt: new Date('2026-09-10T12:00:00.000Z'),
-    ...overrides,
-  });
+    overrides: Partial<PaymentTransaction> & {
+      courseId?: string;
+      course?: Course;
+    } = {},
+  ): PaymentTransaction =>
+    ({
+      id: transactionId,
+      learnerId,
+      orderId: 'order-1',
+      amount: 99000,
+      currency: 'VND',
+      status: PaymentStatus.PENDING,
+      paymentCode,
+      provider: 'sepay',
+      providerTransactionId: null,
+      providerGateway: null,
+      providerReferenceCode: null,
+      expiresAt,
+      paidAt: null,
+      createdAt: new Date('2026-09-10T12:00:00.000Z'),
+      updatedAt: new Date('2026-09-10T12:00:00.000Z'),
+      order: {
+        id: 'order-1',
+        learnerId,
+        totalAmount: 99000,
+        currency: 'VND',
+        status: PaymentStatus.PENDING,
+        expiresAt,
+        paidAt: null,
+        items: [
+          {
+            id: 'order-item-1',
+            orderId: 'order-1',
+            courseId,
+            instructorId,
+            unitPrice: 99000,
+            course: makeCourse(),
+            instructor: makeCourse().instructor,
+          },
+        ],
+      } as never,
+      ...overrides,
+    }) as PaymentTransaction;
 
   const makeSePayPayload = (
     overrides: Partial<SePayWebhookPayload> = {},
@@ -166,7 +191,6 @@ describe('PaymentsService', () => {
       find: jest.fn(),
       createQueryBuilder: jest.fn(),
     };
-    coursesRepository = { findOne: jest.fn() };
     enrollmentsRepository = {
       findAll: jest.fn(),
       findOne: jest.fn(),
@@ -200,13 +224,21 @@ describe('PaymentsService', () => {
     instructorBalanceService = { recordEarningCredit: jest.fn() };
     dataSource = {
       transaction: jest.fn(),
+      getRepository: jest.fn((repo: unknown) => {
+        if (repo === Order) {
+          return {
+            findOne: jest.fn().mockResolvedValue(null),
+            save: jest.fn(),
+          };
+        }
+        return null;
+      }),
     };
 
     paymentsService = new PaymentsService(
       transactionsRepository as unknown as Repository<PaymentTransaction>,
       auditsRepository as unknown as Repository<PaymentAuditLog>,
       providerEventsRepository as unknown as Repository<PaymentProviderEvent>,
-      coursesRepository as unknown as Repository<Course>,
       enrollmentsRepository as unknown as Repository<Enrollment>,
       notificationsService as unknown as NotificationsService,
       configService as unknown as ConfigService,
@@ -216,157 +248,11 @@ describe('PaymentsService', () => {
     );
   });
 
-  describe('createCheckout', () => {
-    it('creates a pending transaction for a published paid course', async () => {
-      coursesRepository.findOne.mockResolvedValue(makeCourse());
-      enrollmentsRepository.findOne.mockResolvedValue(null);
-      transactionsRepository.findOne.mockResolvedValue(null);
-      transactionsRepository.exists.mockResolvedValue(false);
-
-      const result = await paymentsService.createCheckout(learnerId, courseId);
-
-      expect(coursesRepository.findOne).toHaveBeenCalledWith({
-        where: { id: courseId },
-      });
-      expect(enrollmentsRepository.findOne).toHaveBeenCalledWith({
-        where: { learnerId, courseId },
-      });
-      expect(transactionsRepository.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          learnerId,
-          courseId,
-          amount: 99000,
-          currency: 'VND',
-          status: PaymentStatus.PENDING,
-          provider: 'sepay',
-        }),
-      );
-      expect(transactionsRepository.exists).toHaveBeenCalled();
-      expect(auditsRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({
-          transactionId,
-          actorType: PaymentAuditActorType.SYSTEM,
-          toStatus: PaymentStatus.PENDING,
-        }),
-      );
-      expect(result).toEqual(
-        expect.objectContaining({
-          id: transactionId,
-          learnerId,
-          courseId,
-          amount: 99000,
-          status: PaymentStatus.PENDING,
-          bankAccount: '123456789',
-          bankHolder: 'NGUYEN VAN A',
-          bankCode: 'VCB',
-        }),
-      );
-      expect(result.paymentCode).toMatch(/^KLTN\d{14}[A-Z0-9]{6}$/);
-      expect(result.qrImageUrl).toContain('https://vietqr.app/img?');
-      expect(result.qrImageUrl).toContain(`acc=123456789`);
-      expect(result.qrImageUrl).toContain(`bank=VCB`);
-      expect(result.qrImageUrl).toContain(`amount=99000`);
-      expect(result.qrImageUrl).toMatch(/des=SEVQR\+KLTN\d{14}[A-Z0-9]{6}$/);
-    });
-
-    it('generates a payment code with the KLTN prefix shape', async () => {
-      coursesRepository.findOne.mockResolvedValue(makeCourse());
-      enrollmentsRepository.findOne.mockResolvedValue(null);
-      transactionsRepository.findOne.mockResolvedValue(null);
-      transactionsRepository.exists.mockResolvedValue(false);
-
-      await paymentsService.createCheckout(learnerId, courseId);
-
-      const created = transactionsRepository.create.mock.calls[0][0];
-      expect((created as { paymentCode: string }).paymentCode).toMatch(
-        /^KLTN\d{14}[A-Z0-9]{6}$/,
-      );
-    });
-
-    it('throws NotFoundException when the course does not exist', async () => {
-      coursesRepository.findOne.mockResolvedValue(null);
-
-      await expect(
-        paymentsService.createCheckout(learnerId, courseId),
-      ).rejects.toEqual(new NotFoundException('Course not found'));
-      expect(transactionsRepository.create).not.toHaveBeenCalled();
-    });
-
-    it.each([CourseStatus.DRAFT, CourseStatus.PENDING, CourseStatus.REJECTED])(
-      'rejects checkout for %s courses',
-      async (status) => {
-        coursesRepository.findOne.mockResolvedValue(makeCourse({ status }));
-
-        await expect(
-          paymentsService.createCheckout(learnerId, courseId),
-        ).rejects.toEqual(
-          new BadRequestException(
-            'Chỉ có thể thanh toán cho khóa học đã xuất bản',
-          ),
-        );
-        expect(transactionsRepository.create).not.toHaveBeenCalled();
-      },
-    );
-
-    it('rejects checkout for a free course', async () => {
-      coursesRepository.findOne.mockResolvedValue(makeCourse({ price: 0 }));
-
-      await expect(
-        paymentsService.createCheckout(learnerId, courseId),
-      ).rejects.toEqual(
-        new BadRequestException('Khóa học miễn phí không cần thanh toán'),
-      );
-    });
-
-    it('rejects checkout when the learner is already enrolled', async () => {
-      coursesRepository.findOne.mockResolvedValue(makeCourse());
-      enrollmentsRepository.findOne.mockResolvedValue({ id: 'e1' });
-
-      await expect(
-        paymentsService.createCheckout(learnerId, courseId),
-      ).rejects.toEqual(new ConflictException('Bạn đã đăng ký khóa học này'));
-      expect(transactionsRepository.create).not.toHaveBeenCalled();
-    });
-
-    it('reuses an existing pending non-expired transaction', async () => {
-      coursesRepository.findOne.mockResolvedValue(makeCourse());
-      enrollmentsRepository.findOne.mockResolvedValue(null);
-      transactionsRepository.findOne.mockResolvedValue(makeTransaction());
-
-      const result = await paymentsService.createCheckout(learnerId, courseId);
-
-      expect(transactionsRepository.create).not.toHaveBeenCalled();
-      expect(result.id).toBe(transactionId);
-      expect(result.status).toBe(PaymentStatus.PENDING);
-    });
-
-    it('expires the stale pending transaction and creates a new one', async () => {
-      coursesRepository.findOne.mockResolvedValue(makeCourse());
-      enrollmentsRepository.findOne.mockResolvedValue(null);
-      transactionsRepository.findOne.mockResolvedValue(
-        makeTransaction({ expiresAt: new Date('2026-09-01T00:00:00.000Z') }),
-      );
-      transactionsRepository.exists.mockResolvedValue(false);
-
-      await paymentsService.createCheckout(learnerId, courseId);
-
-      expect(auditsRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({
-          fromStatus: PaymentStatus.PENDING,
-          toStatus: PaymentStatus.EXPIRED,
-          reason: 'Transaction expired without payment',
-        }),
-      );
-      expect(transactionsRepository.create).toHaveBeenCalled();
-    });
-  });
-
   describe('listLearnerTransactions', () => {
     it('lists only current learner transactions with status and pagination', async () => {
       const transaction = makeTransaction({
         status: PaymentStatus.PAID,
         paidAt: new Date('2026-09-12T08:00:00.000Z'),
-        course: { id: courseId, title: 'NestJS Fundamentals' } as never,
       });
       const qb = makeQueryBuilder([transaction], 12);
       transactionsRepository.createQueryBuilder.mockReturnValue(qb);
@@ -381,8 +267,8 @@ describe('PaymentsService', () => {
         'transaction',
       );
       expect(qb.leftJoinAndSelect).toHaveBeenCalledWith(
-        'transaction.course',
-        'course',
+        'transaction.order',
+        'order',
       );
       expect(qb.where).toHaveBeenCalledWith(
         'transaction.learnerId = :learnerId',
@@ -398,7 +284,7 @@ describe('PaymentsService', () => {
         items: [
           {
             id: transaction.id,
-            courseTitle: 'NestJS Fundamentals',
+            courseTitle: 'Lap trinh NestJS',
             amount: transaction.amount,
             status: PaymentStatus.PAID,
             createdAt: transaction.createdAt,
@@ -413,9 +299,7 @@ describe('PaymentsService', () => {
     });
 
     it('does not expose payment code, provider fields, learner id, course id, or expiry', async () => {
-      const transaction = makeTransaction({
-        course: { id: courseId, title: 'Payment Safe Course' } as never,
-      });
+      const transaction = makeTransaction({});
       const qb = makeQueryBuilder([transaction], 1);
       transactionsRepository.createQueryBuilder.mockReturnValue(qb);
 
@@ -451,10 +335,6 @@ describe('PaymentsService', () => {
           name: 'Learner A',
           email: 'learner@example.com',
         } as never,
-        course: {
-          id: courseId,
-          title: 'NestJS Course',
-        } as never,
       });
       const qb = makeQueryBuilder([transaction], 1);
       transactionsRepository.createQueryBuilder.mockReturnValue(qb);
@@ -478,8 +358,8 @@ describe('PaymentsService', () => {
         'learner',
       );
       expect(qb.leftJoinAndSelect).toHaveBeenCalledWith(
-        'transaction.course',
-        'course',
+        'transaction.order',
+        'order',
       );
       expect(qb.andWhere).toHaveBeenCalledWith('transaction.status = :status', {
         status: PaymentStatus.PAID,
@@ -489,7 +369,7 @@ describe('PaymentsService', () => {
         { learnerId: `%${learnerId}%` },
       );
       expect(qb.andWhere).toHaveBeenCalledWith(
-        '"transaction"."course_id"::text ILIKE :courseId',
+        '"orderItem"."course_id"::text ILIKE :courseId',
         { courseId: `%${courseId}%` },
       );
       expect(qb.andWhere).toHaveBeenCalledWith(
@@ -512,7 +392,11 @@ describe('PaymentsService', () => {
               name: 'Learner A',
               email: 'learner@example.com',
             },
-            course: { id: courseId, title: 'NestJS Course' },
+            order: expect.objectContaining({
+              items: expect.arrayContaining([
+                expect.objectContaining({ courseTitle: 'Lap trinh NestJS' }),
+              ]),
+            }),
           }),
         ],
         total: 1,
@@ -564,7 +448,7 @@ describe('PaymentsService', () => {
         { learnerId: '%1111%' },
       );
       expect(qb.andWhere).toHaveBeenCalledWith(
-        '"transaction"."course_id"::text ILIKE :courseId',
+        '"orderItem"."course_id"::text ILIKE :courseId',
         { courseId: '%2222%' },
       );
     });
@@ -599,7 +483,7 @@ describe('PaymentsService', () => {
         { search: `%${paymentCode}%` },
       );
       expect(subQb.orWhere).toHaveBeenCalledWith(
-        '"transaction"."course_id"::text ILIKE :search',
+        '"orderItem"."course_id"::text ILIKE :search',
         { search: `%${paymentCode}%` },
       );
     });
@@ -653,7 +537,10 @@ describe('PaymentsService', () => {
 
       expect(transactionsRepository.findOne).toHaveBeenCalledWith({
         where: { id: transactionId },
-        relations: { learner: true, course: true },
+        relations: {
+          learner: true,
+          order: { items: { course: true, instructor: true } },
+        },
       });
       expect(auditsRepository.find).toHaveBeenCalledWith({
         where: { transactionId },
@@ -671,7 +558,11 @@ describe('PaymentsService', () => {
             name: 'Learner A',
             email: 'learner@example.com',
           },
-          course: { id: courseId, title: 'NestJS Course' },
+          order: expect.objectContaining({
+            items: expect.arrayContaining([
+              expect.objectContaining({ courseId }),
+            ]),
+          }),
           audits: [
             expect.objectContaining({
               id: 'audit-1',
@@ -857,7 +748,11 @@ describe('PaymentsService', () => {
 
       expect(providerEventsRepository.findOne).toHaveBeenCalledWith({
         where: { id: 'event-1' },
-        relations: { paymentTransaction: true },
+        relations: {
+          paymentTransaction: {
+            order: { items: { course: true, instructor: true } },
+          },
+        },
       });
       expect(result).toEqual(
         expect.objectContaining({
@@ -866,7 +761,8 @@ describe('PaymentsService', () => {
             id: transactionId,
             paymentCode,
             status: PaymentStatus.PAID,
-            courseId,
+            orderId: 'order-1',
+            order: expect.objectContaining({ itemCount: 1 }),
             learnerId,
             amount: 99000,
             currency: 'VND',
@@ -1003,8 +899,12 @@ describe('PaymentsService', () => {
           Promise.resolve({ ...input, id: 'e1' }),
         ),
       };
-      const courseRepo = {
-        findOne: jest.fn().mockResolvedValue(makeCourse()),
+      const orderRepo = {
+        findOne: jest.fn().mockResolvedValue(makeTransaction().order),
+        save: jest.fn(),
+      };
+      const orderItemRepo = {
+        find: jest.fn().mockResolvedValue(makeTransaction().order?.items ?? []),
       };
       const txFindOne = jest
         .fn()
@@ -1021,7 +921,8 @@ describe('PaymentsService', () => {
           }
           if (repo === PaymentAuditLog) return auditRepo;
           if (repo === Enrollment) return enrollmentRepo;
-          if (repo === Course) return courseRepo;
+          if (repo === Order) return orderRepo;
+          if (repo === OrderItem) return orderItemRepo;
           return null;
         }),
       };
@@ -1030,7 +931,7 @@ describe('PaymentsService', () => {
           callback(manager),
       );
 
-      return { txSave, enrollmentRepo, txFindOne, courseRepo, manager };
+      return { txSave, enrollmentRepo, txFindOne, manager };
     };
 
     it('confirms a pending transaction and creates the enrollment', async () => {
@@ -1083,26 +984,19 @@ describe('PaymentsService', () => {
     });
 
     it('records instructor earning credit when payment is confirmed as paid', async () => {
-      const { courseRepo, manager } = configureHappyPath();
+      const { manager } = configureHappyPath();
 
       await paymentsService.processSePayWebhook(makeSePayPayload());
 
-      expect(courseRepo.findOne).toHaveBeenCalledWith({
-        where: { id: courseId },
-      });
       expect(instructorBalanceService.recordEarningCredit).toHaveBeenCalledWith(
-        {
+        expect.objectContaining({
           manager,
-          payment: expect.objectContaining({
-            id: transactionId,
-            amount: 99000,
-            status: PaymentStatus.PAID,
-          }),
-          course: expect.objectContaining({ id: courseId, instructorId }),
+          orderItemId: 'order-item-1',
+          grossAmount: 99000,
           platformFeeAmount: 19800,
           netAmount: 79200,
           availableAt: expect.any(Date),
-        },
+        }),
       );
       const earningInput = instructorBalanceService.recordEarningCredit.mock
         .calls[0][0] as { payment: PaymentTransaction; availableAt: Date };

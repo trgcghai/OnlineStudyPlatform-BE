@@ -5,20 +5,14 @@ import {
   IsNumber,
   IsOptional,
   IsString,
-  IsUUID,
   Min,
 } from 'class-validator';
 import { PaymentStatus } from '../entities/payment-transaction.entity';
 
-export class CheckoutCourseDto {
-  @IsUUID()
-  courseId!: string;
-}
-
 export class PaymentTransactionResponse {
   id!: string;
   learnerId!: string;
-  courseId!: string;
+  orderId!: string;
   amount!: number;
   currency!: string;
   status!: PaymentStatus;
@@ -30,6 +24,15 @@ export class PaymentTransactionResponse {
   expiresAt!: Date;
   paidAt!: Date | null;
   createdAt!: Date;
+  orderItems!: PaymentOrderItemResponse[];
+}
+
+export interface PaymentOrderItemResponse {
+  id: string;
+  courseId: string;
+  courseTitle: string;
+  instructorName: string | null;
+  unitPrice: number;
 }
 
 export class CheckoutResponse extends PaymentTransactionResponse {

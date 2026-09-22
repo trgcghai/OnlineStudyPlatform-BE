@@ -36,7 +36,6 @@ describe('PaymentsController', () => {
       getCoursePricingReference: jest.fn(),
     } as unknown as jest.Mocked<ConfigService>;
     paymentsService = {
-      createCheckout: jest.fn(),
       listLearnerTransactions: jest.fn(),
       getOwnedTransaction: jest.fn(),
       cancelOwnedTransaction: jest.fn(),
@@ -94,8 +93,7 @@ describe('PaymentsController', () => {
     expect(getMethodRoles('getCoursePricing')).toEqual([UserRole.INSTRUCTOR]);
   });
 
-  it('requires Learner role for checkout endpoints', () => {
-    expect(getMethodRoles('createCheckout')).toEqual([UserRole.LEARNER]);
+  it('requires Learner role for payment transaction endpoints', () => {
     expect(getMethodRoles('listLearnerTransactions')).toEqual([
       UserRole.LEARNER,
     ]);

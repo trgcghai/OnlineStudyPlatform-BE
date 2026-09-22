@@ -20,6 +20,8 @@ interface RecordEarningInput {
   manager: EntityManager;
   payment: PaymentTransaction;
   course: Course;
+  orderItemId?: string | null;
+  grossAmount?: number;
   platformFeeAmount: number;
   netAmount: number;
   availableAt: Date;
@@ -119,7 +121,9 @@ export class InstructorBalanceService {
   async recordEarningCredit(input: RecordEarningInput): Promise<void> {
     const repo = input.manager.getRepository(InstructorBalanceLedger);
     const existing = await repo.findOne({
-      where: { paymentTransactionId: input.payment.id },
+      where: input.orderItemId
+        ? { orderItemId: input.orderItemId }
+        : { paymentTransactionId: input.payment.id },
     });
     if (existing) return;
 
@@ -129,11 +133,12 @@ export class InstructorBalanceService {
         type: InstructorBalanceLedgerType.EARNING_CREDIT,
         amountDelta: input.netAmount,
         currency: input.payment.currency,
-        grossAmount: input.payment.amount,
+        grossAmount: input.grossAmount ?? input.payment.amount,
         platformFeeAmount: input.platformFeeAmount,
         netAmount: input.netAmount,
         courseId: input.course.id,
         paymentTransactionId: input.payment.id,
+        orderItemId: input.orderItemId ?? null,
         withdrawRequestId: null,
         availableAt: input.availableAt,
         description: `Doanh thu khóa học ${input.course.title}`,
