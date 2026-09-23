@@ -22,8 +22,11 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import {
   LoginDto,
   RegisterDto,
+  RequestPasswordResetOtpDto,
+  ResetPasswordDto,
   ResendEmailOtpDto,
   VerifyEmailOtpDto,
+  VerifyPasswordResetOtpDto,
 } from './dto/auth.dto';
 import type { AuthenticatedUser } from './dto/auth.dto';
 import { GetToken } from '../../common/decorators/bearerToken.decorator';
@@ -69,6 +72,27 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   resendEmailOtp(@Body() resendDto: ResendEmailOtpDto) {
     return this.authService.resendEmailOtp(resendDto.email);
+  }
+
+  @Post('password-reset/request-otp')
+  @HttpCode(HttpStatus.OK)
+  requestPasswordResetOtp(@Body() resetDto: RequestPasswordResetOtpDto) {
+    return this.authService.requestPasswordResetOtp(resetDto.email);
+  }
+
+  @Post('password-reset/verify-otp')
+  @HttpCode(HttpStatus.OK)
+  verifyPasswordResetOtp(@Body() verifyDto: VerifyPasswordResetOtpDto) {
+    return this.authService.verifyPasswordResetOtp(
+      verifyDto.email,
+      verifyDto.otp,
+    );
+  }
+
+  @Post('password-reset/reset')
+  @HttpCode(HttpStatus.OK)
+  resetPassword(@Body() resetDto: ResetPasswordDto) {
+    return this.authService.resetPassword(resetDto);
   }
 
   @Post('refresh')

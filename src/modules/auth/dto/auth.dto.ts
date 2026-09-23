@@ -1,8 +1,12 @@
 import { Transform } from 'class-transformer';
-import { IsEmail, IsString, Length, MinLength } from 'class-validator';
+import { IsEmail, IsString, Length, Matches, MinLength } from 'class-validator';
 import { Request } from 'express';
 import { UserRole, UserStatus } from '../../users/entities/user.entity';
-import { CreateUserDto } from '../../users/dto/user.dto';
+import {
+  CreateUserDto,
+  PASSWORD_POLICY_MESSAGE,
+  PASSWORD_POLICY_REGEX,
+} from '../../users/dto/user.dto';
 
 export class LoginDto {
   @Transform(({ value }: { value: unknown }) =>
@@ -36,6 +40,37 @@ export class ResendEmailOtpDto {
   )
   @IsEmail()
   email!: string;
+}
+
+export class RequestPasswordResetOtpDto {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsEmail()
+  email!: string;
+}
+
+export class VerifyPasswordResetOtpDto {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @Length(6, 6)
+  otp!: string;
+}
+
+export class ResetPasswordDto {
+  @IsString()
+  @MinLength(1)
+  resetToken!: string;
+
+  @Matches(PASSWORD_POLICY_REGEX, {
+    message: PASSWORD_POLICY_MESSAGE,
+  })
+  newPassword!: string;
 }
 
 export interface AccessTokenPayload {

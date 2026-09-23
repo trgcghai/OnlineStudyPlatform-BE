@@ -66,6 +66,20 @@ describe('EmailDeliveryService', () => {
     );
   });
 
+  it('sends password reset OTP through SMTP configuration', async () => {
+    await expect(
+      service.sendPasswordResetOtp('learner@example.com', '123456'),
+    ).resolves.toEqual({ delivered: true });
+
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: 'Online Study <mailer@example.com>',
+        to: 'learner@example.com',
+        subject: 'Reset your Online Study Platform password',
+      }),
+    );
+  });
+
   it('reports unavailable when SMTP configuration is incomplete', async () => {
     configService.get.mockImplementation((key: string) =>
       key === 'SMTP_PASS' ? undefined : 'value',

@@ -418,6 +418,21 @@ export class UsersService {
     await this.usersRepository.save(user);
   }
 
+  async resetPasswordById(userId: string, newPassword: string): Promise<void> {
+    const user = await this.usersRepository.findOneBy({ id: userId });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.status !== UserStatus.ACTIVE) {
+      throw new ForbiddenException('Account disabled');
+    }
+
+    user.password = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
+    await this.usersRepository.save(user);
+  }
+
   async uploadAvatar(
     userId: string,
     file: Express.Multer.File,

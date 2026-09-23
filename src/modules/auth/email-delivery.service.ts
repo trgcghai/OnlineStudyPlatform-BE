@@ -20,6 +20,38 @@ export class EmailDeliveryService {
     email: string,
     otp: string,
   ): Promise<EmailDeliveryResult> {
+    return this.sendOtpEmail({
+      email,
+      otp,
+      subject: 'Verify your Online Study Platform account',
+      text: `Your verification code is ${otp}. It expires in 10 minutes.`,
+      html: `<p>Your verification code is <strong>${otp}</strong>.</p><p>This code expires in 10 minutes.</p>`,
+      logLabel: 'verification',
+    });
+  }
+
+  async sendPasswordResetOtp(
+    email: string,
+    otp: string,
+  ): Promise<EmailDeliveryResult> {
+    return this.sendOtpEmail({
+      email,
+      otp,
+      subject: 'Reset your Online Study Platform password',
+      text: `Your password reset code is ${otp}. It expires in 10 minutes.`,
+      html: `<p>Your password reset code is <strong>${otp}</strong>.</p><p>This code expires in 10 minutes.</p>`,
+      logLabel: 'password reset',
+    });
+  }
+
+  private async sendOtpEmail(options: {
+    email: string;
+    otp: string;
+    subject: string;
+    text: string;
+    html: string;
+    logLabel: string;
+  }): Promise<EmailDeliveryResult> {
     const smtpHost = this.configService.get<string>('SMTP_HOST');
     const smtpPort = this.configService.get<string>('SMTP_PORT');
     const smtpUser = this.configService.get<string>('SMTP_USER');
@@ -50,22 +82,22 @@ export class EmailDeliveryService {
     try {
       const info = (await transporter.sendMail({
         from: smtpFrom,
-        to: email,
-        subject: 'Verify your Online Study Platform account',
-        text: `Your verification code is ${otp}. It expires in 10 minutes.`,
-        html: `<p>Your verification code is <strong>${otp}</strong>.</p><p>This code expires in 10 minutes.</p>`,
+        to: options.email,
+        subject: options.subject,
+        text: options.text,
+        html: options.html,
       })) as unknown;
 
-      if (!this.isRecipientAccepted(info, email)) {
+      if (!this.isRecipientAccepted(info, options.email)) {
         throw new ServiceUnavailableException('Email delivery is unavailable');
       }
 
       this.logger.log(
-        `SMTP verification email accepted: ${this.formatDeliveryInfo(info)}`,
+        `SMTP ${options.logLabel} email accepted: ${this.formatDeliveryInfo(info)}`,
       );
     } catch (error) {
       this.logger.warn(
-        `SMTP verification email delivery failed: ${this.formatSmtpError(error)}`,
+        `SMTP ${options.logLabel} email delivery failed: ${this.formatSmtpError(error)}`,
       );
       throw new ServiceUnavailableException('Email delivery is unavailable');
     }

@@ -24,6 +24,11 @@ describe('AuthService', () => {
     verifyOtp: jest.Mock;
     resendOtp: jest.Mock;
   };
+  let passwordResetService: {
+    requestOtp: jest.Mock;
+    verifyOtp: jest.Mock;
+    resetPassword: jest.Mock;
+  };
   let redis: { set: jest.Mock; getdel: jest.Mock; del: jest.Mock };
   let compare: jest.Mock;
 
@@ -83,6 +88,11 @@ describe('AuthService', () => {
       verifyOtp: jest.fn(),
       resendOtp: jest.fn(),
     };
+    passwordResetService = {
+      requestOtp: jest.fn(),
+      verifyOtp: jest.fn(),
+      resetPassword: jest.fn(),
+    };
     redis = {
       set: jest.fn().mockResolvedValue('OK'),
       getdel: jest.fn(),
@@ -96,6 +106,7 @@ describe('AuthService', () => {
       jwtService as unknown as JwtService,
       configService as unknown as ConfigService,
       emailVerificationService as never,
+      passwordResetService as never,
       redis,
     );
   });
@@ -197,6 +208,50 @@ describe('AuthService', () => {
       '123456',
     );
     expect(emailVerificationService.resendOtp).toHaveBeenCalledWith(user.email);
+  });
+
+  it('delegates password reset OTP and reset requests', async () => {
+    passwordResetService.requestOtp.mockResolvedValue({
+      email: user.email,
+      expiresInSeconds: 600,
+      resendCooldownSeconds: 60,
+      emailDelivery: 'sent',
+      message:
+        'If the email belongs to an eligible account, a password reset OTP has been sent.',
+    });
+    passwordResetService.verifyOtp.mockResolvedValue({
+      resetToken: 'reset-token',
+      expiresInSeconds: 600,
+    });
+    passwordResetService.resetPassword.mockResolvedValue(undefined);
+
+    await expect(service.requestPasswordResetOtp(user.email)).resolves.toEqual({
+      email: user.email,
+      expiresInSeconds: 600,
+      resendCooldownSeconds: 60,
+      emailDelivery: 'sent',
+      message:
+        'If the email belongs to an eligible account, a password reset OTP has been sent.',
+    });
+    await expect(
+      service.verifyPasswordResetOtp(user.email, '123456'),
+    ).resolves.toEqual({ resetToken: 'reset-token', expiresInSeconds: 600 });
+    await expect(
+      service.resetPassword({
+        resetToken: 'reset-token',
+        newPassword: 'NewPassword123!',
+      }),
+    ).resolves.toEqual({ reset: true });
+
+    expect(passwordResetService.requestOtp).toHaveBeenCalledWith(user.email);
+    expect(passwordResetService.verifyOtp).toHaveBeenCalledWith(
+      user.email,
+      '123456',
+    );
+    expect(passwordResetService.resetPassword).toHaveBeenCalledWith(
+      'reset-token',
+      'NewPassword123!',
+    );
   });
 
   it('rejects login when user is missing', async () => {

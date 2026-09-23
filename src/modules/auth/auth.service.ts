@@ -24,9 +24,15 @@ import {
   AccessTokenPayload,
   LoginDto,
   RefreshTokenPayload,
+  ResetPasswordDto,
 } from './dto/auth.dto';
 import { EmailVerificationService } from './email-verification.service';
 import type { OtpDispatchResult } from './email-verification.service';
+import { PasswordResetService } from './password-reset.service';
+import type {
+  PasswordResetRequestResult,
+  PasswordResetVerifyResult,
+} from './password-reset.service';
 
 export interface AuthTokenResult {
   accessToken: string;
@@ -45,6 +51,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly emailVerificationService: EmailVerificationService,
+    private readonly passwordResetService: PasswordResetService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -65,6 +72,28 @@ export class AuthService {
 
   async resendEmailOtp(email: string): Promise<OtpDispatchResult> {
     return this.emailVerificationService.resendOtp(email);
+  }
+
+  async requestPasswordResetOtp(
+    email: string,
+  ): Promise<PasswordResetRequestResult> {
+    return this.passwordResetService.requestOtp(email);
+  }
+
+  async verifyPasswordResetOtp(
+    email: string,
+    otp: string,
+  ): Promise<PasswordResetVerifyResult> {
+    return this.passwordResetService.verifyOtp(email, otp);
+  }
+
+  async resetPassword(resetDto: ResetPasswordDto): Promise<{ reset: true }> {
+    await this.passwordResetService.resetPassword(
+      resetDto.resetToken,
+      resetDto.newPassword,
+    );
+
+    return { reset: true };
   }
 
   async login(loginDto: LoginDto): Promise<AuthTokenResult> {

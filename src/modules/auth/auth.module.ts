@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller';
 import { EmailDeliveryService } from './email-delivery.service';
 import { EmailVerificationService } from './email-verification.service';
 import { AuthService } from './auth.service';
+import { PasswordResetService } from './password-reset.service';
 import { JwtStrategy } from '../../common/strategies/jwt.strategy';
 
 @Module({
@@ -16,6 +17,7 @@ import { JwtStrategy } from '../../common/strategies/jwt.strategy';
     AuthService,
     EmailDeliveryService,
     EmailVerificationService,
+    PasswordResetService,
     JwtStrategy,
   ],
 })
