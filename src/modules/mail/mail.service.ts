@@ -6,20 +6,20 @@ import {
 import { ConfigService } from '@nestjs/config';
 import nodemailer from 'nodemailer';
 
-export interface EmailDeliveryResult {
+export interface MailDeliveryResult {
   delivered: boolean;
 }
 
 @Injectable()
-export class EmailDeliveryService {
-  private readonly logger = new Logger(EmailDeliveryService.name);
+export class MailService {
+  private readonly logger = new Logger(MailService.name);
 
   constructor(private readonly configService: ConfigService) {}
 
   async sendVerificationOtp(
     email: string,
     otp: string,
-  ): Promise<EmailDeliveryResult> {
+  ): Promise<MailDeliveryResult> {
     const smtpHost = this.configService.get<string>('SMTP_HOST');
     const smtpPort = this.configService.get<string>('SMTP_PORT');
     const smtpUser = this.configService.get<string>('SMTP_USER');
