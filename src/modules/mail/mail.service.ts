@@ -6,23 +6,22 @@ import {
 import { ConfigService } from '@nestjs/config';
 import nodemailer from 'nodemailer';
 
-export interface EmailDeliveryResult {
+export interface MailDeliveryResult {
   delivered: boolean;
 }
 
 @Injectable()
-export class EmailDeliveryService {
-  private readonly logger = new Logger(EmailDeliveryService.name);
+export class MailService {
+  private readonly logger = new Logger(MailService.name);
 
   constructor(private readonly configService: ConfigService) {}
 
   async sendVerificationOtp(
     email: string,
     otp: string,
-  ): Promise<EmailDeliveryResult> {
+  ): Promise<MailDeliveryResult> {
     return this.sendOtpEmail({
       email,
-      otp,
       subject: 'Verify your Online Study Platform account',
       text: `Your verification code is ${otp}. It expires in 10 minutes.`,
       html: `<p>Your verification code is <strong>${otp}</strong>.</p><p>This code expires in 10 minutes.</p>`,
@@ -33,10 +32,9 @@ export class EmailDeliveryService {
   async sendPasswordResetOtp(
     email: string,
     otp: string,
-  ): Promise<EmailDeliveryResult> {
+  ): Promise<MailDeliveryResult> {
     return this.sendOtpEmail({
       email,
-      otp,
       subject: 'Reset your Online Study Platform password',
       text: `Your password reset code is ${otp}. It expires in 10 minutes.`,
       html: `<p>Your password reset code is <strong>${otp}</strong>.</p><p>This code expires in 10 minutes.</p>`,
@@ -46,12 +44,11 @@ export class EmailDeliveryService {
 
   private async sendOtpEmail(options: {
     email: string;
-    otp: string;
     subject: string;
     text: string;
     html: string;
     logLabel: string;
-  }): Promise<EmailDeliveryResult> {
+  }): Promise<MailDeliveryResult> {
     const smtpHost = this.configService.get<string>('SMTP_HOST');
     const smtpPort = this.configService.get<string>('SMTP_PORT');
     const smtpUser = this.configService.get<string>('SMTP_USER');

@@ -1,6 +1,6 @@
 import { BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
-import { EmailDeliveryService } from './email-delivery.service';
+import { MailService } from '../mail/mail.service';
 import { PasswordResetService } from './password-reset.service';
 import { UserRole, UserStatus } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
@@ -16,7 +16,7 @@ describe('PasswordResetService', () => {
     findByEmail: jest.Mock;
     resetPasswordById: jest.Mock;
   };
-  let emailDeliveryService: { sendPasswordResetOtp: jest.Mock };
+  let mailService: { sendPasswordResetOtp: jest.Mock };
   let redis: {
     get: jest.Mock;
     getdel: jest.Mock;
@@ -46,7 +46,7 @@ describe('PasswordResetService', () => {
       findByEmail: jest.fn().mockResolvedValue(user),
       resetPasswordById: jest.fn().mockResolvedValue(undefined),
     };
-    emailDeliveryService = {
+    mailService = {
       sendPasswordResetOtp: jest.fn().mockResolvedValue({ delivered: true }),
     };
     redis = {
@@ -64,7 +64,7 @@ describe('PasswordResetService', () => {
 
     service = new PasswordResetService(
       usersService as unknown as UsersService,
-      emailDeliveryService as unknown as EmailDeliveryService,
+      mailService as unknown as MailService,
       redis as never,
     );
   });
@@ -90,7 +90,7 @@ describe('PasswordResetService', () => {
       'EX',
       600,
     );
-    expect(emailDeliveryService.sendPasswordResetOtp).toHaveBeenCalledWith(
+    expect(mailService.sendPasswordResetOtp).toHaveBeenCalledWith(
       'test@example.com',
       expect.stringMatching(/^\d{6}$/),
     );
@@ -110,7 +110,7 @@ describe('PasswordResetService', () => {
 
     const result = await service.requestOtp('missing@example.com');
 
-    expect(emailDeliveryService.sendPasswordResetOtp).not.toHaveBeenCalled();
+    expect(mailService.sendPasswordResetOtp).not.toHaveBeenCalled();
     expect(result).toEqual({
       email: 'missing@example.com',
       expiresInSeconds: 600,
@@ -122,7 +122,7 @@ describe('PasswordResetService', () => {
   });
 
   it('keeps the request response generic when SMTP delivery is unavailable', async () => {
-    emailDeliveryService.sendPasswordResetOtp.mockResolvedValue({
+    mailService.sendPasswordResetOtp.mockResolvedValue({
       delivered: false,
     });
 

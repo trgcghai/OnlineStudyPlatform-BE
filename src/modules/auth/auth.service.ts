@@ -1,22 +1,30 @@
 import {
+  BadRequestException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   InternalServerErrorException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import type { JwtSignOptions } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
-import { randomUUID } from 'crypto';
+import { randomInt, randomUUID } from 'crypto';
 import Redis from 'ioredis';
+import { MailService } from '../mail/mail.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { UsersService } from '../users/users.service';
 import { User, UserStatus } from '../users/entities/user.entity';
 import { UserResponse } from '../users/dto/user.dto';
 import {
   ACCESS_TOKEN_BLACKLIST_KEY_PREFIX,
+  EMAIL_VERIFICATION_COOLDOWN_KEY_PREFIX,
+  EMAIL_VERIFICATION_OTP_KEY_PREFIX,
+  EMAIL_VERIFICATION_RATE_LIMIT_KEY_PREFIX,
   REFRESH_SESSION_KEY_PREFIX,
 } from '../../common/constants/auth.constant';
 import {
@@ -26,13 +34,29 @@ import {
   RefreshTokenPayload,
   ResetPasswordDto,
 } from './dto/auth.dto';
-import { EmailVerificationService } from './email-verification.service';
-import type { OtpDispatchResult } from './email-verification.service';
 import { PasswordResetService } from './password-reset.service';
 import type {
   PasswordResetRequestResult,
   PasswordResetVerifyResult,
 } from './password-reset.service';
+
+const OTP_TTL_SECONDS = 10 * 60;
+const RESEND_COOLDOWN_SECONDS = 60;
+const RESEND_RATE_LIMIT_SECONDS = 60 * 60;
+const MAX_RESENDS_PER_WINDOW = 5;
+const OTP_SALT_ROUNDS = 10;
+
+interface StoredOtp {
+  hash: string;
+  email: string;
+}
+
+export interface OtpDispatchResult {
+  email: string;
+  expiresInSeconds: number;
+  resendCooldownSeconds: number;
+  emailDelivery: 'sent' | 'unavailable';
+}
 
 export interface AuthTokenResult {
   accessToken: string;
@@ -50,7 +74,7 @@ export class AuthService {
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
-    private readonly emailVerificationService: EmailVerificationService,
+    private readonly mailService: MailService,
     private readonly passwordResetService: PasswordResetService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
@@ -59,19 +83,55 @@ export class AuthService {
     const user = await this.usersService.create(registerDto, {
       status: UserStatus.PENDING_VERIFICATION,
     });
-    const dispatch = await this.emailVerificationService.sendInitialOtp(
-      user.email,
-    );
+    const dispatch = await this.issueEmailVerificationOtp(user.email, false);
 
     return { user, ...dispatch };
   }
 
   async verifyEmail(email: string, otp: string): Promise<UserResponse> {
-    return this.emailVerificationService.verifyOtp(email, otp);
+    const normalizedEmail = this.normalizeEmail(email);
+    const user = await this.usersService.findByEmail(normalizedEmail);
+
+    if (!user) {
+      throw new BadRequestException('Invalid or expired OTP');
+    }
+
+    if (user.status === UserStatus.ACTIVE) {
+      throw new BadRequestException('OTP has already been used');
+    }
+
+    if (user.status !== UserStatus.PENDING_VERIFICATION) {
+      throw new ForbiddenException('Account disabled');
+    }
+
+    const otpKey = this.getEmailVerificationOtpKey(normalizedEmail);
+    const storedValue = await this.redis.get(otpKey);
+
+    if (!storedValue) {
+      throw new BadRequestException('Invalid or expired OTP');
+    }
+
+    const stored = JSON.parse(storedValue) as StoredOtp;
+    const isValid = await bcrypt.compare(otp, stored.hash);
+
+    if (!isValid) {
+      throw new BadRequestException('Invalid or expired OTP');
+    }
+
+    await this.redis.del(otpKey);
+
+    return this.usersService.activatePendingUserByEmail(stored.email);
   }
 
   async resendEmailOtp(email: string): Promise<OtpDispatchResult> {
-    return this.emailVerificationService.resendOtp(email);
+    const normalizedEmail = this.normalizeEmail(email);
+    const user = await this.usersService.findByEmail(normalizedEmail);
+
+    if (!user || user.status !== UserStatus.PENDING_VERIFICATION) {
+      return this.createOtpDispatchResult(normalizedEmail, 'unavailable');
+    }
+
+    return this.issueEmailVerificationOtp(normalizedEmail, true);
   }
 
   async requestPasswordResetOtp(
@@ -179,6 +239,117 @@ export class AuthService {
 
   isProduction(): boolean {
     return process.env.NODE_ENV === 'production';
+  }
+
+  private async issueEmailVerificationOtp(
+    email: string,
+    enforceRateLimit: boolean,
+  ): Promise<OtpDispatchResult> {
+    const normalizedEmail = this.normalizeEmail(email);
+    const user = await this.usersService.findByEmail(normalizedEmail);
+
+    if (!user || user.status !== UserStatus.PENDING_VERIFICATION) {
+      throw new BadRequestException('Account is not pending verification');
+    }
+
+    if (enforceRateLimit) {
+      await this.assertCanResendEmailVerificationOtp(normalizedEmail);
+    }
+
+    const otp = String(randomInt(100000, 1000000));
+    const stored: StoredOtp = {
+      hash: await bcrypt.hash(otp, OTP_SALT_ROUNDS),
+      email: normalizedEmail,
+    };
+
+    await this.redis.set(
+      this.getEmailVerificationOtpKey(normalizedEmail),
+      JSON.stringify(stored),
+      'EX',
+      OTP_TTL_SECONDS,
+    );
+
+    let delivery: OtpDispatchResult['emailDelivery'] = 'sent';
+
+    try {
+      const result = await this.mailService.sendVerificationOtp(
+        normalizedEmail,
+        otp,
+      );
+      delivery = result.delivered ? 'sent' : 'unavailable';
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) {
+        delivery = 'unavailable';
+      } else {
+        throw error;
+      }
+    }
+
+    await this.redis.set(
+      this.getEmailVerificationCooldownKey(normalizedEmail),
+      '1',
+      'EX',
+      RESEND_COOLDOWN_SECONDS,
+    );
+
+    return this.createOtpDispatchResult(normalizedEmail, delivery);
+  }
+
+  private async assertCanResendEmailVerificationOtp(
+    email: string,
+  ): Promise<void> {
+    const cooldownTtl = await this.redis.ttl(
+      this.getEmailVerificationCooldownKey(email),
+    );
+
+    if (cooldownTtl > 0) {
+      throw new HttpException(
+        `Please wait ${cooldownTtl} seconds before requesting another OTP`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const rateLimitKey = this.getEmailVerificationRateLimitKey(email);
+    const attempts = await this.redis.incr(rateLimitKey);
+
+    if (attempts === 1) {
+      await this.redis.expire(rateLimitKey, RESEND_RATE_LIMIT_SECONDS);
+    }
+
+    if (attempts > MAX_RESENDS_PER_WINDOW) {
+      throw new HttpException(
+        'Too many OTP requests',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  private createOtpDispatchResult(
+    email: string,
+    emailDelivery: OtpDispatchResult['emailDelivery'],
+  ): OtpDispatchResult {
+    return {
+      email,
+      expiresInSeconds: OTP_TTL_SECONDS,
+      resendCooldownSeconds: RESEND_COOLDOWN_SECONDS,
+      emailDelivery,
+    };
+  }
+
+  private normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
+  }
+
+  private getEmailVerificationOtpKey(email: string): string {
+    return `${EMAIL_VERIFICATION_OTP_KEY_PREFIX}:${email}`;
+  }
+
+  private getEmailVerificationCooldownKey(email: string): string {
+    return `${EMAIL_VERIFICATION_COOLDOWN_KEY_PREFIX}:${email}`;
+  }
+
+  private getEmailVerificationRateLimitKey(email: string): string {
+    return `${EMAIL_VERIFICATION_RATE_LIMIT_KEY_PREFIX}:${email}`;
   }
 
   private async issueTokens(user: User): Promise<AuthTokenResult> {

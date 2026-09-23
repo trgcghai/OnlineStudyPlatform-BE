@@ -9,12 +9,17 @@ import {
 import * as bcrypt from 'bcryptjs';
 import { randomInt, randomUUID } from 'crypto';
 import Redis from 'ioredis';
-import { REFRESH_SESSION_KEY_PREFIX } from '../../common/constants/auth.constant';
+import {
+  PASSWORD_RESET_COOLDOWN_KEY_PREFIX,
+  PASSWORD_RESET_OTP_KEY_PREFIX,
+  PASSWORD_RESET_RATE_LIMIT_KEY_PREFIX,
+  PASSWORD_RESET_TOKEN_KEY_PREFIX,
+  REFRESH_SESSION_KEY_PREFIX,
+} from '../../common/constants/auth.constant';
+import { MailService } from '../mail/mail.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { UserStatus } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
-import { EmailDeliveryService } from './email-delivery.service';
-import type { OtpDispatchResult } from './email-verification.service';
 
 const RESET_OTP_TTL_SECONDS = 10 * 60;
 const RESET_TOKEN_TTL_SECONDS = 10 * 60;
@@ -34,7 +39,11 @@ interface StoredResetToken {
   userId: string;
 }
 
-export interface PasswordResetRequestResult extends OtpDispatchResult {
+export interface PasswordResetRequestResult {
+  email: string;
+  expiresInSeconds: number;
+  resendCooldownSeconds: number;
+  emailDelivery: 'sent' | 'unavailable';
   message: string;
 }
 
@@ -47,7 +56,7 @@ export interface PasswordResetVerifyResult {
 export class PasswordResetService {
   constructor(
     private readonly usersService: UsersService,
-    private readonly emailDeliveryService: EmailDeliveryService,
+    private readonly mailService: MailService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -78,10 +87,7 @@ export class PasswordResetService {
     );
 
     try {
-      await this.emailDeliveryService.sendPasswordResetOtp(
-        normalizedEmail,
-        otp,
-      );
+      await this.mailService.sendPasswordResetOtp(normalizedEmail, otp);
     } catch (error) {
       if (!(error instanceof ServiceUnavailableException)) {
         throw error;
@@ -212,18 +218,18 @@ export class PasswordResetService {
   }
 
   private getOtpKey(email: string): string {
-    return `auth:password-reset:otp:${email}`;
+    return `${PASSWORD_RESET_OTP_KEY_PREFIX}:${email}`;
   }
 
   private getCooldownKey(email: string): string {
-    return `auth:password-reset:cooldown:${email}`;
+    return `${PASSWORD_RESET_COOLDOWN_KEY_PREFIX}:${email}`;
   }
 
   private getRateLimitKey(email: string): string {
-    return `auth:password-reset:rate:${email}`;
+    return `${PASSWORD_RESET_RATE_LIMIT_KEY_PREFIX}:${email}`;
   }
 
   private getResetTokenKey(resetToken: string): string {
-    return `auth:password-reset:token:${resetToken}`;
+    return `${PASSWORD_RESET_TOKEN_KEY_PREFIX}:${resetToken}`;
   }
 }

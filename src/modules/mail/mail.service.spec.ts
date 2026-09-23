@@ -1,7 +1,7 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import nodemailer from 'nodemailer';
-import { EmailDeliveryService } from './email-delivery.service';
+import { MailService } from './mail.service';
 
 jest.mock('nodemailer', () => ({
   __esModule: true,
@@ -10,8 +10,8 @@ jest.mock('nodemailer', () => ({
   },
 }));
 
-describe('EmailDeliveryService', () => {
-  let service: EmailDeliveryService;
+describe('MailService', () => {
+  let service: MailService;
   let configService: { get: jest.Mock };
   let sendMail: jest.Mock;
 
@@ -34,9 +34,7 @@ describe('EmailDeliveryService', () => {
       rejected: [],
     });
     (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
-    service = new EmailDeliveryService(
-      configService as unknown as ConfigService,
-    );
+    service = new MailService(configService as unknown as ConfigService);
   });
 
   afterEach(() => {
