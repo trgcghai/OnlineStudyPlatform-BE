@@ -6,12 +6,11 @@ import { MailModule } from '../mail/mail.module';
 import { UsersModule } from '../users/users.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
-import { PasswordResetService } from './password-reset.service';
 import { JwtStrategy } from '../../common/strategies/jwt.strategy';
 
 @Module({
   imports: [UsersModule, MailModule, PassportModule, JwtModule.register({})],
   controllers: [AuthController],
-  providers: [AuthService, PasswordResetService, JwtStrategy],
+  providers: [AuthService, JwtStrategy],
 })
 export class AuthModule {}

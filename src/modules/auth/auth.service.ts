@@ -25,6 +25,10 @@ import {
   EMAIL_VERIFICATION_COOLDOWN_KEY_PREFIX,
   EMAIL_VERIFICATION_OTP_KEY_PREFIX,
   EMAIL_VERIFICATION_RATE_LIMIT_KEY_PREFIX,
+  PASSWORD_RESET_COOLDOWN_KEY_PREFIX,
+  PASSWORD_RESET_OTP_KEY_PREFIX,
+  PASSWORD_RESET_RATE_LIMIT_KEY_PREFIX,
+  PASSWORD_RESET_TOKEN_KEY_PREFIX,
   REFRESH_SESSION_KEY_PREFIX,
 } from '../../common/constants/auth.constant';
 import {
@@ -34,21 +38,26 @@ import {
   RefreshTokenPayload,
   ResetPasswordDto,
 } from './dto/auth.dto';
-import { PasswordResetService } from './password-reset.service';
-import type {
-  PasswordResetRequestResult,
-  PasswordResetVerifyResult,
-} from './password-reset.service';
 
 const OTP_TTL_SECONDS = 10 * 60;
 const RESEND_COOLDOWN_SECONDS = 60;
 const RESEND_RATE_LIMIT_SECONDS = 60 * 60;
 const MAX_RESENDS_PER_WINDOW = 5;
 const OTP_SALT_ROUNDS = 10;
+const RESET_TOKEN_TTL_SECONDS = 10 * 60;
 
 interface StoredOtp {
   hash: string;
   email: string;
+}
+
+interface StoredResetOtp extends StoredOtp {
+  userId: string;
+}
+
+interface StoredResetToken {
+  email: string;
+  userId: string;
 }
 
 export interface OtpDispatchResult {
@@ -68,6 +77,15 @@ export interface RegisterResult extends OtpDispatchResult {
   user: UserResponse;
 }
 
+export interface PasswordResetRequestResult extends OtpDispatchResult {
+  message: string;
+}
+
+export interface PasswordResetVerifyResult {
+  resetToken: string;
+  expiresInSeconds: number;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -75,7 +93,6 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
-    private readonly passwordResetService: PasswordResetService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -137,21 +154,105 @@ export class AuthService {
   async requestPasswordResetOtp(
     email: string,
   ): Promise<PasswordResetRequestResult> {
-    return this.passwordResetService.requestOtp(email);
+    const normalizedEmail = this.normalizeEmail(email);
+
+    await this.assertCanRequestPasswordReset(normalizedEmail);
+
+    const user = await this.usersService.findByEmail(normalizedEmail);
+
+    if (!user || user.status !== UserStatus.ACTIVE) {
+      await this.setPasswordResetCooldown(normalizedEmail);
+      return this.createPasswordResetDispatchResult(normalizedEmail);
+    }
+
+    const otp = String(randomInt(100000, 1000000));
+    const stored: StoredResetOtp = {
+      hash: await bcrypt.hash(otp, OTP_SALT_ROUNDS),
+      email: normalizedEmail,
+      userId: user.id,
+    };
+
+    await this.redis.set(
+      this.getPasswordResetOtpKey(normalizedEmail),
+      JSON.stringify(stored),
+      'EX',
+      OTP_TTL_SECONDS,
+    );
+
+    try {
+      await this.mailService.sendPasswordResetOtp(normalizedEmail, otp);
+    } catch (error) {
+      if (!(error instanceof ServiceUnavailableException)) {
+        throw error;
+      }
+    }
+
+    await this.setPasswordResetCooldown(normalizedEmail);
+
+    return this.createPasswordResetDispatchResult(normalizedEmail);
   }
 
   async verifyPasswordResetOtp(
     email: string,
     otp: string,
   ): Promise<PasswordResetVerifyResult> {
-    return this.passwordResetService.verifyOtp(email, otp);
+    const normalizedEmail = this.normalizeEmail(email);
+    const otpKey = this.getPasswordResetOtpKey(normalizedEmail);
+    const storedValue = await this.redis.get(otpKey);
+
+    if (!storedValue) {
+      throw new BadRequestException('Invalid or expired OTP');
+    }
+
+    const stored = JSON.parse(storedValue) as StoredResetOtp;
+    const isValid = await bcrypt.compare(otp, stored.hash);
+
+    if (!isValid || stored.email !== normalizedEmail) {
+      throw new BadRequestException('Invalid or expired OTP');
+    }
+
+    const user = await this.usersService.findByEmail(normalizedEmail);
+
+    if (
+      !user ||
+      user.id !== stored.userId ||
+      user.status !== UserStatus.ACTIVE
+    ) {
+      throw new BadRequestException('Invalid or expired OTP');
+    }
+
+    await this.redis.del(otpKey);
+
+    const resetToken = randomUUID();
+    const resetGrant: StoredResetToken = {
+      email: normalizedEmail,
+      userId: user.id,
+    };
+
+    await this.redis.set(
+      this.getPasswordResetTokenKey(resetToken),
+      JSON.stringify(resetGrant),
+      'EX',
+      RESET_TOKEN_TTL_SECONDS,
+    );
+
+    return { resetToken, expiresInSeconds: RESET_TOKEN_TTL_SECONDS };
   }
 
   async resetPassword(resetDto: ResetPasswordDto): Promise<{ reset: true }> {
-    await this.passwordResetService.resetPassword(
-      resetDto.resetToken,
+    const tokenKey = this.getPasswordResetTokenKey(resetDto.resetToken);
+    const storedValue = await this.redis.getdel(tokenKey);
+
+    if (!storedValue) {
+      throw new BadRequestException('Invalid or expired password reset token');
+    }
+
+    const stored = JSON.parse(storedValue) as StoredResetToken;
+    await this.usersService.resetPasswordById(
+      stored.userId,
       resetDto.newPassword,
     );
+    await this.revokeRefreshSessions(stored.userId);
 
     return { reset: true };
   }
@@ -350,6 +451,81 @@ export class AuthService {
 
   private getEmailVerificationRateLimitKey(email: string): string {
     return `${EMAIL_VERIFICATION_RATE_LIMIT_KEY_PREFIX}:${email}`;
+  }
+
+  private async assertCanRequestPasswordReset(email: string): Promise<void> {
+    const cooldownTtl = await this.redis.ttl(
+      this.getPasswordResetCooldownKey(email),
+    );
+
+    if (cooldownTtl > 0) {
+      throw new HttpException(
+        `Please wait ${cooldownTtl} seconds before requesting another OTP`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const rateLimitKey = this.getPasswordResetRateLimitKey(email);
+    const attempts = await this.redis.incr(rateLimitKey);
+
+    if (attempts === 1) {
+      await this.redis.expire(rateLimitKey, RESEND_RATE_LIMIT_SECONDS);
+    }
+
+    if (attempts > MAX_RESENDS_PER_WINDOW) {
+      throw new HttpException(
+        'Too many OTP requests',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  private async setPasswordResetCooldown(email: string): Promise<void> {
+    await this.redis.set(
+      this.getPasswordResetCooldownKey(email),
+      '1',
+      'EX',
+      RESEND_COOLDOWN_SECONDS,
+    );
+  }
+
+  private createPasswordResetDispatchResult(
+    email: string,
+  ): PasswordResetRequestResult {
+    return {
+      email,
+      expiresInSeconds: OTP_TTL_SECONDS,
+      resendCooldownSeconds: RESEND_COOLDOWN_SECONDS,
+      emailDelivery: 'sent',
+      message:
+        'If the email belongs to an eligible account, a password reset OTP has been sent.',
+    };
+  }
+
+  private async revokeRefreshSessions(userId: string): Promise<void> {
+    const keys = await this.redis.keys(
+      `${REFRESH_SESSION_KEY_PREFIX}:${userId}:*`,
+    );
+
+    if (keys.length > 0) {
+      await this.redis.del(...keys);
+    }
+  }
+
+  private getPasswordResetOtpKey(email: string): string {
+    return `${PASSWORD_RESET_OTP_KEY_PREFIX}:${email}`;
+  }
+
+  private getPasswordResetCooldownKey(email: string): string {
+    return `${PASSWORD_RESET_COOLDOWN_KEY_PREFIX}:${email}`;
+  }
+
+  private getPasswordResetRateLimitKey(email: string): string {
+    return `${PASSWORD_RESET_RATE_LIMIT_KEY_PREFIX}:${email}`;
+  }
+
+  private getPasswordResetTokenKey(resetToken: string): string {
+    return `${PASSWORD_RESET_TOKEN_KEY_PREFIX}:${resetToken}`;
   }
 
   private async issueTokens(user: User): Promise<AuthTokenResult> {
