@@ -20,14 +20,21 @@ import {
   REFRESH_SESSION_KEY_PREFIX,
 } from '../../common/constants/auth.constant';
 import {
+  RegisterDto,
   AccessTokenPayload,
   LoginDto,
   RefreshTokenPayload,
 } from './dto/auth.dto';
+import { EmailVerificationService } from './email-verification.service';
+import type { OtpDispatchResult } from './email-verification.service';
 
 export interface AuthTokenResult {
   accessToken: string;
   refreshToken: string;
+  user: UserResponse;
+}
+
+export interface RegisterResult extends OtpDispatchResult {
   user: UserResponse;
 }
 
@@ -37,8 +44,28 @@ export class AuthService {
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly emailVerificationService: EmailVerificationService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
+
+  async register(registerDto: RegisterDto): Promise<RegisterResult> {
+    const user = await this.usersService.create(registerDto, {
+      status: UserStatus.PENDING_VERIFICATION,
+    });
+    const dispatch = await this.emailVerificationService.sendInitialOtp(
+      user.email,
+    );
+
+    return { user, ...dispatch };
+  }
+
+  async verifyEmail(email: string, otp: string): Promise<UserResponse> {
+    return this.emailVerificationService.verifyOtp(email, otp);
+  }
+
+  async resendEmailOtp(email: string): Promise<OtpDispatchResult> {
+    return this.emailVerificationService.resendOtp(email);
+  }
 
   async login(loginDto: LoginDto): Promise<AuthTokenResult> {
     const invalidCredentials = new UnauthorizedException(
@@ -171,6 +198,10 @@ export class AuthService {
   }
 
   private assertActiveUser(user: User): void {
+    if (user.status === UserStatus.PENDING_VERIFICATION) {
+      throw new ForbiddenException('Email verification required');
+    }
+
     if (user.status !== UserStatus.ACTIVE) {
       throw new ForbiddenException('Account disabled');
     }

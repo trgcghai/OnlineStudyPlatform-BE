@@ -19,7 +19,12 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import { LoginDto } from './dto/auth.dto';
+import {
+  LoginDto,
+  RegisterDto,
+  ResendEmailOtpDto,
+  VerifyEmailOtpDto,
+} from './dto/auth.dto';
 import type { AuthenticatedUser } from './dto/auth.dto';
 import { GetToken } from '../../common/decorators/bearerToken.decorator';
 
@@ -46,6 +51,24 @@ export class AuthController {
       accessToken: result.accessToken,
       user: result.user,
     };
+  }
+
+  @Post('register')
+  @HttpCode(HttpStatus.CREATED)
+  register(@Body() registerDto: RegisterDto) {
+    return this.authService.register(registerDto);
+  }
+
+  @Post('email/verify')
+  @HttpCode(HttpStatus.OK)
+  verifyEmail(@Body() verifyDto: VerifyEmailOtpDto) {
+    return this.authService.verifyEmail(verifyDto.email, verifyDto.otp);
+  }
+
+  @Post('email/resend-otp')
+  @HttpCode(HttpStatus.OK)
+  resendEmailOtp(@Body() resendDto: ResendEmailOtpDto) {
+    return this.authService.resendEmailOtp(resendDto.email);
   }
 
   @Post('refresh')
