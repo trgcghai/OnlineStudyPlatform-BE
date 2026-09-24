@@ -13,3 +13,10 @@ export const PASSWORD_RESET_RATE_LIMIT_KEY_PREFIX = 'auth:password-reset:rate';
 export const PASSWORD_RESET_TOKEN_KEY_PREFIX = 'auth:password-reset:token';
 export const JWT_STRATEGY_NAME = 'jwt';
 export const ROLES_KEY = 'roles';
+
+export const OTP_TTL_SECONDS = 10 * 60;
+export const RESEND_COOLDOWN_SECONDS = 60;
+export const RESEND_RATE_LIMIT_SECONDS = 60 * 60;
+export const MAX_RESENDS_PER_WINDOW = 5;
+export const OTP_SALT_ROUNDS = 10;
+export const RESET_TOKEN_TTL_SECONDS = 10 * 60;

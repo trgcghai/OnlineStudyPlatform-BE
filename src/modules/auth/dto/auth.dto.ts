@@ -6,6 +6,7 @@ import {
   CreateUserDto,
   PASSWORD_POLICY_MESSAGE,
   PASSWORD_POLICY_REGEX,
+  UserResponse,
 } from '../../users/dto/user.dto';
 
 export class LoginDto {
@@ -96,4 +97,44 @@ export interface AuthenticatedUser {
 export interface AuthenticatedRequest extends Request {
   user: AuthenticatedUser;
   cookies: Record<string, string | undefined>;
+}
+
+export interface StoredOtp {
+  hash: string;
+  email: string;
+}
+
+export interface StoredResetOtp extends StoredOtp {
+  userId: string;
+}
+
+export interface StoredResetToken {
+  email: string;
+  userId: string;
+}
+
+export interface OtpDispatchResult {
+  email: string;
+  expiresInSeconds: number;
+  resendCooldownSeconds: number;
+  emailDelivery: 'sent' | 'unavailable';
+}
+
+export interface AuthTokenResult {
+  accessToken: string;
+  refreshToken: string;
+  user: UserResponse;
+}
+
+export interface RegisterResult extends OtpDispatchResult {
+  user: UserResponse;
+}
+
+export interface PasswordResetRequestResult extends OtpDispatchResult {
+  message: string;
+}
+
+export interface PasswordResetVerifyResult {
+  resetToken: string;
+  expiresInSeconds: number;
 }

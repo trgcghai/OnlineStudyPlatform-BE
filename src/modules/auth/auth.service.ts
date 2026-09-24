@@ -30,6 +30,12 @@ import {
   PASSWORD_RESET_RATE_LIMIT_KEY_PREFIX,
   PASSWORD_RESET_TOKEN_KEY_PREFIX,
   REFRESH_SESSION_KEY_PREFIX,
+  RESEND_COOLDOWN_SECONDS,
+  RESEND_RATE_LIMIT_SECONDS,
+  MAX_RESENDS_PER_WINDOW,
+  OTP_SALT_ROUNDS,
+  OTP_TTL_SECONDS,
+  RESET_TOKEN_TTL_SECONDS,
 } from '../../common/constants/auth.constant';
 import {
   RegisterDto,
@@ -37,54 +43,15 @@ import {
   LoginDto,
   RefreshTokenPayload,
   ResetPasswordDto,
+  StoredOtp,
+  StoredResetOtp,
+  StoredResetToken,
+  OtpDispatchResult,
+  AuthTokenResult,
+  RegisterResult,
+  PasswordResetRequestResult,
+  PasswordResetVerifyResult,
 } from './dto/auth.dto';
-
-const OTP_TTL_SECONDS = 10 * 60;
-const RESEND_COOLDOWN_SECONDS = 60;
-const RESEND_RATE_LIMIT_SECONDS = 60 * 60;
-const MAX_RESENDS_PER_WINDOW = 5;
-const OTP_SALT_ROUNDS = 10;
-const RESET_TOKEN_TTL_SECONDS = 10 * 60;
-
-interface StoredOtp {
-  hash: string;
-  email: string;
-}
-
-interface StoredResetOtp extends StoredOtp {
-  userId: string;
-}
-
-interface StoredResetToken {
-  email: string;
-  userId: string;
-}
-
-export interface OtpDispatchResult {
-  email: string;
-  expiresInSeconds: number;
-  resendCooldownSeconds: number;
-  emailDelivery: 'sent' | 'unavailable';
-}
-
-export interface AuthTokenResult {
-  accessToken: string;
-  refreshToken: string;
-  user: UserResponse;
-}
-
-export interface RegisterResult extends OtpDispatchResult {
-  user: UserResponse;
-}
-
-export interface PasswordResetRequestResult extends OtpDispatchResult {
-  message: string;
-}
-
-export interface PasswordResetVerifyResult {
-  resetToken: string;
-  expiresInSeconds: number;
-}
 
 @Injectable()
 export class AuthService {
@@ -336,10 +303,6 @@ export class AuthService {
         this.configService.getOrThrow<string>('JWT_REFRESH_TTL'),
       ) * 1000
     );
-  }
-
-  isProduction(): boolean {
-    return process.env.NODE_ENV === 'production';
   }
 
   private async issueEmailVerificationOtp(
