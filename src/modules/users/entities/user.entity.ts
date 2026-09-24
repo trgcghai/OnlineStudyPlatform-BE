@@ -18,6 +18,7 @@ export enum UserRole {
 export enum UserStatus {
   ACTIVE = 'Active',
   INACTIVE = 'Inactive',
+  PENDING_VERIFICATION = 'PendingVerification',
 }
 
 @Entity('users')

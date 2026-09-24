@@ -57,6 +57,7 @@ const BANK_CATALOG_SOURCE = 'vietqr';
 @Injectable()
 export class UsersService {
   private bankCache: BankOption[] | null = null;
+  private pendingVerificationStatusEnsured = false;
 
   constructor(
     @InjectRepository(User)
@@ -99,7 +100,7 @@ export class UsersService {
 
   async create(
     createUserDto: CreateUserDto,
-    options?: { role?: UserRole },
+    options?: { role?: UserRole; status?: UserStatus },
   ): Promise<UserResponse> {
     const { name, email, password } = createUserDto;
     if (
@@ -112,12 +113,18 @@ export class UsersService {
 
     try {
       const hashedPassword = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
+      const status = options?.status ?? UserStatus.PENDING_VERIFICATION;
+
+      if (status === UserStatus.PENDING_VERIFICATION) {
+        await this.ensurePendingVerificationStatusAvailable();
+      }
 
       const user = this.usersRepository.create({
         name: name.trim(),
         email: email.trim().toLowerCase(),
         password: hashedPassword,
         role: options?.role ?? UserRole.LEARNER,
+        status,
       });
 
       const savedUser = await this.usersRepository.save(user);
@@ -137,7 +144,44 @@ export class UsersService {
   }
 
   async createAsAdmin(dto: CreateAdminUserDto): Promise<UserResponse> {
-    return this.create(dto, { role: dto.role });
+    return this.create(dto, { role: dto.role, status: UserStatus.ACTIVE });
+  }
+
+  private async ensurePendingVerificationStatusAvailable(): Promise<void> {
+    if (this.pendingVerificationStatusEnsured) {
+      return;
+    }
+
+    try {
+      await this.usersRepository.query(
+        `ALTER TYPE "users_status_enum" ADD VALUE IF NOT EXISTS '${UserStatus.PENDING_VERIFICATION}'`,
+      );
+      this.pendingVerificationStatusEnsured = true;
+    } catch {
+      // Non-PostgreSQL tests or fresh schemas may not need manual enum updates.
+      // The following save will still surface a persistence error if the value is unsupported.
+    }
+  }
+
+  async activatePendingUserByEmail(email: string): Promise<UserResponse> {
+    const user = await this.findByEmail(email);
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.status === UserStatus.ACTIVE) {
+      return this.toUserResponse(user);
+    }
+
+    if (user.status !== UserStatus.PENDING_VERIFICATION) {
+      throw new ForbiddenException('Account disabled');
+    }
+
+    user.status = UserStatus.ACTIVE;
+    const savedUser = await this.usersRepository.save(user);
+
+    return this.toUserResponse(savedUser);
   }
 
   async findAllForAdmin(
@@ -371,6 +415,21 @@ export class UsersService {
       changePasswordDto.newPassword,
       BCRYPT_SALT_ROUNDS,
     );
+    await this.usersRepository.save(user);
+  }
+
+  async resetPasswordById(userId: string, newPassword: string): Promise<void> {
+    const user = await this.usersRepository.findOneBy({ id: userId });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.status !== UserStatus.ACTIVE) {
+      throw new ForbiddenException('Account disabled');
+    }
+
+    user.password = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
     await this.usersRepository.save(user);
   }
 

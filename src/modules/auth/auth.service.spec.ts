@@ -1,25 +1,49 @@
 import {
+  BadRequestException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   InternalServerErrorException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
+import { MailService } from '../mail/mail.service';
 import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { User, UserRole, UserStatus } from '../users/entities/user.entity';
 
 jest.mock('bcryptjs', () => ({
+  hash: jest.fn().mockResolvedValue('hashed-otp'),
   compare: jest.fn(),
 }));
 
 describe('AuthService', () => {
   let service: AuthService;
-  let usersService: { findByEmail: jest.Mock; findById: jest.Mock };
+  let usersService: {
+    create: jest.Mock;
+    findByEmail: jest.Mock;
+    findById: jest.Mock;
+    activatePendingUserByEmail: jest.Mock;
+    resetPasswordById: jest.Mock;
+  };
   let jwtService: { signAsync: jest.Mock; verifyAsync: jest.Mock };
   let configService: { getOrThrow: jest.Mock };
-  let redis: { set: jest.Mock; getdel: jest.Mock; del: jest.Mock };
+  let mailService: {
+    sendVerificationOtp: jest.Mock;
+    sendPasswordResetOtp: jest.Mock;
+  };
+  let redis: {
+    get: jest.Mock;
+    set: jest.Mock;
+    getdel: jest.Mock;
+    del: jest.Mock;
+    ttl: jest.Mock;
+    incr: jest.Mock;
+    expire: jest.Mock;
+    keys: jest.Mock;
+  };
   let compare: jest.Mock;
 
   const user = {
@@ -47,8 +71,11 @@ describe('AuthService', () => {
 
   beforeEach(() => {
     usersService = {
+      create: jest.fn(),
       findByEmail: jest.fn(),
       findById: jest.fn(),
+      activatePendingUserByEmail: jest.fn(),
+      resetPasswordById: jest.fn(),
     };
     jwtService = {
       signAsync: jest.fn((payload: { sessionId?: string }) =>
@@ -68,10 +95,19 @@ describe('AuthService', () => {
         return values[key];
       }),
     };
+    mailService = {
+      sendVerificationOtp: jest.fn().mockResolvedValue({ delivered: true }),
+      sendPasswordResetOtp: jest.fn().mockResolvedValue({ delivered: true }),
+    };
     redis = {
+      get: jest.fn(),
       set: jest.fn().mockResolvedValue('OK'),
       getdel: jest.fn(),
       del: jest.fn().mockResolvedValue(1),
+      ttl: jest.fn().mockResolvedValue(-2),
+      incr: jest.fn().mockResolvedValue(1),
+      expire: jest.fn().mockResolvedValue(1),
+      keys: jest.fn().mockResolvedValue([]),
     };
     compare = bcrypt.compare as jest.Mock;
     compare.mockResolvedValue(true);
@@ -80,7 +116,8 @@ describe('AuthService', () => {
       usersService as unknown as UsersService,
       jwtService as unknown as JwtService,
       configService as unknown as ConfigService,
-      redis,
+      mailService as unknown as MailService,
+      redis as never,
     );
   });
 
@@ -125,6 +162,279 @@ describe('AuthService', () => {
     );
   });
 
+  it('register creates a pending user and sends an email verification OTP', async () => {
+    const pendingUser = {
+      ...safeUser,
+      status: UserStatus.PENDING_VERIFICATION,
+    };
+    usersService.create.mockResolvedValue(pendingUser);
+    usersService.findByEmail.mockResolvedValue(pendingUser);
+
+    const result = await service.register({
+      name: user.name,
+      email: user.email,
+      password: 'Password123!',
+    });
+
+    expect(usersService.create).toHaveBeenCalledWith(
+      { name: user.name, email: user.email, password: 'Password123!' },
+      { status: UserStatus.PENDING_VERIFICATION },
+    );
+    expect(bcrypt.hash).toHaveBeenCalledWith(
+      expect.stringMatching(/^\d{6}$/),
+      10,
+    );
+    expect(redis.set).toHaveBeenCalledWith(
+      'auth:email-verification:otp:test@example.com',
+      JSON.stringify({ hash: 'hashed-otp', email: user.email }),
+      'EX',
+      600,
+    );
+    expect(mailService.sendVerificationOtp).toHaveBeenCalledWith(
+      user.email,
+      expect.stringMatching(/^\d{6}$/),
+    );
+    expect(result).toEqual({
+      user: pendingUser,
+      email: user.email,
+      expiresInSeconds: 600,
+      resendCooldownSeconds: 60,
+      emailDelivery: 'sent',
+    });
+  });
+
+  it('verifies a valid OTP once and activates the pending account', async () => {
+    const pendingUser = {
+      ...user,
+      status: UserStatus.PENDING_VERIFICATION,
+    };
+    usersService.findByEmail.mockResolvedValue(pendingUser);
+    usersService.activatePendingUserByEmail.mockResolvedValue(safeUser);
+    redis.get.mockResolvedValue(
+      JSON.stringify({ hash: 'hashed-otp', email: user.email }),
+    );
+
+    await expect(service.verifyEmail(user.email, '123456')).resolves.toBe(
+      safeUser,
+    );
+    expect(compare).toHaveBeenCalledWith('123456', 'hashed-otp');
+    expect(redis.del).toHaveBeenCalledWith(
+      'auth:email-verification:otp:test@example.com',
+    );
+    expect(usersService.activatePendingUserByEmail).toHaveBeenCalledWith(
+      user.email,
+    );
+  });
+
+  it('resends an OTP for a pending account', async () => {
+    usersService.findByEmail.mockResolvedValue({
+      ...user,
+      status: UserStatus.PENDING_VERIFICATION,
+    });
+
+    await expect(service.resendEmailOtp(user.email)).resolves.toEqual({
+      email: user.email,
+      expiresInSeconds: 600,
+      resendCooldownSeconds: 60,
+      emailDelivery: 'sent',
+    });
+    expect(redis.ttl).toHaveBeenCalledWith(
+      'auth:email-verification:cooldown:test@example.com',
+    );
+    expect(redis.incr).toHaveBeenCalledWith(
+      'auth:email-verification:rate:test@example.com',
+    );
+    expect(mailService.sendVerificationOtp).toHaveBeenCalledWith(
+      user.email,
+      expect.stringMatching(/^\d{6}$/),
+    );
+  });
+
+  it('rejects an invalid or expired OTP', async () => {
+    usersService.findByEmail.mockResolvedValue({
+      ...user,
+      status: UserStatus.PENDING_VERIFICATION,
+    });
+    redis.get.mockResolvedValue(null);
+
+    await expect(service.verifyEmail(user.email, '123456')).rejects.toEqual(
+      new BadRequestException('Invalid or expired OTP'),
+    );
+    expect(usersService.activatePendingUserByEmail).not.toHaveBeenCalled();
+  });
+
+  it('rejects an OTP for an already verified account', async () => {
+    usersService.findByEmail.mockResolvedValue(user);
+
+    await expect(service.verifyEmail(user.email, '123456')).rejects.toEqual(
+      new BadRequestException('OTP has already been used'),
+    );
+  });
+
+  it('blocks OTP resend during cooldown', async () => {
+    usersService.findByEmail.mockResolvedValue({
+      ...user,
+      status: UserStatus.PENDING_VERIFICATION,
+    });
+    redis.ttl.mockResolvedValue(45);
+
+    await expect(service.resendEmailOtp(user.email)).rejects.toEqual(
+      new HttpException(
+        'Please wait 45 seconds before requesting another OTP',
+        HttpStatus.TOO_MANY_REQUESTS,
+      ),
+    );
+  });
+
+  it('rate limits repeated OTP resends', async () => {
+    usersService.findByEmail.mockResolvedValue({
+      ...user,
+      status: UserStatus.PENDING_VERIFICATION,
+    });
+    redis.incr.mockResolvedValue(6);
+
+    await expect(service.resendEmailOtp(user.email)).rejects.toEqual(
+      new HttpException('Too many OTP requests', HttpStatus.TOO_MANY_REQUESTS),
+    );
+  });
+
+  it('requests a password reset OTP for an active account', async () => {
+    usersService.findByEmail.mockResolvedValue(user);
+
+    await expect(
+      service.requestPasswordResetOtp(' Test@Example.COM '),
+    ).resolves.toEqual({
+      email: user.email,
+      expiresInSeconds: 600,
+      resendCooldownSeconds: 60,
+      emailDelivery: 'sent',
+      message:
+        'If the email belongs to an eligible account, a password reset OTP has been sent.',
+    });
+
+    expect(redis.set).toHaveBeenCalledWith(
+      'auth:password-reset:otp:test@example.com',
+      JSON.stringify({
+        hash: 'hashed-otp',
+        email: user.email,
+        userId: user.id,
+      }),
+      'EX',
+      600,
+    );
+    expect(mailService.sendPasswordResetOtp).toHaveBeenCalledWith(
+      user.email,
+      expect.stringMatching(/^\d{6}$/),
+    );
+  });
+
+  it('keeps password reset requests generic for missing accounts', async () => {
+    usersService.findByEmail.mockResolvedValue(null);
+
+    await expect(
+      service.requestPasswordResetOtp('missing@example.com'),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        email: 'missing@example.com',
+        emailDelivery: 'sent',
+      }),
+    );
+    expect(mailService.sendPasswordResetOtp).not.toHaveBeenCalled();
+  });
+
+  it('verifies a password reset OTP and issues a short-lived token', async () => {
+    usersService.findByEmail.mockResolvedValue(user);
+    redis.get.mockResolvedValue(
+      JSON.stringify({
+        hash: 'hashed-otp',
+        email: user.email,
+        userId: user.id,
+      }),
+    );
+
+    const result = await service.verifyPasswordResetOtp(user.email, '123456');
+
+    expect(compare).toHaveBeenCalledWith('123456', 'hashed-otp');
+    expect(redis.del).toHaveBeenCalledWith(
+      'auth:password-reset:otp:test@example.com',
+    );
+    expect(redis.set).toHaveBeenCalledWith(
+      expect.stringMatching(/^auth:password-reset:token:.+$/),
+      JSON.stringify({ email: user.email, userId: user.id }),
+      'EX',
+      600,
+    );
+    expect(result.resetToken).toEqual(expect.any(String));
+    expect(result.expiresInSeconds).toBe(600);
+  });
+
+  it('rejects an invalid or expired password reset OTP', async () => {
+    redis.get.mockResolvedValue(null);
+
+    await expect(
+      service.verifyPasswordResetOtp(user.email, '123456'),
+    ).rejects.toEqual(new BadRequestException('Invalid or expired OTP'));
+  });
+
+  it('applies cooldown and rate limits to password reset requests', async () => {
+    redis.ttl.mockResolvedValueOnce(30);
+
+    await expect(service.requestPasswordResetOtp(user.email)).rejects.toEqual(
+      new HttpException(
+        'Please wait 30 seconds before requesting another OTP',
+        HttpStatus.TOO_MANY_REQUESTS,
+      ),
+    );
+
+    redis.ttl.mockResolvedValueOnce(-2);
+    redis.incr.mockResolvedValueOnce(6);
+
+    await expect(service.requestPasswordResetOtp(user.email)).rejects.toEqual(
+      new HttpException('Too many OTP requests', HttpStatus.TOO_MANY_REQUESTS),
+    );
+  });
+
+  it('resets the password and revokes existing refresh sessions', async () => {
+    redis.getdel.mockResolvedValue(
+      JSON.stringify({ email: user.email, userId: user.id }),
+    );
+    redis.keys.mockResolvedValue([
+      'auth:refresh:user-id:first',
+      'auth:refresh:user-id:second',
+    ]);
+
+    await expect(
+      service.resetPassword({
+        resetToken: 'reset-token',
+        newPassword: 'NewPassword123!',
+      }),
+    ).resolves.toEqual({ reset: true });
+
+    expect(usersService.resetPasswordById).toHaveBeenCalledWith(
+      user.id,
+      'NewPassword123!',
+    );
+    expect(redis.keys).toHaveBeenCalledWith('auth:refresh:user-id:*');
+    expect(redis.del).toHaveBeenCalledWith(
+      'auth:refresh:user-id:first',
+      'auth:refresh:user-id:second',
+    );
+  });
+
+  it('blocks reuse of a password reset token', async () => {
+    redis.getdel.mockResolvedValue(null);
+
+    await expect(
+      service.resetPassword({
+        resetToken: 'used-token',
+        newPassword: 'NewPassword123!',
+      }),
+    ).rejects.toEqual(
+      new BadRequestException('Invalid or expired password reset token'),
+    );
+    expect(usersService.resetPasswordById).not.toHaveBeenCalled();
+  });
+
   it('rejects login when user is missing', async () => {
     usersService.findByEmail.mockResolvedValue(null);
 
@@ -151,6 +461,17 @@ describe('AuthService', () => {
     await expect(
       service.login({ email: user.email, password: 'Password123!' }),
     ).rejects.toEqual(new ForbiddenException('Account disabled'));
+  });
+
+  it('rejects login when email verification is pending', async () => {
+    usersService.findByEmail.mockResolvedValue({
+      ...user,
+      status: UserStatus.PENDING_VERIFICATION,
+    });
+
+    await expect(
+      service.login({ email: user.email, password: 'Password123!' }),
+    ).rejects.toEqual(new ForbiddenException('Email verification required'));
   });
 
   it('refresh verifies token, checks session, reloads user, rotates session, and returns new tokens', async () => {
@@ -272,6 +593,22 @@ describe('AuthService', () => {
     expect(redis.del).not.toHaveBeenCalled();
     expect(jwtService.signAsync).not.toHaveBeenCalled();
     expect(redis.set).not.toHaveBeenCalled();
+  });
+
+  it('rejects refresh when email verification is pending', async () => {
+    jwtService.verifyAsync.mockResolvedValue({
+      sub: user.id,
+      sessionId: 'old',
+    });
+    redis.getdel.mockResolvedValue(user.id);
+    usersService.findById.mockResolvedValue({
+      ...user,
+      status: UserStatus.PENDING_VERIFICATION,
+    });
+
+    await expect(service.refresh('old-refresh-token')).rejects.toEqual(
+      new ForbiddenException('Email verification required'),
+    );
   });
 
   it('rejects invalid token TTL configuration', async () => {

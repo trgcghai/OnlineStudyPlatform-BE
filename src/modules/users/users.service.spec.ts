@@ -28,6 +28,7 @@ describe('UsersService', () => {
   let repo: {
     create: jest.Mock;
     findOneBy: jest.Mock;
+    query: jest.Mock;
     save: jest.Mock;
     createQueryBuilder: jest.Mock;
   };
@@ -93,6 +94,7 @@ describe('UsersService', () => {
     repo = {
       create: jest.fn((input: Partial<User>) => input),
       findOneBy: jest.fn().mockResolvedValue(null),
+      query: jest.fn().mockResolvedValue(undefined),
       save: jest.fn((input: Partial<User>) => ({
         ...makeUser(),
         ...input,
@@ -258,7 +260,11 @@ describe('UsersService', () => {
         name: 'Nguyen Van A',
         email: 'test@example.com',
         password: expect.stringMatching(/^\$2[ab]\$\d+\$/),
+        status: UserStatus.PENDING_VERIFICATION,
       }),
+    );
+    expect(repo.query).toHaveBeenCalledWith(
+      `ALTER TYPE "users_status_enum" ADD VALUE IF NOT EXISTS '${UserStatus.PENDING_VERIFICATION}'`,
     );
     const savedInput = repo.create.mock.calls[0][0] as User;
     expect(savedInput.password).not.toBe(dto.password);
