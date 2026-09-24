@@ -4,6 +4,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService as NestConfigService } from '@nestjs/config';
@@ -13,7 +14,7 @@ import { FREE_COURSE_PRICE } from '../../common/constants/course.constant';
 import { CourseStatus } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { CartItem } from '../cart/entities/cart-item.entity';
-import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationsQueueService } from '../notifications/notifications-queue.service';
 import { Order } from '../orders/entities/order.entity';
 import { OrderItem } from '../orders/entities/order-item.entity';
 import { OrderStatus } from '../orders/entities/order-status.enum';
@@ -79,6 +80,8 @@ type PaymentConfirmationResult =
 
 @Injectable()
 export class PaymentsService {
+  private readonly logger = new Logger(PaymentsService.name);
+
   constructor(
     @InjectRepository(PaymentTransaction)
     private readonly transactionsRepository: Repository<PaymentTransaction>,
@@ -88,7 +91,7 @@ export class PaymentsService {
     private readonly providerEventsRepository: Repository<PaymentProviderEvent>,
     @InjectRepository(Enrollment)
     private readonly enrollmentsRepository: Repository<Enrollment>,
-    private readonly notificationsService: NotificationsService,
+    private readonly notificationsQueueService: NotificationsQueueService,
     private readonly configService: NestConfigService,
     private readonly dataSource: DataSource,
     private readonly paymentConfigService: PaymentConfigService,
@@ -706,7 +709,7 @@ export class PaymentsService {
         where: { id: transaction.id },
         relations: { order: { items: true } },
       });
-      await this.notifyPaymentSuccess(notifiedTransaction ?? transaction);
+      this.notifyPaymentSuccess(notifiedTransaction ?? transaction);
     }
   }
 
@@ -965,26 +968,39 @@ export class PaymentsService {
     });
   }
 
-  private async notifyPaymentSuccess(
-    transaction: PaymentTransaction,
-  ): Promise<void> {
+  private notifyPaymentSuccess(transaction: PaymentTransaction): void {
     const orderItems = transaction.order?.items ?? [];
     const isMultiCourse = orderItems.length > 1;
-    await this.notificationsService.createDirectNotification({
-      userId: transaction.learnerId,
-      title: 'Thanh toán thành công',
-      message: isMultiCourse
-        ? 'Bạn đã đăng ký các khóa học. Chúc bạn học tập vui vẻ!'
-        : 'Bạn đã đăng ký khóa học. Chúc bạn học tập vui vẻ!',
-      actionUrl: isMultiCourse
-        ? '/learner/courses'
-        : `/learner/courses/${orderItems[0]?.courseId}/learn`,
-      metadata: {
-        courseId: orderItems[0]?.courseId ?? null,
-        transactionId: transaction.id,
-        orderId: transaction.orderId,
-      },
-    });
+    try {
+      this.notificationsQueueService.enqueueCreateNotification({
+        kind: 'direct',
+        targetUserId: transaction.learnerId,
+        title: 'Thanh toán thành công',
+        message: isMultiCourse
+          ? 'Bạn đã đăng ký các khóa học. Chúc bạn học tập vui vẻ!'
+          : 'Bạn đã đăng ký khóa học. Chúc bạn học tập vui vẻ!',
+        actionUrl: isMultiCourse
+          ? '/learner/courses'
+          : `/learner/courses/${orderItems[0]?.courseId}/learn`,
+        metadata: {
+          courseId: orderItems[0]?.courseId ?? null,
+          transactionId: transaction.id,
+          orderId: transaction.orderId,
+        },
+        sentAt: new Date().toISOString(),
+        triggerKey: `payment-success:${transaction.id}`,
+        triggerDate: this.getNotificationTriggerDate(),
+      });
+    } catch (error) {
+      this.logger.error(
+        'Could not enqueue payment success notification',
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  private getNotificationTriggerDate(date = new Date()): string {
+    return date.toISOString().slice(0, 10);
   }
 
   private async assertOwner(

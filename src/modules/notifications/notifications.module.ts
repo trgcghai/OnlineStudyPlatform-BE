@@ -6,6 +6,7 @@ import {
 } from './entities/notification.entity';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsGateway } from './notifications.gateway';
+import { NotificationsQueueService } from './notifications-queue.service';
 import { NotificationsService } from './notifications.service';
 
 @Module({
@@ -15,7 +16,11 @@ import { NotificationsService } from './notifications.service';
     ]),
   ],
   controllers: [NotificationsController],
-  providers: [NotificationsService, NotificationsGateway],
-  exports: [NotificationsService],
+  providers: [
+    NotificationsService,
+    NotificationsQueueService,
+    NotificationsGateway,
+  ],
+  exports: [NotificationsService, NotificationsQueueService],
 })
 export class NotificationsModule {}

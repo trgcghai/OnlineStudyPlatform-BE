@@ -4,12 +4,12 @@ import {
   Inject,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
-import type { Types } from 'mongoose';
 import type { Client as MinioClient } from 'minio';
 import { DataSource, In, Not, Repository } from 'typeorm';
 import { MINIO_CLIENT } from '../../common/constants/file.constant';
@@ -19,7 +19,7 @@ import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { Lesson } from '../lessons/entities/lesson.entity';
 import type { LessonResponse } from '../lessons/dto/lesson.dto';
 import { NotificationQueue } from '../notifications/entities/notification.entity';
-import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationsQueueService } from '../notifications/notifications-queue.service';
 import { Question } from '../quizzes/entities/question.entity';
 import { Quiz } from '../quizzes/entities/quiz.entity';
 import type { QuizSummaryResponse } from '../quizzes/dto/quiz.dto';
@@ -49,12 +49,14 @@ import {
 
 @Injectable()
 export class CoursesService {
+  private readonly logger = new Logger(CoursesService.name);
+
   constructor(
     @InjectRepository(Course)
     private readonly coursesRepository: Repository<Course>,
     private readonly configService: ConfigService,
     @Inject(MINIO_CLIENT) private readonly minioClient: MinioClient,
-    private readonly notificationsService: NotificationsService,
+    private readonly notificationsQueueService: NotificationsQueueService,
     private readonly dataSource: DataSource,
     @InjectRepository(Enrollment)
     private readonly enrollmentsRepository: Repository<Enrollment>,
@@ -341,7 +343,6 @@ export class CoursesService {
     instructorId: string,
   ): Promise<CourseResponse> {
     const queryRunner = this.dataSource.createQueryRunner();
-    let createdNotificationId: Types.ObjectId | string | undefined;
 
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -372,32 +373,29 @@ export class CoursesService {
       const savedCourse = await courseRepository.save(course);
 
       try {
-        const notification =
-          await this.notificationsService.createQueueNotification({
-            queue: NotificationQueue.COURSE_APPROVAL,
-            title: 'Yêu cầu duyệt khóa học',
-            message: `${course.instructor.name} đã gửi yêu cầu xuất bản khóa học "${course.title}".`,
-            actionUrl: '/admin/courses/approvals',
-            metadata: { courseId: course.id, instructorId },
-            sentAt: new Date(),
-          });
-        createdNotificationId = notification._id;
+        await queryRunner.commitTransaction();
       } catch {
         throw new InternalServerErrorException(
-          'Could not queue course approval notification',
+          'Could not request course publication',
         );
       }
 
       try {
-        await queryRunner.commitTransaction();
-      } catch {
-        if (createdNotificationId) {
-          await this.notificationsService.deleteNotification(
-            createdNotificationId,
-          );
-        }
-        throw new InternalServerErrorException(
-          'Could not request course publication',
+        this.notificationsQueueService.enqueueCreateNotification({
+          kind: 'queue',
+          queue: NotificationQueue.COURSE_APPROVAL,
+          title: 'Yêu cầu duyệt khóa học',
+          message: `${course.instructor.name} đã gửi yêu cầu xuất bản khóa học "${course.title}".`,
+          actionUrl: '/admin/courses/approvals',
+          metadata: { courseId: course.id, instructorId },
+          sentAt: new Date().toISOString(),
+          triggerKey: `course-publication-request:${course.id}`,
+          triggerDate: this.getNotificationTriggerDate(),
+        });
+      } catch (error) {
+        this.logger.error(
+          'Could not enqueue course approval notification',
+          error instanceof Error ? error.stack : String(error),
         );
       }
 
@@ -439,8 +437,9 @@ export class CoursesService {
     const savedCourse = await this.coursesRepository.save(course);
 
     try {
-      await this.notificationsService.createDirectNotification({
-        userId: course.instructorId,
+      this.notificationsQueueService.enqueueCreateNotification({
+        kind: 'direct',
+        targetUserId: course.instructorId,
         title:
           dto.status === CourseStatus.PUBLISHED
             ? 'Khóa học đã được duyệt'
@@ -455,15 +454,22 @@ export class CoursesService {
           instructorId: course.instructorId,
           status: dto.status,
         },
-        sentAt: new Date(),
+        sentAt: new Date().toISOString(),
+        triggerKey: `course-review:${course.id}:${dto.status}`,
+        triggerDate: this.getNotificationTriggerDate(),
       });
-    } catch {
-      throw new InternalServerErrorException(
-        'Could not create course review notification',
+    } catch (error) {
+      this.logger.error(
+        'Could not enqueue course review notification',
+        error instanceof Error ? error.stack : String(error),
       );
     }
 
     return this.toCourseResponse(savedCourse);
+  }
+
+  private getNotificationTriggerDate(date = new Date()): string {
+    return date.toISOString().slice(0, 10);
   }
 
   assertCourseStatusTransition(from: CourseStatus, to: CourseStatus): void {

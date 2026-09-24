@@ -75,6 +75,39 @@ export class Notification {
     required: false,
   })
   sentAt?: Date;
+
+  @Prop({
+    type: String,
+    required: false,
+    index: true,
+  })
+  triggerKey?: string;
+
+  @Prop({
+    type: String,
+    required: false,
+    index: true,
+  })
+  triggerDate?: string;
+
+  @Prop({
+    type: String,
+    required: false,
+    index: true,
+  })
+  targetUserId?: string;
 }
 
 export const NotificationSchema = SchemaFactory.createForClass(Notification);
+
+NotificationSchema.index(
+  { triggerKey: 1, targetUserId: 1, triggerDate: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      triggerKey: { $exists: true },
+      targetUserId: { $exists: true },
+      triggerDate: { $exists: true },
+    },
+  },
+);

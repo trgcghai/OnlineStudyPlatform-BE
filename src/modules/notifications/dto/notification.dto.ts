@@ -33,6 +33,35 @@ export interface CreatedNotificationRef {
   _id: Types.ObjectId | string;
 }
 
+export type NotificationMessageKind = 'direct' | 'queue';
+
+export interface NotificationCreateMessage {
+  kind: NotificationMessageKind;
+  title: string;
+  message: string;
+  actionUrl?: string;
+  metadata?: Record<string, unknown>;
+  sentAt?: string;
+  targetUserId?: string;
+  queue?: NotificationQueue;
+  triggerKey: string;
+  triggerDate: string;
+}
+
+export interface QueueNotificationCreateResult {
+  created: boolean;
+  duplicate: boolean;
+  notificationId?: string;
+}
+
+export interface MarkAllNotificationsSeenResult {
+  modifiedCount: number;
+}
+
+export interface NotificationCreatedEvent {
+  notificationId: string;
+}
+
 export class ListNotificationsQueryDto {
   @IsOptional()
   @Type(() => Number)

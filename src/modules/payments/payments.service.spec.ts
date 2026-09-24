@@ -13,7 +13,7 @@ import {
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { Order } from '../orders/entities/order.entity';
 import { OrderItem } from '../orders/entities/order-item.entity';
-import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationsQueueService } from '../notifications/notifications-queue.service';
 import { SE_PAY_TRANSFER_IN, SePayWebhookPayload } from './dto/payment.dto';
 import {
   PaymentAuditActorType,
@@ -52,7 +52,7 @@ describe('PaymentsService', () => {
     create: jest.Mock;
     save: jest.Mock;
   };
-  let notificationsService: { createDirectNotification: jest.Mock };
+  let notificationsQueueService: { enqueueCreateNotification: jest.Mock };
   let configService: {
     get: jest.Mock;
     getOrThrow: jest.Mock;
@@ -197,7 +197,9 @@ describe('PaymentsService', () => {
       create: jest.fn((input: Partial<Enrollment>) => input),
       save: jest.fn((input: Partial<Enrollment>) => Promise.resolve(input)),
     };
-    notificationsService = { createDirectNotification: jest.fn() };
+    notificationsQueueService = {
+      enqueueCreateNotification: jest.fn().mockResolvedValue(undefined),
+    };
     configService = {
       get: jest.fn((key: string, fallback: unknown) =>
         key === 'SEPAY_PAYMENT_CODE_PREFIX' || key === 'PAYMENT_EXPIRE_MINUTES'
@@ -240,7 +242,7 @@ describe('PaymentsService', () => {
       auditsRepository as unknown as Repository<PaymentAuditLog>,
       providerEventsRepository as unknown as Repository<PaymentProviderEvent>,
       enrollmentsRepository as unknown as Repository<Enrollment>,
-      notificationsService as unknown as NotificationsService,
+      notificationsQueueService as unknown as NotificationsQueueService,
       configService as unknown as ConfigService,
       dataSource as unknown as DataSource,
       paymentConfigService as never,
@@ -973,12 +975,15 @@ describe('PaymentsService', () => {
         }),
       );
       expect(
-        notificationsService.createDirectNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: learnerId,
+          kind: 'direct',
+          targetUserId: learnerId,
           title: 'Thanh toán thành công',
           actionUrl: `/learner/courses/${courseId}/learn`,
+          triggerKey: `payment-success:${transactionId}`,
+          triggerDate: expect.any(String),
         }),
       );
     });
@@ -1019,7 +1024,35 @@ describe('PaymentsService', () => {
         expect.objectContaining({ toStatus: PaymentStatus.FAILED }),
       );
       expect(dataSource.transaction).toHaveBeenCalled();
-      expect(notificationsService.createDirectNotification).toHaveBeenCalled();
+      expect(
+        notificationsQueueService.enqueueCreateNotification,
+      ).toHaveBeenCalled();
+    });
+
+    it('keeps payment confirmation successful when notification enqueue fails', async () => {
+      configureHappyPath();
+      notificationsQueueService.enqueueCreateNotification.mockImplementationOnce(
+        () => {
+          throw new Error('rabbitmq down');
+        },
+      );
+
+      await paymentsService.processSePayWebhook(makeSePayPayload());
+
+      expect(providerEventsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          result: PaymentProviderEventResult.PROCESSED_PAID,
+        }),
+      );
+      expect(
+        notificationsQueueService.enqueueCreateNotification,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'direct',
+          targetUserId: learnerId,
+          triggerKey: `payment-success:${transactionId}`,
+        }),
+      );
     });
 
     it('marks a pending transaction expired when SePay confirms after expiresAt', async () => {
@@ -1097,7 +1130,7 @@ describe('PaymentsService', () => {
       expect(enrollmentRepo.create).not.toHaveBeenCalled();
       expect(enrollmentRepo.save).not.toHaveBeenCalled();
       expect(
-        notificationsService.createDirectNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).not.toHaveBeenCalled();
     });
 
@@ -1124,7 +1157,7 @@ describe('PaymentsService', () => {
       );
       expect(transactionsRepository.findOne).not.toHaveBeenCalled();
       expect(
-        notificationsService.createDirectNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).not.toHaveBeenCalled();
     });
 
@@ -1140,7 +1173,7 @@ describe('PaymentsService', () => {
       expect(transactionsRepository.findOne).not.toHaveBeenCalled();
       expect(transactionsRepository.save).not.toHaveBeenCalled();
       expect(
-        notificationsService.createDirectNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).not.toHaveBeenCalled();
     });
 
@@ -1175,7 +1208,7 @@ describe('PaymentsService', () => {
       expect(transactionsRepository.save).not.toHaveBeenCalled();
       expect(dataSource.transaction).not.toHaveBeenCalled();
       expect(
-        notificationsService.createDirectNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).not.toHaveBeenCalled();
     });
 
@@ -1193,7 +1226,7 @@ describe('PaymentsService', () => {
       expect(dataSource.transaction).not.toHaveBeenCalled();
       expect(transactionsRepository.save).not.toHaveBeenCalled();
       expect(
-        notificationsService.createDirectNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).not.toHaveBeenCalled();
     });
 
@@ -1245,7 +1278,7 @@ describe('PaymentsService', () => {
       expect(enrollmentRepo.create).not.toHaveBeenCalled();
       expect(enrollmentRepo.save).not.toHaveBeenCalled();
       expect(
-        notificationsService.createDirectNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).not.toHaveBeenCalled();
     });
 
@@ -1297,7 +1330,7 @@ describe('PaymentsService', () => {
       expect(enrollmentRepo.create).not.toHaveBeenCalled();
       expect(enrollmentRepo.save).not.toHaveBeenCalled();
       expect(
-        notificationsService.createDirectNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).not.toHaveBeenCalled();
     });
 
@@ -1319,7 +1352,7 @@ describe('PaymentsService', () => {
       );
       expect(transactionsRepository.save).not.toHaveBeenCalled();
       expect(
-        notificationsService.createDirectNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).not.toHaveBeenCalled();
     });
 
@@ -1363,7 +1396,7 @@ describe('PaymentsService', () => {
       expect(dataSource.transaction).not.toHaveBeenCalled();
       expect(enrollmentsRepository.findAll).not.toHaveBeenCalled();
       expect(
-        notificationsService.createDirectNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).not.toHaveBeenCalled();
     });
 
@@ -1407,7 +1440,7 @@ describe('PaymentsService', () => {
       expect(dataSource.transaction).not.toHaveBeenCalled();
       expect(enrollmentsRepository.findAll).not.toHaveBeenCalled();
       expect(
-        notificationsService.createDirectNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).not.toHaveBeenCalled();
     });
 
@@ -1420,7 +1453,7 @@ describe('PaymentsService', () => {
 
       expect(dataSource.transaction).not.toHaveBeenCalled();
       expect(
-        notificationsService.createDirectNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).not.toHaveBeenCalled();
     });
   });
