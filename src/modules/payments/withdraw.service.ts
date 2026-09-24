@@ -2,10 +2,12 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
+import { NotificationsQueueService } from '../notifications/notifications-queue.service';
 import { InstructorAccount } from '../users/entities/instructor-account.entity';
 import { User, UserRole } from '../users/entities/user.entity';
 import { ConfigService as PaymentConfigService } from './config.service';
@@ -33,6 +35,8 @@ const PAYOUT_STORE_NAME = 'KLTN LMS';
 
 @Injectable()
 export class WithdrawService {
+  private readonly logger = new Logger(WithdrawService.name);
+
   constructor(
     @InjectRepository(WithdrawRequest)
     private readonly withdrawRepository: Repository<WithdrawRequest>,
@@ -41,6 +45,9 @@ export class WithdrawService {
     private readonly paymentConfigService: PaymentConfigService,
     private readonly dataSource: DataSource,
     private readonly instructorBalanceService: InstructorBalanceService,
+    @InjectRepository(User)
+    private readonly usersRepository: Repository<User>,
+    private readonly notificationsQueueService: NotificationsQueueService,
   ) {}
 
   async create(
@@ -91,6 +98,7 @@ export class WithdrawService {
       note: this.normalizeNote(dto.note),
     });
     const saved = await this.withdrawRepository.save(withdraw);
+    await this.notifyWithdrawalSubmitted(saved);
 
     return this.toResponse(saved);
   }
@@ -252,6 +260,8 @@ export class WithdrawService {
       throw new NotFoundException('Withdraw request not found');
     }
 
+    this.notifyWithdrawalStatusChanged(saved);
+
     return this.toAdminResponse(saved);
   }
 
@@ -304,6 +314,8 @@ export class WithdrawService {
       throw new NotFoundException('Withdraw request not found');
     }
 
+    this.notifyWithdrawalStatusChanged(saved);
+
     return this.toPayoutResponse(saved, account);
   }
 
@@ -341,6 +353,8 @@ export class WithdrawService {
     if (!saved) {
       throw new NotFoundException('Withdraw request not found');
     }
+
+    this.notifyWithdrawalStatusChanged(saved);
 
     return this.toAdminResponse(saved);
   }
@@ -404,6 +418,114 @@ export class WithdrawService {
 
   private buildPayoutDescription(id: string): string {
     return `PAYOUT-WD-${id.slice(0, 8)}`;
+  }
+
+  private async notifyWithdrawalSubmitted(
+    withdraw: WithdrawRequest,
+  ): Promise<void> {
+    try {
+      const admins = await this.usersRepository.find({
+        where: { role: UserRole.ADMIN },
+      });
+
+      for (const admin of admins) {
+        this.notificationsQueueService.enqueueCreateNotification({
+          kind: 'direct',
+          targetUserId: admin.id,
+          title: 'Yêu cầu rút tiền mới',
+          message: `Giảng viên đã gửi yêu cầu rút ${withdraw.amount.toLocaleString('vi-VN')} ${withdraw.currency}.`,
+          actionUrl: '/admin/withdrawals',
+          metadata: {
+            withdrawRequestId: withdraw.id,
+            instructorId: withdraw.instructorId,
+            amount: withdraw.amount,
+            currency: withdraw.currency,
+            status: withdraw.status,
+            requestedAt: withdraw.requestedAt,
+          },
+          sentAt: new Date().toISOString(),
+          triggerKey: `withdraw-submitted:${withdraw.id}`,
+          triggerDate: this.getNotificationTriggerDate(),
+        });
+      }
+    } catch (error) {
+      this.logger.error(
+        'Could not enqueue withdrawal submitted notifications',
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  private notifyWithdrawalStatusChanged(withdraw: WithdrawRequest): void {
+    try {
+      this.notificationsQueueService.enqueueCreateNotification({
+        kind: 'direct',
+        targetUserId: withdraw.instructorId,
+        title: this.getWithdrawalStatusNotificationTitle(withdraw.status),
+        message: this.getWithdrawalStatusNotificationMessage(withdraw),
+        actionUrl: '/instructor/withdrawals',
+        metadata: {
+          withdrawRequestId: withdraw.id,
+          instructorId: withdraw.instructorId,
+          amount: withdraw.amount,
+          currency: withdraw.currency,
+          status: withdraw.status,
+          reason: withdraw.rejectReason,
+          payoutDescription: withdraw.payoutDescription,
+          payoutReference: withdraw.payoutReference,
+        },
+        sentAt: new Date().toISOString(),
+        triggerKey: `withdraw-status:${withdraw.id}:${withdraw.status}`,
+        triggerDate: this.getNotificationTriggerDate(),
+      });
+    } catch (error) {
+      this.logger.error(
+        'Could not enqueue withdrawal status notification',
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  private getWithdrawalStatusNotificationTitle(
+    status: WithdrawRequestStatus,
+  ): string {
+    if (status === WithdrawRequestStatus.PROCESSING) {
+      return 'Yêu cầu rút tiền đang được xử lý';
+    }
+
+    if (status === WithdrawRequestStatus.PROCESSED) {
+      return 'Yêu cầu rút tiền đã được thanh toán';
+    }
+
+    if (status === WithdrawRequestStatus.REJECTED) {
+      return 'Yêu cầu rút tiền bị từ chối';
+    }
+
+    return 'Cập nhật yêu cầu rút tiền';
+  }
+
+  private getWithdrawalStatusNotificationMessage(
+    withdraw: WithdrawRequest,
+  ): string {
+    if (withdraw.status === WithdrawRequestStatus.PROCESSING) {
+      return 'Admin đã bắt đầu xử lý yêu cầu rút tiền của bạn.';
+    }
+
+    if (withdraw.status === WithdrawRequestStatus.PROCESSED) {
+      return 'Yêu cầu rút tiền của bạn đã được ghi nhận là đã thanh toán.';
+    }
+
+    if (withdraw.status === WithdrawRequestStatus.REJECTED) {
+      return withdraw.rejectReason
+        ? `Yêu cầu rút tiền của bạn bị từ chối: ${withdraw.rejectReason}`
+        : 'Yêu cầu rút tiền của bạn bị từ chối.';
+    }
+
+    return 'Yêu cầu rút tiền của bạn đã được cập nhật.';
+  }
+
+  private getNotificationTriggerDate(date = new Date()): string {
+    return date.toISOString().slice(0, 10);
   }
 
   private buildVietQrUrl(

@@ -4,6 +4,7 @@ import { Course } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { Lesson } from '../lessons/entities/lesson.entity';
 import { LessonsModule } from '../lessons/lessons.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { LearnerQuizzesController } from '../quizzes/learner-quizzes.controller';
 import { QuizAttempt } from '../quizzes/entities/quiz-attempt.entity';
 import { Quiz } from '../quizzes/entities/quiz.entity';
@@ -30,6 +31,7 @@ import { LearningService } from './learning.service';
     ]),
     LessonsModule,
     CourseProgressModule,
+    NotificationsModule,
   ],
   controllers: [LearningController, LearnerQuizzesController],
   providers: [LearningService, LearningProgressService, QuizAttemptsService],
