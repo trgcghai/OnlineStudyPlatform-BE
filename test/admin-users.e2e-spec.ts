@@ -13,6 +13,7 @@ import {
   UserRole,
   UserStatus,
 } from './../src/modules/users/entities/user.entity';
+import { App } from 'supertest/types';
 
 type UserBody = {
   success: boolean;
@@ -136,7 +137,7 @@ describe('Admin user management (e2e)', () => {
   });
 
   const login = async (userEmail: string): Promise<string> => {
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .post('/auth/login')
       .send({ email: userEmail, password })
       .expect(200);
@@ -146,7 +147,7 @@ describe('Admin user management (e2e)', () => {
 
   describe('RBAC', () => {
     it('rejects anonymous access with 401', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .get('/users/admin')
         .expect(401);
 
@@ -158,7 +159,7 @@ describe('Admin user management (e2e)', () => {
       async (account) => {
         const token = await login(account.email);
 
-        const res = await request(app.getHttpServer())
+        const res = await request(app.getHttpServer() as App)
           .get('/users/admin')
           .set('Authorization', `Bearer ${token}`)
           .expect(403);
@@ -170,7 +171,7 @@ describe('Admin user management (e2e)', () => {
     it('allows the Admin to list users', async () => {
       const token = await login(users.admin.email);
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .get('/users/admin')
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
@@ -190,7 +191,7 @@ describe('Admin user management (e2e)', () => {
     it('filters by role=Instructor and only returns instructors', async () => {
       const token = await login(users.admin.email);
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .get('/users/admin?role=Instructor')
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
@@ -205,7 +206,7 @@ describe('Admin user management (e2e)', () => {
     it('filters by status=Inactive', async () => {
       const token = await login(users.admin.email);
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .get('/users/admin?status=Inactive')
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
@@ -222,7 +223,7 @@ describe('Admin user management (e2e)', () => {
     it('searches by name/email substring', async () => {
       const token = await login(users.admin.email);
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .get(`/users/admin?q=${encodeURIComponent(users.learner.name)}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
@@ -236,7 +237,7 @@ describe('Admin user management (e2e)', () => {
     it('rejects an invalid role filter with 400', async () => {
       const token = await login(users.admin.email);
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .get('/users/admin?role=Admin')
         .set('Authorization', `Bearer ${token}`)
         .expect(400);
@@ -256,7 +257,7 @@ describe('Admin user management (e2e)', () => {
       const email = `admin-mgmt-created-instructor-${suffix}@example.com`;
       createdViaApi.push({ email });
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .post('/users/admin')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
@@ -282,7 +283,7 @@ describe('Admin user management (e2e)', () => {
     });
 
     it('refuses to create an Admin account via the admin endpoint', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .post('/users/admin')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
@@ -297,7 +298,7 @@ describe('Admin user management (e2e)', () => {
     });
 
     it('rejects duplicate email creation with 409', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .post('/users/admin')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
@@ -315,7 +316,7 @@ describe('Admin user management (e2e)', () => {
       const email = `admin-mgmt-edit-learner-${suffix}@example.com`;
       createdViaApi.push({ email });
 
-      const created = await request(app.getHttpServer())
+      const created = await request(app.getHttpServer() as App)
         .post('/users/admin')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
@@ -329,7 +330,7 @@ describe('Admin user management (e2e)', () => {
       const userId = (created.body as UserBody).data.id;
       createdViaApi[1].id = userId;
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .patch(`/users/admin/${userId}`)
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
@@ -349,7 +350,7 @@ describe('Admin user management (e2e)', () => {
         },
       });
 
-      const loginRes = await request(app.getHttpServer())
+      const loginRes = await request(app.getHttpServer() as App)
         .post('/auth/login')
         .send({ email, password: 'ResetPass@123' })
         .expect(200);
@@ -359,13 +360,13 @@ describe('Admin user management (e2e)', () => {
     it('rejects an update with no changes and unknown fields', async () => {
       const userId = createdViaApi[1].id as string;
 
-      await request(app.getHttpServer())
+      await request(app.getHttpServer() as App)
         .patch(`/users/admin/${userId}`)
         .set('Authorization', `Bearer ${adminToken}`)
         .send({})
         .expect(400);
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .patch(`/users/admin/${userId}`)
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ nickname: 'x' })
@@ -374,7 +375,7 @@ describe('Admin user management (e2e)', () => {
     });
 
     it('returns 404 when editing a missing user', async () => {
-      await request(app.getHttpServer())
+      await request(app.getHttpServer() as App)
         .patch('/users/admin/00000000-0000-4000-8000-000000000000')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ name: 'Nobody' })
@@ -389,14 +390,14 @@ describe('Admin user management (e2e)', () => {
         email: users.learner.email,
       });
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .patch(`/users/admin/${learner.id}/disable`)
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
 
       expect(res.body.data.status).toBe(UserStatus.INACTIVE);
 
-      const loginRes = await request(app.getHttpServer())
+      const loginRes = await request(app.getHttpServer() as App)
         .post('/auth/login')
         .send({ email: users.learner.email, password })
         .expect(403);
@@ -404,7 +405,7 @@ describe('Admin user management (e2e)', () => {
       expect(loginRes.body.error.message).toBe('Account disabled');
 
       // Even the previously issued access token no longer authenticates.
-      await request(app.getHttpServer())
+      await request(app.getHttpServer() as App)
         .get('/auth/me')
         .set('Authorization', `Bearer ${learnerToken}`)
         .expect(403);
@@ -415,7 +416,7 @@ describe('Admin user management (e2e)', () => {
         email: users.learner.email,
       });
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .patch(`/users/admin/${learner.id}/disable`)
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
@@ -424,7 +425,7 @@ describe('Admin user management (e2e)', () => {
     });
 
     it('returns 404 when disabling a missing user', async () => {
-      await request(app.getHttpServer())
+      await request(app.getHttpServer() as App)
         .patch('/users/admin/00000000-0000-4000-8000-000000000001/disable')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(404);

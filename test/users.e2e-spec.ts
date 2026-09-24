@@ -5,8 +5,9 @@ import type { Client as MinioClient } from 'minio';
 import { DataSource, In } from 'typeorm';
 import request from 'supertest';
 import { AppModule } from './../src/app.module';
-import { MINIO_CLIENT } from './../src/modules/file/file.module';
 import { User } from './../src/modules/users/entities/user.entity';
+import { MINIO_CLIENT } from 'src/common/constants/file.constant';
+import { App } from 'supertest/types';
 
 type ErrorBody = {
   success: false;
@@ -86,7 +87,7 @@ describe('Users (e2e)', () => {
     userEmail: string,
     password: string,
   ): Promise<string> => {
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .post('/auth/login')
       .send({ email: userEmail, password })
       .expect(200);
@@ -95,7 +96,7 @@ describe('Users (e2e)', () => {
   };
 
   it('creates a Learner with status Active and never returns the password', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .post('/users')
       .send({
         name: 'Nguyen Van A',
@@ -126,7 +127,7 @@ describe('Users (e2e)', () => {
   });
 
   it('rejects a duplicate email with 409 "Email already registered"', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .post('/users')
       .send({ name: 'Another User', email, password: 'xyz98765#' })
       .expect(409);
@@ -136,7 +137,7 @@ describe('Users (e2e)', () => {
   });
 
   it('rejects an invalid email with 400', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .post('/users')
       .send({
         name: 'Nguyen Van A',
@@ -150,7 +151,7 @@ describe('Users (e2e)', () => {
   });
 
   it('rejects a weak password with 400 and the policy message', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .post('/users')
       .send({ name: 'Nguyen Van A', email: `weak-${email}`, password: 'abc12' })
       .expect(400);
@@ -162,7 +163,7 @@ describe('Users (e2e)', () => {
   });
 
   it('rejects unknown fields with 400 (forbidNonWhitelisted)', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .post('/users')
       .send({
         name: 'Nguyen Van A',
@@ -178,20 +179,20 @@ describe('Users (e2e)', () => {
 
   describe('profile management (T0-07)', () => {
     beforeAll(async () => {
-      const created = await request(app.getHttpServer())
+      const created = await request(app.getHttpServer() as App)
         .post('/users')
         .send(profileUser)
         .expect(201);
       profileUserId = (created.body as UserBody).data.id;
 
-      await request(app.getHttpServer())
+      await request(app.getHttpServer() as App)
         .post('/users')
         .send(otherUser)
         .expect(201);
     });
 
     it('GET /users/me without token returns 401', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .get('/users/me')
         .expect(401);
 
@@ -203,7 +204,7 @@ describe('Users (e2e)', () => {
         currentProfileEmail,
         currentProfilePassword,
       );
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .get('/users/me')
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
@@ -228,7 +229,7 @@ describe('Users (e2e)', () => {
       );
       const newName = 'E2E Renamed User';
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .patch('/users/me')
         .set('Authorization', `Bearer ${token}`)
         .send({ name: `  ${newName}  ` })
@@ -241,7 +242,7 @@ describe('Users (e2e)', () => {
       });
       expect(res.body.data.password).toBeUndefined();
 
-      const meRes = await request(app.getHttpServer())
+      const meRes = await request(app.getHttpServer() as App)
         .get('/users/me')
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
@@ -257,7 +258,7 @@ describe('Users (e2e)', () => {
         currentProfilePassword,
       );
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .patch('/users/me')
         .set('Authorization', `Bearer ${token}`)
         .send({ name: 'E2E Renamed User', email: otherUser.email })
@@ -269,7 +270,7 @@ describe('Users (e2e)', () => {
         ]),
       );
 
-      const meRes = await request(app.getHttpServer())
+      const meRes = await request(app.getHttpServer() as App)
         .get('/users/me')
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
@@ -282,7 +283,7 @@ describe('Users (e2e)', () => {
         currentProfilePassword,
       );
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .patch('/users/me/password')
         .set('Authorization', `Bearer ${token}`)
         .send({ currentPassword: 'WrongPass@1', newPassword: 'Changed@456' })
@@ -302,7 +303,7 @@ describe('Users (e2e)', () => {
         currentProfilePassword,
       );
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .patch('/users/me/password')
         .set('Authorization', `Bearer ${token}`)
         .send({ currentPassword: currentProfilePassword, newPassword: 'weak' })
@@ -320,7 +321,7 @@ describe('Users (e2e)', () => {
       );
       const newPassword = 'Changed@456';
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .patch('/users/me/password')
         .set('Authorization', `Bearer ${token}`)
         .send({ currentPassword: currentProfilePassword, newPassword })
@@ -333,7 +334,7 @@ describe('Users (e2e)', () => {
       });
 
       // Old password rejected...
-      await request(app.getHttpServer())
+      await request(app.getHttpServer() as App)
         .post('/auth/login')
         .send({ email: currentProfileEmail, password: currentProfilePassword })
         .expect(401);
@@ -350,7 +351,7 @@ describe('Users (e2e)', () => {
         currentProfilePassword,
       );
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .post('/users/me/avatar')
         .set('Authorization', `Bearer ${token}`)
         .expect(400);
@@ -366,7 +367,7 @@ describe('Users (e2e)', () => {
         currentProfilePassword,
       );
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .post('/users/me/avatar')
         .set('Authorization', `Bearer ${token}`)
         .attach('avatar', Buffer.from('not an image'), {
@@ -389,7 +390,7 @@ describe('Users (e2e)', () => {
         'base64',
       );
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .post('/users/me/avatar')
         .set('Authorization', `Bearer ${token}`)
         .attach('avatar', png, {
@@ -402,7 +403,7 @@ describe('Users (e2e)', () => {
       expect(body.data.avatar).toEqual(expect.stringContaining('/avatars/'));
       expect(body.data.avatar).toMatch(/^http:\/\/.+\/avatars\/.+\.png$/);
 
-      const meRes = await request(app.getHttpServer())
+      const meRes = await request(app.getHttpServer() as App)
         .get('/users/me')
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
@@ -435,7 +436,7 @@ describe('Users (e2e)', () => {
         Buffer.alloc(6 * 1024 * 1024, 0),
       ]);
 
-      const res = await request(app.getHttpServer())
+      const res = await request(app.getHttpServer() as App)
         .post('/users/me/avatar')
         .set('Authorization', `Bearer ${token}`)
         .attach('avatar', bigPng, {
