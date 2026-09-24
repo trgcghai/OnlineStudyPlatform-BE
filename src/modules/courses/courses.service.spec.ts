@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
 import { NotificationQueue } from '../notifications/entities/notification.entity';
-import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationsQueueService } from '../notifications/notifications-queue.service';
 import { Lesson } from '../lessons/entities/lesson.entity';
 import { CoursesService } from './courses.service';
 import { CreateCourseDto } from './dto/course.dto';
@@ -34,10 +34,8 @@ describe('CoursesService', () => {
   let lessonsRepo: { find: jest.Mock };
   let quizzesRepo: { find: jest.Mock };
   let questionsRepo: { find: jest.Mock };
-  let notificationsService: {
-    createQueueNotification: jest.Mock;
-    createDirectNotification: jest.Mock;
-    deleteNotification: jest.Mock;
+  let notificationsQueueService: {
+    enqueueCreateNotification: jest.Mock;
   };
   let paymentConfigService: {
     assertCoursePriceAllowed: jest.Mock;
@@ -58,26 +56,27 @@ describe('CoursesService', () => {
   const otherInstructorId = '22222222-2222-4222-8222-222222222222';
   const courseId = '33333333-3333-4333-8333-333333333333';
 
-  const makeCourse = (overrides: Partial<Course> = {}): Course => ({
-    id: courseId,
-    title: 'Lap trinh NestJS',
-    description: 'Khoa hoc nhap mon NestJS',
-    category: 'Backend',
-    thumbnail: null,
-    status: CourseStatus.DRAFT,
-    rejectReason: null,
-    learningOrder: CourseLearningOrder.FREE,
-    price: 0,
-    instructorId,
-    instructor: {
-      id: instructorId,
-      name: 'Nguyen Van A',
-      email: 'instructor@example.com',
-    } as never,
-    createdAt: new Date('2026-01-01T00:00:00Z'),
-    updatedAt: new Date('2026-01-01T00:00:00Z'),
-    ...overrides,
-  });
+  const makeCourse = (overrides: Partial<Course> = {}): Course =>
+    ({
+      id: courseId,
+      title: 'Lap trinh NestJS',
+      description: 'Khoa hoc nhap mon NestJS',
+      category: 'Backend',
+      thumbnail: null,
+      status: CourseStatus.DRAFT,
+      rejectReason: null,
+      learningOrder: CourseLearningOrder.FREE,
+      price: 0,
+      instructorId,
+      instructor: {
+        id: instructorId,
+        name: 'Nguyen Van A',
+        email: 'instructor@example.com',
+      } as never,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
+      ...overrides,
+    }) as Course;
 
   const makeLesson = (overrides: Partial<Lesson> = {}): Lesson => ({
     id: '55555555-5555-4555-8555-555555555555',
@@ -94,32 +93,34 @@ describe('CoursesService', () => {
     ...overrides,
   });
 
-  const makeQuiz = (overrides: Partial<Quiz> = {}): Quiz => ({
-    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-    lessonId: '55555555-5555-4555-8555-555555555555',
-    title: 'Bai kiem tra hoc ky',
-    description: '',
-    timeLimitMinutes: 10,
-    passScore: 70,
-    questions: [],
-    createdAt: new Date('2026-01-01T00:00:00Z'),
-    updatedAt: new Date('2026-01-01T00:00:00Z'),
-    ...overrides,
-  });
+  const makeQuiz = (overrides: Partial<Quiz> = {}): Quiz =>
+    ({
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      lessonId: '55555555-5555-4555-8555-555555555555',
+      title: 'Bai kiem tra hoc ky',
+      description: '',
+      timeLimitMinutes: 10,
+      passScore: 70,
+      questions: [],
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
+      ...overrides,
+    }) as Quiz;
 
-  const makeQuestion = (overrides: Partial<Question> = {}): Question => ({
-    id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-    quizId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-    content: 'Cau hoi kiem tra',
-    type: QuestionType.MCQ,
-    options: ['A', 'B'],
-    correctAnswers: [0],
-    points: 5,
-    position: 0,
-    createdAt: new Date('2026-01-01T00:00:00Z'),
-    updatedAt: new Date('2026-01-01T00:00:00Z'),
-    ...overrides,
-  });
+  const makeQuestion = (overrides: Partial<Question> = {}): Question =>
+    ({
+      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      quizId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      content: 'Cau hoi kiem tra',
+      type: QuestionType.MCQ,
+      options: ['A', 'B'],
+      correctAnswers: [0],
+      points: 5,
+      position: 0,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
+      ...overrides,
+    }) as Question;
 
   beforeEach(() => {
     repo = {
@@ -148,10 +149,8 @@ describe('CoursesService', () => {
     lessonsRepo = { find: jest.fn().mockResolvedValue([]) };
     quizzesRepo = { find: jest.fn().mockResolvedValue([]) };
     questionsRepo = { find: jest.fn().mockResolvedValue([]) };
-    notificationsService = {
-      createQueueNotification: jest.fn(),
-      createDirectNotification: jest.fn(),
-      deleteNotification: jest.fn(),
+    notificationsQueueService = {
+      enqueueCreateNotification: jest.fn().mockResolvedValue(undefined),
     };
     paymentConfigService = {
       assertCoursePriceAllowed: jest.fn().mockResolvedValue(undefined),
@@ -176,7 +175,7 @@ describe('CoursesService', () => {
       repo as unknown as Repository<Course>,
       configService as never,
       minioClient as never,
-      notificationsService as unknown as NotificationsService,
+      notificationsQueueService as unknown as NotificationsQueueService,
       dataSource as unknown as DataSource,
       enrollmentRepo as never,
       lessonsRepo as unknown as Repository<Lesson>,
@@ -719,10 +718,6 @@ describe('CoursesService', () => {
     it('moves an owned Draft course to Pending and creates a course approval queue notification', async () => {
       repo.findOne.mockResolvedValue(makeCourse());
       repo.save.mockImplementation((input: Course) => input);
-      notificationsService.createQueueNotification.mockResolvedValue({
-        _id: 'notification-id',
-      });
-
       const result = await service.requestPublish(courseId, instructorId);
 
       expect(repo.findOne).toHaveBeenCalledWith({
@@ -735,16 +730,21 @@ describe('CoursesService', () => {
           rejectReason: null,
         }),
       );
-      expect(notificationsService.createQueueNotification).toHaveBeenCalledWith(
-        {
+      expect(
+        notificationsQueueService.enqueueCreateNotification,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'queue',
           queue: NotificationQueue.COURSE_APPROVAL,
           title: 'Yêu cầu duyệt khóa học',
           message:
             'Nguyen Van A đã gửi yêu cầu xuất bản khóa học "Lap trinh NestJS".',
           actionUrl: '/admin/courses/approvals',
           metadata: { courseId, instructorId },
-          sentAt: expect.any(Date),
-        },
+          sentAt: expect.any(String),
+          triggerKey: `course-publication-request:${courseId}`,
+          triggerDate: expect.any(String),
+        }),
       );
       expect(queryRunner.commitTransaction).toHaveBeenCalledTimes(1);
       expect(result.status).toBe(CourseStatus.PENDING);
@@ -759,7 +759,7 @@ describe('CoursesService', () => {
         service.requestPublish(courseId, instructorId),
       ).rejects.toEqual(new ForbiddenException('You do not own this course'));
       expect(
-        notificationsService.createQueueNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).not.toHaveBeenCalled();
       expect(queryRunner.rollbackTransaction).toHaveBeenCalledTimes(1);
     });
@@ -777,36 +777,30 @@ describe('CoursesService', () => {
         ),
       );
       expect(
-        notificationsService.createQueueNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).not.toHaveBeenCalled();
       expect(queryRunner.rollbackTransaction).toHaveBeenCalledTimes(1);
     });
 
-    it('rolls back the course update when notification creation fails', async () => {
+    it('keeps request publish successful when notification enqueue fails', async () => {
       repo.findOne.mockResolvedValue(makeCourse());
       repo.save.mockImplementation((input: Course) => input);
-      notificationsService.createQueueNotification.mockRejectedValue(
-        new Error('mongo down'),
+      notificationsQueueService.enqueueCreateNotification.mockImplementation(
+        () => {
+          throw new Error('rabbitmq down');
+        },
       );
 
-      await expect(
-        service.requestPublish(courseId, instructorId),
-      ).rejects.toEqual(
-        new InternalServerErrorException(
-          'Could not queue course approval notification',
-        ),
-      );
-      expect(queryRunner.rollbackTransaction).toHaveBeenCalledTimes(1);
-      expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
+      const result = await service.requestPublish(courseId, instructorId);
+
+      expect(result.status).toBe(CourseStatus.PENDING);
+      expect(queryRunner.commitTransaction).toHaveBeenCalledTimes(1);
+      expect(queryRunner.rollbackTransaction).not.toHaveBeenCalled();
     });
 
-    it('deletes the created notification when PostgreSQL commit fails after Mongo creation', async () => {
-      const notificationId = '64b7f8f8f8f8f8f8f8f8f8f8';
+    it('does not enqueue a notification when PostgreSQL commit fails', async () => {
       repo.findOne.mockResolvedValue(makeCourse());
       repo.save.mockImplementation((input: Course) => input);
-      notificationsService.createQueueNotification.mockResolvedValue({
-        _id: notificationId,
-      });
       queryRunner.commitTransaction.mockRejectedValue(
         new Error('commit failed'),
       );
@@ -818,10 +812,30 @@ describe('CoursesService', () => {
           'Could not request course publication',
         ),
       );
-      expect(notificationsService.deleteNotification).toHaveBeenCalledWith(
-        notificationId,
-      );
+      expect(
+        notificationsQueueService.enqueueCreateNotification,
+      ).not.toHaveBeenCalled();
       expect(queryRunner.rollbackTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses a non-blocking enqueue for paid course publish requests', async () => {
+      paymentConfigService.getFreeCourseLimit.mockResolvedValue(3);
+      repo.findOne.mockResolvedValue(makeCourse({ price: 99000 }));
+      repo.save.mockImplementation((input: Course) => input);
+
+      await service.requestPublish(courseId, instructorId);
+
+      expect(repo.count).not.toHaveBeenCalled();
+      expect(repo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: CourseStatus.PENDING }),
+      );
+      expect(
+        notificationsQueueService.enqueueCreateNotification,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          triggerKey: `course-publication-request:${courseId}`,
+        }),
+      );
     });
 
     it('blocks a free course publish when the free-course limit is reached', async () => {
@@ -847,7 +861,7 @@ describe('CoursesService', () => {
         },
       });
       expect(
-        notificationsService.createQueueNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).not.toHaveBeenCalled();
       expect(queryRunner.rollbackTransaction).toHaveBeenCalledTimes(1);
     });
@@ -856,10 +870,6 @@ describe('CoursesService', () => {
       paymentConfigService.getFreeCourseLimit.mockResolvedValue(3);
       repo.findOne.mockResolvedValue(makeCourse({ price: 99000 }));
       repo.save.mockImplementation((input: Course) => input);
-      notificationsService.createQueueNotification.mockResolvedValue({
-        _id: 'notification-id',
-      });
-
       await service.requestPublish(courseId, instructorId);
 
       expect(repo.count).not.toHaveBeenCalled();
@@ -872,10 +882,6 @@ describe('CoursesService', () => {
       paymentConfigService.getFreeCourseLimit.mockResolvedValue(null);
       repo.findOne.mockResolvedValue(makeCourse({ price: 0 }));
       repo.save.mockImplementation((input: Course) => input);
-      notificationsService.createQueueNotification.mockResolvedValue({
-        _id: 'notification-id',
-      });
-
       await service.requestPublish(courseId, instructorId);
 
       expect(repo.count).not.toHaveBeenCalled();
@@ -894,10 +900,6 @@ describe('CoursesService', () => {
         }),
       );
       repo.save.mockImplementation((input: Course) => input);
-      notificationsService.createDirectNotification.mockResolvedValue({
-        _id: 'notification-id',
-      });
-
       const result = await service.reviewCourseStatus(courseId, {
         status: CourseStatus.PUBLISHED,
       });
@@ -913,14 +915,17 @@ describe('CoursesService', () => {
         }),
       );
       expect(
-        notificationsService.createDirectNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).toHaveBeenCalledWith({
-        userId: instructorId,
+        kind: 'direct',
+        targetUserId: instructorId,
         title: 'Khóa học đã được duyệt',
         message: 'Khóa học "Lap trinh NestJS" đã được xuất bản.',
         actionUrl: `/instructor/courses/${courseId}/edit`,
         metadata: { courseId, instructorId, status: CourseStatus.PUBLISHED },
-        sentAt: expect.any(Date),
+        sentAt: expect.any(String),
+        triggerKey: `course-review:${courseId}:${CourseStatus.PUBLISHED}`,
+        triggerDate: expect.any(String),
       });
       expect(result.status).toBe(CourseStatus.PUBLISHED);
       expect(result.rejectReason).toBeNull();
@@ -931,10 +936,6 @@ describe('CoursesService', () => {
         makeCourse({ status: CourseStatus.PENDING }),
       );
       repo.save.mockImplementation((input: Course) => input);
-      notificationsService.createDirectNotification.mockResolvedValue({
-        _id: 'notification-id',
-      });
-
       const result = await service.reviewCourseStatus(courseId, {
         status: CourseStatus.REJECTED,
         rejectReason: '  Nội dung chưa đủ rõ.  ',
@@ -947,14 +948,17 @@ describe('CoursesService', () => {
         }),
       );
       expect(
-        notificationsService.createDirectNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).toHaveBeenCalledWith({
-        userId: instructorId,
+        kind: 'direct',
+        targetUserId: instructorId,
         title: 'Khóa học bị từ chối',
         message: 'Khóa học "Lap trinh NestJS" bị từ chối: Nội dung chưa đủ rõ.',
         actionUrl: `/instructor/courses/${courseId}/edit`,
         metadata: { courseId, instructorId, status: CourseStatus.REJECTED },
-        sentAt: expect.any(Date),
+        sentAt: expect.any(String),
+        triggerKey: `course-review:${courseId}:${CourseStatus.REJECTED}`,
+        triggerDate: expect.any(String),
       });
       expect(result.status).toBe(CourseStatus.REJECTED);
       expect(result.rejectReason).toBe('Nội dung chưa đủ rõ.');
@@ -972,7 +976,7 @@ describe('CoursesService', () => {
       );
       expect(repo.save).not.toHaveBeenCalled();
       expect(
-        notificationsService.createDirectNotification,
+        notificationsQueueService.enqueueCreateNotification,
       ).not.toHaveBeenCalled();
     });
 
@@ -1003,24 +1007,22 @@ describe('CoursesService', () => {
       ).rejects.toEqual(new NotFoundException('Course not found'));
     });
 
-    it('fails the review when Instructor notification creation fails', async () => {
+    it('keeps review successful when Instructor notification enqueue fails', async () => {
       repo.findOne.mockResolvedValue(
         makeCourse({ status: CourseStatus.PENDING }),
       );
       repo.save.mockImplementation((input: Course) => input);
-      notificationsService.createDirectNotification.mockRejectedValue(
-        new Error('mongo down'),
+      notificationsQueueService.enqueueCreateNotification.mockImplementation(
+        () => {
+          throw new Error('rabbitmq down');
+        },
       );
 
-      await expect(
-        service.reviewCourseStatus(courseId, {
-          status: CourseStatus.PUBLISHED,
-        }),
-      ).rejects.toEqual(
-        new InternalServerErrorException(
-          'Could not create course review notification',
-        ),
-      );
+      const result = await service.reviewCourseStatus(courseId, {
+        status: CourseStatus.PUBLISHED,
+      });
+
+      expect(result.status).toBe(CourseStatus.PUBLISHED);
     });
   });
 

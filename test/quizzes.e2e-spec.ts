@@ -19,6 +19,7 @@ import {
   UserRole,
   UserStatus,
 } from './../src/modules/users/entities/user.entity';
+import { App } from 'supertest/types';
 
 type Envelope<T> = {
   success: boolean;
@@ -88,7 +89,7 @@ describe('Quizzes (e2e)', () => {
       }),
     );
 
-    const loginRes = await request(app.getHttpServer())
+    const loginRes = await request(app.getHttpServer() as App)
       .post('/auth/login')
       .send({ email: instructorEmail, password })
       .expect(200);
@@ -140,7 +141,7 @@ describe('Quizzes (e2e)', () => {
   };
 
   it('creates a course and a lesson to host the quiz', async () => {
-    const courseRes = await request(app.getHttpServer())
+    const courseRes = await request(app.getHttpServer() as App)
       .post('/courses')
       .set('Authorization', `Bearer ${accessToken}`)
       .send({
@@ -152,7 +153,7 @@ describe('Quizzes (e2e)', () => {
     const courseBody = courseRes.body as Envelope<{ id: string }>;
     courseId = courseBody.data.id;
 
-    const lessonRes = await request(app.getHttpServer())
+    const lessonRes = await request(app.getHttpServer() as App)
       .post(`/courses/${courseId}/lessons`)
       .set('Authorization', `Bearer ${accessToken}`)
       .field('title', 'Quiz Lesson')
@@ -166,7 +167,7 @@ describe('Quizzes (e2e)', () => {
   });
 
   it('POST quiz with 1 MCQ (5 pts) + 1 essay (10 pts), pass 70% → totalPoints 15, passScorePoints 11', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .post(`/courses/${courseId}/lessons/${lessonId}/quiz`)
       .set('Authorization', `Bearer ${accessToken}`)
       .send({
@@ -236,7 +237,7 @@ describe('Quizzes (e2e)', () => {
   });
 
   it('GET quiz list returns a summary with counts and total points', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .get(`/courses/${courseId}/lessons/${lessonId}/quiz`)
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(200);
@@ -259,14 +260,14 @@ describe('Quizzes (e2e)', () => {
   });
 
   it('edits quiz metadata and a question, adds one, then reorders them', async () => {
-    const listRes = await request(app.getHttpServer())
+    const listRes = await request(app.getHttpServer() as App)
       .get(`/courses/${courseId}/lessons/${lessonId}/quiz`)
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(200);
     const listBody = listRes.body as Envelope<{ id: string }[]>;
     const quizId = listBody.data[0].id;
 
-    const detailRes = await request(app.getHttpServer())
+    const detailRes = await request(app.getHttpServer() as App)
       .get(`/quizzes/${quizId}`)
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(200);
@@ -277,19 +278,19 @@ describe('Quizzes (e2e)', () => {
     const firstQuestionId = detailBody.data.questions[0].id;
     const secondQuestionId = detailBody.data.questions[1].id;
 
-    await request(app.getHttpServer())
+    await request(app.getHttpServer() as App)
       .patch(`/quizzes/${quizId}`)
       .set('Authorization', `Bearer ${accessToken}`)
       .send({ title: 'Renamed quiz', timeLimitMinutes: 30 })
       .expect(200);
 
-    await request(app.getHttpServer())
+    await request(app.getHttpServer() as App)
       .patch(`/questions/${firstQuestionId}`)
       .set('Authorization', `Bearer ${accessToken}`)
       .send({ points: 8 })
       .expect(200);
 
-    const addRes = await request(app.getHttpServer())
+    const addRes = await request(app.getHttpServer() as App)
       .post(`/quizzes/${quizId}/questions`)
       .set('Authorization', `Bearer ${accessToken}`)
       .send({
@@ -301,7 +302,7 @@ describe('Quizzes (e2e)', () => {
     const addBody = addRes.body as Envelope<{ id: string }>;
     const thirdQuestionId = addBody.data.id;
 
-    await request(app.getHttpServer())
+    await request(app.getHttpServer() as App)
       .patch(`/quizzes/${quizId}/questions/reorder`)
       .set('Authorization', `Bearer ${accessToken}`)
       .send({
@@ -309,7 +310,7 @@ describe('Quizzes (e2e)', () => {
       })
       .expect(200);
 
-    const reorderedRes = await request(app.getHttpServer())
+    const reorderedRes = await request(app.getHttpServer() as App)
       .get(`/quizzes/${quizId}`)
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(200);
@@ -325,12 +326,12 @@ describe('Quizzes (e2e)', () => {
     ]);
     expect(reorderedBody.data.totalPoints).toBe(22);
 
-    await request(app.getHttpServer())
+    await request(app.getHttpServer() as App)
       .delete(`/questions/${firstQuestionId}`)
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(204);
 
-    const afterDeleteRes = await request(app.getHttpServer())
+    const afterDeleteRes = await request(app.getHttpServer() as App)
       .get(`/quizzes/${quizId}`)
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(200);
@@ -348,7 +349,7 @@ describe('Quizzes (e2e)', () => {
   });
 
   it('blocks destructive changes once attempts exist, then allows delete after cleanup', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .post(`/courses/${courseId}/lessons/${lessonId}/quiz`)
       .set('Authorization', `Bearer ${accessToken}`)
       .send({
@@ -376,20 +377,28 @@ describe('Quizzes (e2e)', () => {
       }),
     );
 
-    const deleteRes = await request(app.getHttpServer())
+    const deleteRes = await request(app.getHttpServer() as App)
       .delete(`/quizzes/${quizId}`)
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(409);
-    expectError(deleteRes.body, 409, ATTEMPTS_BLOCKED_DELETE_MESSAGE);
+    expectError(
+      deleteRes.body as ErrorEnvelope,
+      409,
+      ATTEMPTS_BLOCKED_DELETE_MESSAGE,
+    );
 
-    const passScoreRes = await request(app.getHttpServer())
+    const passScoreRes = await request(app.getHttpServer() as App)
       .patch(`/quizzes/${quizId}`)
       .set('Authorization', `Bearer ${accessToken}`)
       .send({ passScore: 80 })
       .expect(409);
-    expectError(passScoreRes.body, 409, ATTEMPTS_BLOCKED_PASS_SCORE_MESSAGE);
+    expectError(
+      passScoreRes.body as ErrorEnvelope,
+      409,
+      ATTEMPTS_BLOCKED_PASS_SCORE_MESSAGE,
+    );
 
-    const addQuestionRes = await request(app.getHttpServer())
+    const addQuestionRes = await request(app.getHttpServer() as App)
       .post(`/quizzes/${quizId}/questions`)
       .set('Authorization', `Bearer ${accessToken}`)
       .send({
@@ -400,18 +409,22 @@ describe('Quizzes (e2e)', () => {
         points: 5,
       })
       .expect(409);
-    expectError(addQuestionRes.body, 409, ATTEMPTS_BLOCKED_QUESTION_MESSAGE);
+    expectError(
+      addQuestionRes.body as ErrorEnvelope,
+      409,
+      ATTEMPTS_BLOCKED_QUESTION_MESSAGE,
+    );
 
     await attemptRepository.delete({ quizId });
 
-    await request(app.getHttpServer())
+    await request(app.getHttpServer() as App)
       .delete(`/quizzes/${quizId}`)
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(204);
   });
 
   it('rejects unauthenticated access to quiz routes', async () => {
-    await request(app.getHttpServer())
+    await request(app.getHttpServer() as App)
       .get(`/courses/${courseId}/lessons/${lessonId}/quiz`)
       .expect(401);
   });

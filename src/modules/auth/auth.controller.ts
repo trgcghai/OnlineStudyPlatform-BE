@@ -13,7 +13,7 @@ import type { Request, Response } from 'express';
 
 import { UserRole } from '../users/entities/user.entity';
 import { AuthService } from './auth.service';
-import type { AuthTokenResult } from './auth.service';
+import type { AuthTokenResult } from './dto/auth.dto';
 import { REFRESH_TOKEN_COOKIE_NAME } from '../../common/constants/auth.constant';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';

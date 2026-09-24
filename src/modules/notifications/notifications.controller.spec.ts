@@ -8,6 +8,7 @@ describe('NotificationsController', () => {
     findMine: jest.Mock;
     countUnread: jest.Mock;
     markAsSeen: jest.Mock;
+    markAllAsSeen: jest.Mock;
   };
 
   const user = { id: 'user-id', role: UserRole.INSTRUCTOR };
@@ -17,6 +18,7 @@ describe('NotificationsController', () => {
       findMine: jest.fn(),
       countUnread: jest.fn(),
       markAsSeen: jest.fn(),
+      markAllAsSeen: jest.fn(),
     };
     controller = new NotificationsController(
       service as unknown as NotificationsService,
@@ -41,5 +43,14 @@ describe('NotificationsController', () => {
     await controller.markAsSeen('notification-id', user);
 
     expect(service.markAsSeen).toHaveBeenCalledWith('notification-id', user);
+  });
+
+  it('delegates mark all as seen with current user', async () => {
+    service.markAllAsSeen.mockResolvedValue({ modifiedCount: 3 });
+
+    const result = await controller.markAllAsSeen(user);
+
+    expect(service.markAllAsSeen).toHaveBeenCalledWith(user);
+    expect(result).toEqual({ modifiedCount: 3 });
   });
 });

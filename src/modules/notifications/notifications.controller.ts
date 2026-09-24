@@ -30,6 +30,11 @@ export class NotificationsController {
     return this.notificationsService.countUnread(user);
   }
 
+  @Patch('me/seen')
+  markAllAsSeen(@CurrentUser() user: AuthenticatedUser) {
+    return this.notificationsService.markAllAsSeen(user);
+  }
+
   @Patch(':id/seen')
   markAsSeen(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.notificationsService.markAsSeen(id, user);

@@ -109,9 +109,11 @@ describe('UsersController', () => {
       'upsertMyInstructorAccount',
     )?.value;
 
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     expect(Reflect.getMetadata(ROLES_KEY, getMethod)).toEqual([
       UserRole.INSTRUCTOR,
     ]);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     expect(Reflect.getMetadata(ROLES_KEY, putMethod)).toEqual([
       UserRole.INSTRUCTOR,
     ]);

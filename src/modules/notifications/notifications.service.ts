@@ -8,8 +8,11 @@ import {
   CreateDirectNotificationInput,
   CreateQueueNotificationInput,
   ListNotificationsQueryDto,
+  MarkAllNotificationsSeenResult,
+  NotificationCreateMessage,
   NotificationListResult,
   NotificationResponse,
+  QueueNotificationCreateResult,
   UnreadNotificationCountResult,
 } from './dto/notification.dto';
 import {
@@ -58,6 +61,55 @@ export class NotificationsService {
     });
 
     return notification.save();
+  }
+
+  async createFromQueueMessage(
+    message: NotificationCreateMessage,
+  ): Promise<QueueNotificationCreateResult> {
+    const targetUserId = this.resolveTargetUserId(message);
+    const existing = await this.notificationModel.exists({
+      triggerKey: message.triggerKey,
+      targetUserId,
+      triggerDate: message.triggerDate,
+    });
+
+    if (existing) {
+      return { created: false, duplicate: true };
+    }
+
+    try {
+      const notification = new this.notificationModel({
+        type:
+          message.kind === 'direct'
+            ? NotificationType.DIRECT
+            : NotificationType.QUEUE,
+        userId: message.kind === 'direct' ? message.targetUserId : undefined,
+        queue: message.kind === 'queue' ? message.queue : undefined,
+        title: message.title,
+        message: message.message,
+        actionUrl: message.actionUrl,
+        metadata: message.metadata ?? {},
+        sentAt: message.sentAt ? new Date(message.sentAt) : new Date(),
+        seen: false,
+        triggerKey: message.triggerKey,
+        triggerDate: message.triggerDate,
+        targetUserId,
+      });
+
+      const saved = await notification.save();
+
+      return {
+        created: true,
+        duplicate: false,
+        notificationId: saved._id.toString(),
+      };
+    } catch (error) {
+      if (this.isDuplicateKeyError(error)) {
+        return { created: false, duplicate: true };
+      }
+
+      throw error;
+    }
   }
 
   async findMine(
@@ -116,6 +168,20 @@ export class NotificationsService {
     return this.toNotificationResponse(notification);
   }
 
+  async markAllAsSeen(
+    user: Pick<AuthenticatedUser, 'id' | 'role'>,
+  ): Promise<MarkAllNotificationsSeenResult> {
+    const result = await this.notificationModel.updateMany(
+      {
+        ...this.buildUserNotificationFilter(user),
+        seen: { $ne: true },
+      },
+      { seen: true },
+    );
+
+    return { modifiedCount: result.modifiedCount ?? 0 };
+  }
+
   async deleteNotification(id: Types.ObjectId | string): Promise<void> {
     await this.notificationModel.findByIdAndDelete(id);
   }
@@ -133,6 +199,23 @@ export class NotificationsService {
     }
 
     return { userId: user.id };
+  }
+
+  private resolveTargetUserId(message: NotificationCreateMessage): string {
+    if (message.kind === 'direct') {
+      return message.targetUserId ?? '';
+    }
+
+    return `queue:${message.queue}`;
+  }
+
+  private isDuplicateKeyError(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: number }).code === 11000
+    );
   }
 
   private toNotificationResponse(

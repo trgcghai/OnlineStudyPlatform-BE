@@ -14,6 +14,7 @@ import {
   UserRole,
   UserStatus,
 } from './../src/modules/users/entities/user.entity';
+import { App } from 'supertest/types';
 
 type AuthBody = {
   success: boolean;
@@ -180,7 +181,7 @@ describe('Auth (e2e)', () => {
   const login = async (
     email: string,
   ): Promise<{ token: string; cookie: string }> => {
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .post('/auth/login')
       .send({ email, password })
       .expect(200);
@@ -193,7 +194,7 @@ describe('Auth (e2e)', () => {
   };
 
   it('POST /auth/login succeeds for active Learner and stores refresh token in an HttpOnly cookie', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .post('/auth/login')
       .send({ email: users.learner.email, password })
       .expect(200);
@@ -217,7 +218,7 @@ describe('Auth (e2e)', () => {
   });
 
   it('POST /auth/login rejects wrong password with Invalid email or password', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .post('/auth/login')
       .send({ email: users.learner.email, password: 'wrong-password' })
       .expect(401);
@@ -226,7 +227,7 @@ describe('Auth (e2e)', () => {
   });
 
   it('POST /auth/login rejects inactive account with Account disabled', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .post('/auth/login')
       .send({ email: users.inactiveLearner.email, password })
       .expect(403);
@@ -235,14 +236,16 @@ describe('Auth (e2e)', () => {
   });
 
   it('GET /auth/me without token returns 401', async () => {
-    const res = await request(app.getHttpServer()).get('/auth/me').expect(401);
+    const res = await request(app.getHttpServer() as App)
+      .get('/auth/me')
+      .expect(401);
 
     expectErrorBody(res.body as ErrorBody, 401, 'Unauthorized');
   });
 
   it('GET /auth/me with token returns current user', async () => {
     const { token } = await login(users.learner.email);
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .get('/auth/me')
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
@@ -262,7 +265,7 @@ describe('Auth (e2e)', () => {
 
   it('POST /auth/refresh returns a new access token from refresh cookie without exposing refreshToken', async () => {
     const { token, cookie } = await login(users.learner.email);
-    const res = await request(app.getHttpServer())
+    const res = await request(app.getHttpServer() as App)
       .post('/auth/refresh')
       .set('Cookie', cookie)
       .expect(200);
@@ -284,7 +287,7 @@ describe('Auth (e2e)', () => {
   it('POST /auth/logout invalidates refresh session and blacklists current access token', async () => {
     const { token, cookie } = await login(users.learner.email);
 
-    const logoutRes = await request(app.getHttpServer())
+    const logoutRes = await request(app.getHttpServer() as App)
       .post('/auth/logout')
       .set('Cookie', cookie)
       .set('Authorization', `Bearer ${token}`)
@@ -297,13 +300,13 @@ describe('Auth (e2e)', () => {
       },
     });
 
-    const refreshRes = await request(app.getHttpServer())
+    const refreshRes = await request(app.getHttpServer() as App)
       .post('/auth/refresh')
       .set('Cookie', cookie)
       .expect(401);
     expectErrorBody(refreshRes.body as ErrorBody, 401, 'Unauthorized');
 
-    const meRes = await request(app.getHttpServer())
+    const meRes = await request(app.getHttpServer() as App)
       .get('/auth/me')
       .set('Authorization', `Bearer ${token}`)
       .expect(401);
@@ -314,7 +317,7 @@ describe('Auth (e2e)', () => {
     const admin = await login(users.admin.email);
     const learner = await login(users.learner.email);
 
-    const adminRes = await request(app.getHttpServer())
+    const adminRes = await request(app.getHttpServer() as App)
       .get('/auth/admin')
       .set('Authorization', `Bearer ${admin.token}`)
       .expect(200);
@@ -325,7 +328,7 @@ describe('Auth (e2e)', () => {
         role: UserRole.ADMIN,
       },
     });
-    const learnerRes = await request(app.getHttpServer())
+    const learnerRes = await request(app.getHttpServer() as App)
       .get('/auth/admin')
       .set('Authorization', `Bearer ${learner.token}`)
       .expect(403);
@@ -336,7 +339,7 @@ describe('Auth (e2e)', () => {
     const instructor = await login(users.instructor.email);
     const learner = await login(users.learner.email);
 
-    const instructorRes = await request(app.getHttpServer())
+    const instructorRes = await request(app.getHttpServer() as App)
       .get('/auth/instructor')
       .set('Authorization', `Bearer ${instructor.token}`)
       .expect(200);
@@ -347,7 +350,7 @@ describe('Auth (e2e)', () => {
         role: UserRole.INSTRUCTOR,
       },
     });
-    const learnerRes = await request(app.getHttpServer())
+    const learnerRes = await request(app.getHttpServer() as App)
       .get('/auth/instructor')
       .set('Authorization', `Bearer ${learner.token}`)
       .expect(403);
@@ -359,7 +362,7 @@ describe('Auth (e2e)', () => {
     const admin = await login(users.admin.email);
     const instructor = await login(users.instructor.email);
 
-    const learnerRes = await request(app.getHttpServer())
+    const learnerRes = await request(app.getHttpServer() as App)
       .get('/auth/learner')
       .set('Authorization', `Bearer ${learner.token}`)
       .expect(200);
@@ -370,12 +373,12 @@ describe('Auth (e2e)', () => {
         role: UserRole.LEARNER,
       },
     });
-    const adminRes = await request(app.getHttpServer())
+    const adminRes = await request(app.getHttpServer() as App)
       .get('/auth/learner')
       .set('Authorization', `Bearer ${admin.token}`)
       .expect(403);
     expectErrorBody(adminRes.body as ErrorBody, 403, 'Forbidden');
-    const instructorRes = await request(app.getHttpServer())
+    const instructorRes = await request(app.getHttpServer() as App)
       .get('/auth/learner')
       .set('Authorization', `Bearer ${instructor.token}`)
       .expect(403);

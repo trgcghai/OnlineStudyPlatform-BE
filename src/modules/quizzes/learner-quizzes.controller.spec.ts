@@ -104,6 +104,7 @@ describe('LearnerQuizzesController', () => {
         LearnerQuizzesController.prototype,
         name,
       )!;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
       expect(Reflect.getMetadata(ROLES_KEY, descriptor.value)).toEqual([
         UserRole.LEARNER,
       ]);
