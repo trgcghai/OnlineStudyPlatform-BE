@@ -19,7 +19,15 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import { LoginDto } from './dto/auth.dto';
+import {
+  LoginDto,
+  RegisterDto,
+  RequestPasswordResetOtpDto,
+  ResetPasswordDto,
+  ResendEmailOtpDto,
+  VerifyEmailOtpDto,
+  VerifyPasswordResetOtpDto,
+} from './dto/auth.dto';
 import type { AuthenticatedUser } from './dto/auth.dto';
 import { GetToken } from '../../common/decorators/bearerToken.decorator';
 
@@ -46,6 +54,45 @@ export class AuthController {
       accessToken: result.accessToken,
       user: result.user,
     };
+  }
+
+  @Post('register')
+  @HttpCode(HttpStatus.CREATED)
+  register(@Body() registerDto: RegisterDto) {
+    return this.authService.register(registerDto);
+  }
+
+  @Post('email/verify')
+  @HttpCode(HttpStatus.OK)
+  verifyEmail(@Body() verifyDto: VerifyEmailOtpDto) {
+    return this.authService.verifyEmail(verifyDto.email, verifyDto.otp);
+  }
+
+  @Post('email/resend-otp')
+  @HttpCode(HttpStatus.OK)
+  resendEmailOtp(@Body() resendDto: ResendEmailOtpDto) {
+    return this.authService.resendEmailOtp(resendDto.email);
+  }
+
+  @Post('password-reset/request-otp')
+  @HttpCode(HttpStatus.OK)
+  requestPasswordResetOtp(@Body() resetDto: RequestPasswordResetOtpDto) {
+    return this.authService.requestPasswordResetOtp(resetDto.email);
+  }
+
+  @Post('password-reset/verify-otp')
+  @HttpCode(HttpStatus.OK)
+  verifyPasswordResetOtp(@Body() verifyDto: VerifyPasswordResetOtpDto) {
+    return this.authService.verifyPasswordResetOtp(
+      verifyDto.email,
+      verifyDto.otp,
+    );
+  }
+
+  @Post('password-reset/reset')
+  @HttpCode(HttpStatus.OK)
+  resetPassword(@Body() resetDto: ResetPasswordDto) {
+    return this.authService.resetPassword(resetDto);
   }
 
   @Post('refresh')

@@ -51,6 +51,10 @@ export class JwtStrategy extends PassportStrategy(Strategy, JWT_STRATEGY_NAME) {
       throw new UnauthorizedException();
     }
 
+    if (user.status === UserStatus.PENDING_VERIFICATION) {
+      throw new ForbiddenException('Email verification required');
+    }
+
     if (user.status !== UserStatus.ACTIVE) {
       throw new ForbiddenException('Account disabled');
     }
