@@ -2,12 +2,14 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
 import { Course, CourseStatus } from '../courses/entities/course.entity';
 import { LearningProgressService } from '../learning/learning-progress.service';
 import { Lesson } from '../lessons/entities/lesson.entity';
+import { NotificationsQueueService } from '../notifications/notifications-queue.service';
 import { User, UserRole, UserStatus } from '../users/entities/user.entity';
 import { EssayGradingStatusFilter } from './dto/essay-grading.dto';
 import {
@@ -203,6 +205,9 @@ describe('EssayGradingService', () => {
   let learningProgressService: {
     recomputeLessonAndEnrollmentProgress: jest.Mock;
   };
+  let notificationsQueueService: {
+    enqueueCreateNotification: jest.Mock;
+  };
   let queryRunner: {
     manager: {
       findOne: jest.Mock;
@@ -226,6 +231,9 @@ describe('EssayGradingService', () => {
         .fn()
         .mockResolvedValue(undefined),
     };
+    notificationsQueueService = {
+      enqueueCreateNotification: jest.fn(),
+    };
     queryRunner = {
       manager: {
         findOne: jest.fn().mockResolvedValue(makeAttempt()),
@@ -247,6 +255,7 @@ describe('EssayGradingService', () => {
       {
         createQueryRunner: jest.fn().mockReturnValue(queryRunner),
       } as unknown as DataSource,
+      notificationsQueueService as unknown as NotificationsQueueService,
     );
     coursesRepository.findOne.mockResolvedValue(makeCourse());
     quizzesRepository.findOne.mockResolvedValue(makeQuiz());
@@ -462,6 +471,101 @@ describe('EssayGradingService', () => {
     expect(
       learningProgressService.recomputeLessonAndEnrollmentProgress,
     ).toHaveBeenCalledWith(learnerId, courseId, lessonId);
+  });
+
+  it('enqueues learner notification when grading completes all pending essays', async () => {
+    await service.gradeEssay(
+      instructorId,
+      courseId,
+      quizId,
+      attemptId,
+      essayQuestionId,
+      {
+        points: 10,
+        feedback: 'Good answer',
+      },
+    );
+
+    expect(
+      notificationsQueueService.enqueueCreateNotification,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'direct',
+        targetUserId: learnerId,
+        actionUrl: `/learner/courses/${courseId}/learn`,
+        triggerKey: `essay-graded:${attemptId}`,
+        triggerDate: '2026-09-02',
+        metadata: expect.objectContaining({
+          attemptId,
+          quizId,
+          courseId,
+          lessonId,
+          learnerId,
+          instructorId,
+          pendingEssayCount: 0,
+        }),
+      }),
+    );
+  });
+
+  it('does not enqueue learner notification while other essays remain pending', async () => {
+    const secondEssayQuestionId = '99999999-9999-4999-8999-999999999999';
+    quizzesRepository.findOne.mockResolvedValue(
+      makeQuiz({
+        questions: [
+          makeQuestion(),
+          makeEssayQuestion(),
+          makeEssayQuestion({ id: secondEssayQuestionId, position: 2 }),
+        ],
+      }),
+    );
+    queryRunner.manager.findOne.mockResolvedValue(
+      makeAttempt({
+        pendingEssayCount: 2,
+        gradingResult: [
+          makeMcqResult(),
+          makePendingEssayResult(),
+          makePendingEssayResult({ questionId: secondEssayQuestionId }),
+        ],
+      }),
+    );
+
+    await service.gradeEssay(
+      instructorId,
+      courseId,
+      quizId,
+      attemptId,
+      essayQuestionId,
+      { points: 10 },
+    );
+
+    expect(
+      notificationsQueueService.enqueueCreateNotification,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('keeps essay grading successful when notification enqueue fails', async () => {
+    const loggerSpy = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation();
+    notificationsQueueService.enqueueCreateNotification.mockImplementationOnce(
+      () => {
+        throw new Error('queue unavailable');
+      },
+    );
+
+    await expect(
+      service.gradeEssay(
+        instructorId,
+        courseId,
+        quizId,
+        attemptId,
+        essayQuestionId,
+        { points: 10 },
+      ),
+    ).resolves.toMatchObject({ attemptId, pendingEssayCount: 0 });
+
+    loggerSpy.mockRestore();
   });
 
   it('does not recompute progress when grading does not pass the attempt', async () => {

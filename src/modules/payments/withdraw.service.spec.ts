@@ -1,15 +1,17 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
+import { NotificationsQueueService } from '../notifications/notifications-queue.service';
 import { InstructorAccount } from '../users/entities/instructor-account.entity';
 import { User, UserRole, UserStatus } from '../users/entities/user.entity';
 import { ConfigService as PaymentConfigService } from './config.service';
+import { ListAdminWithdrawRequestsQueryDto } from './dto/withdraw.dto';
 import { WithdrawRequestStatus } from './entities/withdraw-request.entity';
 import { WithdrawService } from './withdraw.service';
-import { ListAdminWithdrawRequestsQueryDto } from 'src/modules/payments/dto/withdraw.dto';
 
 describe('WithdrawService', () => {
   let service: WithdrawService;
@@ -27,6 +29,8 @@ describe('WithdrawService', () => {
     getSummary: jest.Mock;
     recordWithdrawDebit: jest.Mock;
   };
+  let usersRepo: { find: jest.Mock };
+  let notificationsQueueService: { enqueueCreateNotification: jest.Mock };
 
   const instructorId = '44444444-4444-4444-8444-444444444444';
   const otherInstructorId = '55555555-5555-4555-8555-555555555555';
@@ -44,6 +48,13 @@ describe('WithdrawService', () => {
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides,
   });
+
+  const makeAdmin = (id: string): User =>
+    makeUser({
+      id,
+      email: `${id}@admin.test`,
+      role: UserRole.ADMIN,
+    });
 
   const makeAccount = (
     overrides: Partial<InstructorAccount> = {},
@@ -144,6 +155,17 @@ describe('WithdrawService', () => {
       }),
       recordWithdrawDebit: jest.fn(),
     };
+    usersRepo = {
+      find: jest
+        .fn()
+        .mockResolvedValue([
+          makeAdmin('11111111-1111-4111-8111-111111111111'),
+          makeAdmin('22222222-2222-4222-8222-222222222222'),
+        ]),
+    };
+    notificationsQueueService = {
+      enqueueCreateNotification: jest.fn(),
+    };
 
     service = new WithdrawService(
       withdrawRepo as unknown as Repository<never>,
@@ -151,6 +173,8 @@ describe('WithdrawService', () => {
       configService as unknown as PaymentConfigService,
       dataSource as never,
       instructorBalanceService as never,
+      usersRepo as unknown as Repository<User>,
+      notificationsQueueService as unknown as NotificationsQueueService,
     );
   });
 
@@ -185,6 +209,73 @@ describe('WithdrawService', () => {
         payoutReference: null,
         payoutDescription: null,
       });
+    });
+
+    it('enqueues one direct notification per admin after withdrawal request is created', async () => {
+      await service.create(makeUser(), { amount: 1500000 });
+
+      expect(usersRepo.find).toHaveBeenCalledWith({
+        where: { role: UserRole.ADMIN },
+      });
+      expect(
+        notificationsQueueService.enqueueCreateNotification,
+      ).toHaveBeenCalledTimes(2);
+      expect(
+        notificationsQueueService.enqueueCreateNotification,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'direct',
+          targetUserId: '11111111-1111-4111-8111-111111111111',
+          actionUrl: '/admin/withdrawals',
+          triggerKey: `withdraw-submitted:${requestId}`,
+          metadata: expect.objectContaining({
+            withdrawRequestId: requestId,
+            instructorId,
+            amount: 1500000,
+            currency: 'VND',
+            status: WithdrawRequestStatus.PENDING,
+          }),
+        }),
+      );
+    });
+
+    it('keeps withdrawal creation successful when admin lookup fails', async () => {
+      const loggerSpy = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation();
+      usersRepo.find.mockRejectedValueOnce(new Error('admin lookup failed'));
+
+      await expect(
+        service.create(makeUser(), { amount: 1500000 }),
+      ).resolves.toMatchObject({
+        id: requestId,
+        status: WithdrawRequestStatus.PENDING,
+      });
+      expect(
+        notificationsQueueService.enqueueCreateNotification,
+      ).not.toHaveBeenCalled();
+
+      loggerSpy.mockRestore();
+    });
+
+    it('keeps withdrawal creation successful when admin notification enqueue fails', async () => {
+      const loggerSpy = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation();
+      notificationsQueueService.enqueueCreateNotification.mockImplementationOnce(
+        () => {
+          throw new Error('queue unavailable');
+        },
+      );
+
+      await expect(
+        service.create(makeUser(), { amount: 1500000 }),
+      ).resolves.toMatchObject({
+        id: requestId,
+        status: WithdrawRequestStatus.PENDING,
+      });
+
+      loggerSpy.mockRestore();
     });
 
     it('normalizes blank note to null', async () => {
@@ -514,6 +605,36 @@ describe('WithdrawService', () => {
       });
     });
 
+    it('enqueues instructor notification after rejecting a withdrawal request', async () => {
+      withdrawRepo.findOne.mockResolvedValue(
+        makeWithdrawRequest({
+          status: WithdrawRequestStatus.REJECTED,
+          rejectReason: 'Sai thong tin',
+          rejectedAt: new Date('2026-09-13T10:00:00.000Z'),
+          instructor: makeUser(),
+        }),
+      );
+
+      await service.reject(requestId, { reason: 'Sai thong tin' });
+
+      expect(
+        notificationsQueueService.enqueueCreateNotification,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'direct',
+          targetUserId: instructorId,
+          actionUrl: '/instructor/withdrawals',
+          triggerKey: `withdraw-status:${requestId}:rejected`,
+          metadata: expect.objectContaining({
+            withdrawRequestId: requestId,
+            instructorId,
+            status: WithdrawRequestStatus.REJECTED,
+            reason: 'Sai thong tin',
+          }),
+        }),
+      );
+    });
+
     it('throws not found when the request does not exist', async () => {
       withdrawRepo.update.mockResolvedValue({ affected: 0 });
       withdrawRepo.findOne.mockResolvedValue(null);
@@ -585,6 +706,38 @@ describe('WithdrawService', () => {
       expect(result.qrImageUrl).toContain('acc=123456789');
       expect(result.qrImageUrl).toContain('bank=VCB');
       expect(result.qrImageUrl).toContain('amount=1500000');
+    });
+
+    it('enqueues instructor notification after moving withdrawal request to processing', async () => {
+      withdrawRepo.findOne
+        .mockResolvedValueOnce(makeWithdrawRequest())
+        .mockResolvedValueOnce(
+          makeWithdrawRequest({
+            status: WithdrawRequestStatus.PROCESSING,
+            processingAt: new Date('2026-09-13T10:00:00.000Z'),
+            payoutDescription: 'PAYOUT-WD-66666666',
+            instructor: makeUser(),
+          }),
+        );
+
+      await service.process(requestId);
+
+      expect(
+        notificationsQueueService.enqueueCreateNotification,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'direct',
+          targetUserId: instructorId,
+          actionUrl: '/instructor/withdrawals',
+          triggerKey: `withdraw-status:${requestId}:processing`,
+          metadata: expect.objectContaining({
+            withdrawRequestId: requestId,
+            instructorId,
+            status: WithdrawRequestStatus.PROCESSING,
+            payoutDescription: 'PAYOUT-WD-66666666',
+          }),
+        }),
+      );
     });
 
     it('returns existing payout detail for an already processing request', async () => {
@@ -676,6 +829,47 @@ describe('WithdrawService', () => {
         status: WithdrawRequestStatus.PROCESSED,
         payoutReference: 'FT123456',
       });
+    });
+
+    it('enqueues instructor notification after marking withdrawal request processed', async () => {
+      const managerRepo = {
+        findOne: jest
+          .fn()
+          .mockResolvedValue(
+            makeWithdrawRequest({ status: WithdrawRequestStatus.PROCESSING }),
+          ),
+        save: jest.fn((value) => Promise.resolve(value)),
+      };
+      dataSource.transaction.mockImplementationOnce((callback) =>
+        callback({ getRepository: jest.fn().mockReturnValue(managerRepo) }),
+      );
+      withdrawRepo.findOne.mockResolvedValue(
+        makeWithdrawRequest({
+          status: WithdrawRequestStatus.PROCESSED,
+          processedAt: new Date('2026-09-13T11:00:00.000Z'),
+          payoutReference: 'BANK-REF-1',
+          instructor: makeUser(),
+        }),
+      );
+
+      await service.markProcessed(requestId, { payoutReference: 'BANK-REF-1' });
+
+      expect(
+        notificationsQueueService.enqueueCreateNotification,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'direct',
+          targetUserId: instructorId,
+          actionUrl: '/instructor/withdrawals',
+          triggerKey: `withdraw-status:${requestId}:processed`,
+          metadata: expect.objectContaining({
+            withdrawRequestId: requestId,
+            instructorId,
+            status: WithdrawRequestStatus.PROCESSED,
+            payoutReference: 'BANK-REF-1',
+          }),
+        }),
+      );
     });
 
     it('normalizes blank payout reference to null', async () => {

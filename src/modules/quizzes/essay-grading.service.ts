@@ -3,12 +3,14 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, Not, Repository } from 'typeorm';
 import { Course } from '../courses/entities/course.entity';
 import { LearningProgressService } from '../learning/learning-progress.service';
+import { NotificationsQueueService } from '../notifications/notifications-queue.service';
 import { User } from '../users/entities/user.entity';
 import {
   EssayGradingQuestionResponse,
@@ -35,6 +37,8 @@ interface InstructorQuizContext {
 
 @Injectable()
 export class EssayGradingService {
+  private readonly logger = new Logger(EssayGradingService.name);
+
   constructor(
     @InjectRepository(Course)
     private readonly coursesRepository: Repository<Course>,
@@ -46,6 +50,7 @@ export class EssayGradingService {
     private readonly usersRepository: Repository<User>,
     private readonly learningProgressService: LearningProgressService,
     private readonly dataSource: DataSource,
+    private readonly notificationsQueueService: NotificationsQueueService,
   ) {}
 
   async listSubmissions(
@@ -187,6 +192,18 @@ export class EssayGradingService {
           quiz.lessonId,
         );
       }
+
+      this.notifyEssayGraded({
+        attemptId: saved.id,
+        quizId,
+        courseId,
+        lessonId: quiz.lessonId,
+        learnerId: saved.learnerId,
+        instructorId,
+        pendingEssayCount: saved.pendingEssayCount,
+        passed: saved.passed,
+        status: saved.status,
+      });
 
       return this.toAttemptResult(saved);
     } catch (error) {
@@ -347,5 +364,54 @@ export class EssayGradingService {
         ? (attempt.gradingResult as QuizAttemptQuestionResult[])
         : [],
     };
+  }
+
+  private notifyEssayGraded(input: {
+    attemptId: string;
+    quizId: string;
+    courseId: string;
+    lessonId: string;
+    learnerId: string;
+    instructorId: string;
+    pendingEssayCount: number;
+    passed: boolean;
+    status: QuizAttemptStatus;
+  }): void {
+    if (input.pendingEssayCount !== 0) {
+      return;
+    }
+
+    try {
+      this.notificationsQueueService.enqueueCreateNotification({
+        kind: 'direct',
+        targetUserId: input.learnerId,
+        title: 'Bài tự luận đã được chấm',
+        message: 'Giảng viên đã hoàn tất chấm bài tự luận của bạn.',
+        actionUrl: `/learner/courses/${input.courseId}/learn`,
+        metadata: {
+          attemptId: input.attemptId,
+          quizId: input.quizId,
+          courseId: input.courseId,
+          lessonId: input.lessonId,
+          learnerId: input.learnerId,
+          instructorId: input.instructorId,
+          pendingEssayCount: input.pendingEssayCount,
+          passed: input.passed,
+          status: input.status,
+        },
+        sentAt: new Date().toISOString(),
+        triggerKey: `essay-graded:${input.attemptId}`,
+        triggerDate: this.getNotificationTriggerDate(),
+      });
+    } catch (error) {
+      this.logger.error(
+        'Could not enqueue essay graded notification',
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  private getNotificationTriggerDate(date = new Date()): string {
+    return date.toISOString().slice(0, 10);
   }
 }

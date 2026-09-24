@@ -647,4 +647,8 @@ export class AuthService {
       return null;
     }
   }
+
+  public isProduction(): boolean {
+    return this.configService.getOrThrow<string>('NODE_ENV') == 'production';
+  }
 }

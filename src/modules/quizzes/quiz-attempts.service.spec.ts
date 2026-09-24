@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, IsNull, Not, Repository } from 'typeorm';
@@ -15,6 +16,7 @@ import { LearningAnalyticsEvent } from '../learning/entities/learning-analytics-
 import { LearningProgressService } from '../learning/learning-progress.service';
 import { Lesson } from '../lessons/entities/lesson.entity';
 import { LearningAccessService } from '../lessons/learning-access.service';
+import { NotificationsQueueService } from '../notifications/notifications-queue.service';
 import { QuizAttemptStatus } from './dto/quiz-attempt.dto';
 import { Question, QuestionType } from './entities/question.entity';
 import { QuizAttempt } from './entities/quiz-attempt.entity';
@@ -178,6 +180,9 @@ describe('QuizAttemptsService', () => {
     getCompletedLessonIds: jest.Mock;
     recomputeLessonAndEnrollmentProgress: jest.Mock;
   };
+  let notificationsQueueService: {
+    enqueueCreateNotification: jest.Mock;
+  };
   let queryRunner: {
     manager: {
       findOne: jest.Mock;
@@ -205,6 +210,9 @@ describe('QuizAttemptsService', () => {
         .fn()
         .mockResolvedValue(undefined),
     };
+    notificationsQueueService = {
+      enqueueCreateNotification: jest.fn(),
+    };
     queryRunner = {
       manager: {
         findOne: jest.fn().mockResolvedValue(makeAttempt()),
@@ -229,6 +237,7 @@ describe('QuizAttemptsService', () => {
       {
         createQueryRunner: jest.fn().mockReturnValue(queryRunner),
       } as unknown as DataSource,
+      notificationsQueueService as unknown as NotificationsQueueService,
     );
   });
 
@@ -485,6 +494,106 @@ describe('QuizAttemptsService', () => {
     expect(
       learningProgressService.recomputeLessonAndEnrollmentProgress,
     ).not.toHaveBeenCalled();
+  });
+
+  it('enqueues instructor notification when submitted attempt has pending essay answers', async () => {
+    arrangeSubmitContext({
+      questions: [makeMcqQuestion(), makeEssayQuestion()],
+    });
+
+    await service.submitAttempt(
+      learnerId,
+      courseId,
+      lessonId,
+      quizId,
+      attemptId,
+      {
+        answers: [
+          { questionId, selectedOptionIndexes: [0] },
+          { questionId: essayQuestionId, text: 'My essay answer' },
+        ],
+      },
+    );
+
+    expect(
+      notificationsQueueService.enqueueCreateNotification,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'direct',
+        targetUserId: '88888888-8888-4888-8888-888888888888',
+        actionUrl: '/instructor/essay-grading',
+        triggerKey: `essay-submitted:${attemptId}`,
+        triggerDate: '2026-08-31',
+        metadata: expect.objectContaining({
+          attemptId,
+          quizId,
+          courseId,
+          lessonId,
+          learnerId,
+          instructorId: '88888888-8888-4888-8888-888888888888',
+          pendingEssayCount: 1,
+        }),
+      }),
+    );
+  });
+
+  it('does not enqueue essay notification when submitted attempt has no pending essays', async () => {
+    arrangeSubmitContext({ questions: [makeMcqQuestion()] });
+
+    await service.submitAttempt(
+      learnerId,
+      courseId,
+      lessonId,
+      quizId,
+      attemptId,
+      { answers: [{ questionId, selectedOptionIndexes: [0] }] },
+    );
+
+    expect(
+      notificationsQueueService.enqueueCreateNotification,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('does not enqueue essay notification when quiz submission fails before commit', async () => {
+    arrangeSubmitContext({ questions: [makeMcqQuestion()] });
+    queryRunner.commitTransaction.mockRejectedValueOnce(
+      new Error('commit failed'),
+    );
+
+    await expect(
+      service.submitAttempt(learnerId, courseId, lessonId, quizId, attemptId, {
+        answers: [{ questionId, selectedOptionIndexes: [0] }],
+      }),
+    ).rejects.toThrow('commit failed');
+
+    expect(
+      notificationsQueueService.enqueueCreateNotification,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('keeps quiz submission successful when essay notification enqueue fails', async () => {
+    arrangeSubmitContext({
+      questions: [makeMcqQuestion(), makeEssayQuestion()],
+    });
+    const loggerSpy = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation();
+    notificationsQueueService.enqueueCreateNotification.mockImplementationOnce(
+      () => {
+        throw new Error('queue unavailable');
+      },
+    );
+
+    await expect(
+      service.submitAttempt(learnerId, courseId, lessonId, quizId, attemptId, {
+        answers: [
+          { questionId, selectedOptionIndexes: [0] },
+          { questionId: essayQuestionId, text: 'My essay answer' },
+        ],
+      }),
+    ).resolves.toMatchObject({ attemptId, pendingEssayCount: 1 });
+
+    loggerSpy.mockRestore();
   });
 
   it('passes when score equals pass score boundary', async () => {

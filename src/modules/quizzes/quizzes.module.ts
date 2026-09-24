@@ -9,6 +9,7 @@ import { LessonWatchEvent } from '../learning/entities/lesson-watch-event.entity
 import { LearningProgressService } from '../learning/learning-progress.service';
 import { Lesson } from '../lessons/entities/lesson.entity';
 import { LessonsModule } from '../lessons/lessons.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { User } from '../users/entities/user.entity';
 import { EssayGradingController } from './essay-grading.controller';
 import { EssayGradingService } from './essay-grading.service';
@@ -40,6 +41,7 @@ import { QuizzesService } from './quizzes.service';
     ]),
     LessonsModule,
     CourseProgressModule,
+    NotificationsModule,
   ],
   controllers: [
     QuizzesController,
