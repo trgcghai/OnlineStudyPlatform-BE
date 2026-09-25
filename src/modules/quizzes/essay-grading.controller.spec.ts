@@ -5,11 +5,15 @@ import { ROLES_KEY } from '../../common/constants/auth.constant';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { UserRole } from '../users/entities/user.entity';
 import { EssayGradingStatusFilter } from './dto/essay-grading.dto';
-import { EssayGradingController } from './essay-grading.controller';
+import {
+  EssayAnswerGradingController,
+  EssayGradingController,
+} from './essay-grading.controller';
 import { EssayGradingService } from './essay-grading.service';
 
 describe('EssayGradingController', () => {
   let controller: EssayGradingController;
+  let answerController: EssayAnswerGradingController;
   let service: {
     listSubmissions: jest.Mock;
     gradeEssay: jest.Mock;
@@ -28,30 +32,26 @@ describe('EssayGradingController', () => {
     };
 
     const module: TestingModule = await Test.createTestingModule({
-      controllers: [EssayGradingController],
+      controllers: [EssayGradingController, EssayAnswerGradingController],
       providers: [{ provide: EssayGradingService, useValue: service }],
     }).compile();
 
     controller = module.get(EssayGradingController);
+    answerController = module.get(EssayAnswerGradingController);
   });
 
   it('delegates essay grading queue listing', async () => {
-    const query = { status: EssayGradingStatusFilter.ALL };
+    const query = { courseId, status: EssayGradingStatusFilter.ALL };
 
-    await controller.listSubmissions(courseId, quizId, instructorId, query);
+    await controller.listSubmissions(instructorId, query);
 
-    expect(service.listSubmissions).toHaveBeenCalledWith(
-      instructorId,
-      courseId,
-      quizId,
-      query,
-    );
+    expect(service.listSubmissions).toHaveBeenCalledWith(instructorId, query);
   });
 
   it('delegates essay grade saving', async () => {
     const dto = { points: 8, feedback: 'Good answer' };
 
-    await controller.gradeEssay(
+    await answerController.gradeEssay(
       courseId,
       quizId,
       attemptId,
@@ -72,9 +72,14 @@ describe('EssayGradingController', () => {
 });
 
 describe('EssayGrading RBAC', () => {
-  const handlers = Object.getOwnPropertyNames(EssayGradingController.prototype)
-    .filter((name) => name !== 'constructor')
-    .map((name) => ({ target: EssayGradingController.prototype, name }));
+  const handlers = [
+    EssayGradingController,
+    EssayAnswerGradingController,
+  ].flatMap((controllerClass) =>
+    Object.getOwnPropertyNames(controllerClass.prototype)
+      .filter((name) => name !== 'constructor')
+      .map((name) => ({ target: controllerClass.prototype, name })),
+  );
 
   it('keeps every essay grading endpoint restricted to Instructor', () => {
     for (const { target, name } of handlers) {

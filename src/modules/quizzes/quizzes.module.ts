@@ -11,7 +11,10 @@ import { Lesson } from '../lessons/entities/lesson.entity';
 import { LessonsModule } from '../lessons/lessons.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { User } from '../users/entities/user.entity';
-import { EssayGradingController } from './essay-grading.controller';
+import {
+  EssayAnswerGradingController,
+  EssayGradingController,
+} from './essay-grading.controller';
 import { EssayGradingService } from './essay-grading.service';
 import {
   QuestionManageController,
@@ -49,6 +52,7 @@ import { QuizzesService } from './quizzes.service';
     QuizManageController,
     QuestionManageController,
     EssayGradingController,
+    EssayAnswerGradingController,
   ],
   providers: [
     QuizzesService,
