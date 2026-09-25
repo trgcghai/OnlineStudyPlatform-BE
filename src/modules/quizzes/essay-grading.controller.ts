@@ -21,7 +21,7 @@ import {
 } from './dto/essay-grading.dto';
 import { EssayGradingService } from './essay-grading.service';
 
-@Controller('courses/:courseId/quizzes/:quizId/essay-grading')
+@Controller('essay-grading/submissions')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class EssayGradingController {
   constructor(private readonly essayGradingService: EssayGradingService) {}
@@ -29,18 +29,17 @@ export class EssayGradingController {
   @Get()
   @Roles(UserRole.INSTRUCTOR)
   listSubmissions(
-    @Param('courseId', ParseUUIDPipe) courseId: string,
-    @Param('quizId', ParseUUIDPipe) quizId: string,
     @CurrentUser('id') instructorId: string,
     @Query() query: ListEssayGradingSubmissionsQueryDto,
   ) {
-    return this.essayGradingService.listSubmissions(
-      instructorId,
-      courseId,
-      quizId,
-      query,
-    );
+    return this.essayGradingService.listSubmissions(instructorId, query);
   }
+}
+
+@Controller('courses/:courseId/quizzes/:quizId/essay-grading')
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class EssayAnswerGradingController {
+  constructor(private readonly essayGradingService: EssayGradingService) {}
 
   @Patch('attempts/:attemptId/essay/:questionId')
   @Roles(UserRole.INSTRUCTOR)
