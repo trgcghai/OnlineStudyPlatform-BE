@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
 import { MongooseModule } from '@nestjs/mongoose';
+import { AccessTokenUserValidatorService } from '../../common/services/access-token-user-validator.service';
+import { UsersModule } from '../users/users.module';
 import {
   Notification,
   NotificationSchema,
@@ -11,6 +14,8 @@ import { NotificationsService } from './notifications.service';
 
 @Module({
   imports: [
+    JwtModule.register({}),
+    UsersModule,
     MongooseModule.forFeature([
       { name: Notification.name, schema: NotificationSchema },
     ]),
@@ -20,6 +25,7 @@ import { NotificationsService } from './notifications.service';
     NotificationsService,
     NotificationsQueueService,
     NotificationsGateway,
+    AccessTokenUserValidatorService,
   ],
   exports: [NotificationsService, NotificationsQueueService],
 })

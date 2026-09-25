@@ -7,7 +7,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, IsNull, Not, Repository } from 'typeorm';
+import {
+  DataSource,
+  FindOptionsWhere,
+  In,
+  IsNull,
+  Not,
+  Repository,
+} from 'typeorm';
 import { Course } from '../courses/entities/course.entity';
 import { LearningProgressService } from '../learning/learning-progress.service';
 import { NotificationsQueueService } from '../notifications/notifications-queue.service';
@@ -55,19 +62,68 @@ export class EssayGradingService {
 
   async listSubmissions(
     instructorId: string,
-    courseId: string,
-    quizId: string,
     query: ListEssayGradingSubmissionsQueryDto,
   ): Promise<EssayGradingSubmissionListResponse> {
-    const { quiz, questions } = await this.loadInstructorQuizContext(
-      instructorId,
-      courseId,
-      quizId,
-    );
+    if (query.lessonId && !query.courseId) {
+      throw new BadRequestException(
+        'courseId is required when lessonId is set',
+      );
+    }
+
+    if (query.courseId) {
+      const course = await this.coursesRepository.findOne({
+        where: { id: query.courseId },
+      });
+      if (!course) {
+        throw new NotFoundException('Course not found');
+      }
+      if (course.instructorId !== instructorId) {
+        throw new ForbiddenException('You do not own this course');
+      }
+    }
+
+    const quizWhere: FindOptionsWhere<Quiz> = {
+      lesson: {
+        ...(query.lessonId ? { id: query.lessonId } : {}),
+        course: {
+          instructorId,
+          ...(query.courseId ? { id: query.courseId } : {}),
+        },
+      },
+    };
+    const quizzes = await this.quizzesRepository.find({
+      where: quizWhere,
+      relations: { lesson: { course: true }, questions: true },
+    });
+    const quizById = new Map(quizzes.map((quiz) => [quiz.id, quiz]));
+    const quizIds = quizzes.map((quiz) => quiz.id);
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+
+    if (quizIds.length === 0) {
+      return {
+        items: [],
+        total: 0,
+        page,
+        limit,
+        totalPages: 1,
+      };
+    }
+
     const attempts = await this.attemptsRepository.find({
-      where: { quizId, submittedAt: Not(IsNull()) },
+      where: { quizId: In(quizIds), submittedAt: Not(IsNull()) },
       order: { submittedAt: 'DESC', createdAt: 'DESC' },
     });
+    if (attempts.length === 0) {
+      return {
+        items: [],
+        total: 0,
+        page,
+        limit,
+        totalPages: 1,
+      };
+    }
+
     const learners = await this.usersRepository.find({
       where: {
         id: In([...new Set(attempts.map((attempt) => attempt.learnerId))]),
@@ -77,13 +133,19 @@ export class EssayGradingService {
       learners.map((learner) => [learner.id, learner]),
     );
     const filter = query.status ?? EssayGradingStatusFilter.PENDING;
-
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 10;
     const filtered = attempts
-      .map((attempt) =>
-        this.toSubmissionResponse(attempt, quiz, questions, learnerById),
-      )
+      .map((attempt) => {
+        const quiz = quizById.get(attempt.quizId);
+        if (!quiz) {
+          return null;
+        }
+        return this.toSubmissionResponse(
+          attempt,
+          quiz,
+          quiz.questions ?? [],
+          learnerById,
+        );
+      })
       .filter((submission): submission is EssayGradingSubmissionResponse => {
         if (!submission || submission.essays.length === 0) {
           return false;
@@ -256,7 +318,12 @@ export class EssayGradingService {
 
     return {
       attemptId: attempt.id,
+      courseId: quiz.lesson.courseId,
+      courseTitle: quiz.lesson.course.title,
+      lessonId: quiz.lessonId,
+      lessonTitle: quiz.lesson.title,
       quizId: quiz.id,
+      quizTitle: quiz.title,
       learner: {
         id: attempt.learnerId,
         name: learner?.name ?? '',
@@ -387,7 +454,7 @@ export class EssayGradingService {
         targetUserId: input.learnerId,
         title: 'Bài tự luận đã được chấm',
         message: 'Giảng viên đã hoàn tất chấm bài tự luận của bạn.',
-        actionUrl: `/learner/courses/${input.courseId}/learn`,
+        actionUrl: `/learner/courses/${input.courseId}/learn?lessonId=${input.lessonId}`,
         metadata: {
           attemptId: input.attemptId,
           quizId: input.quizId,

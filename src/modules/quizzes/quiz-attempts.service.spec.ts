@@ -59,7 +59,7 @@ function makeCourse(overrides: Partial<Course> = {}): Course {
     createdAt: now,
     updatedAt: now,
     ...overrides,
-  };
+  } as Course;
 }
 
 function makeLesson(overrides: Partial<Lesson> = {}): Lesson {
@@ -521,7 +521,7 @@ describe('QuizAttemptsService', () => {
       expect.objectContaining({
         kind: 'direct',
         targetUserId: '88888888-8888-4888-8888-888888888888',
-        actionUrl: '/instructor/essay-grading',
+        actionUrl: `/instructor/essay-grading?courseId=${courseId}&lessonId=${lessonId}`,
         triggerKey: `essay-submitted:${attemptId}`,
         triggerDate: '2026-08-31',
         metadata: expect.objectContaining({

@@ -1,4 +1,5 @@
 import type { ConsumeMessage } from 'amqplib';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   NOTIFICATION_CREATE_DLQ,
@@ -9,6 +10,7 @@ import {
   NOTIFICATION_RETRY_HEADER,
 } from './notification-queue.constants';
 import { NotificationQueue } from './entities/notification.entity';
+import { NotificationsGateway } from './notifications.gateway';
 import { NotificationsQueueService } from './notifications-queue.service';
 import { NotificationsService } from './notifications.service';
 
@@ -19,6 +21,10 @@ describe('NotificationsQueueService', () => {
     ack: jest.Mock;
   };
   let notificationsService: { createFromQueueMessage: jest.Mock };
+  let notificationsGateway: {
+    emitNotificationCreatedToUser: jest.Mock;
+    emitNotificationCreatedForQueue: jest.Mock;
+  };
 
   const message = {
     kind: 'direct' as const,
@@ -35,13 +41,20 @@ describe('NotificationsQueueService', () => {
       ack: jest.fn(),
     };
     notificationsService = {
-      createFromQueueMessage: jest
-        .fn()
-        .mockResolvedValue({ created: true, duplicate: false }),
+      createFromQueueMessage: jest.fn().mockResolvedValue({
+        created: true,
+        duplicate: false,
+        notificationId: 'notification-1',
+      }),
+    };
+    notificationsGateway = {
+      emitNotificationCreatedToUser: jest.fn(),
+      emitNotificationCreatedForQueue: jest.fn(),
     };
     service = new NotificationsQueueService(
       { getOrThrow: jest.fn() } as unknown as ConfigService,
       notificationsService as unknown as NotificationsService,
+      notificationsGateway as unknown as NotificationsGateway,
     );
     Object.assign(service, { channel });
   });
@@ -71,6 +84,54 @@ describe('NotificationsQueueService', () => {
     expect(channel.ack).toHaveBeenCalledWith(rawMessage);
   });
 
+  it('emits a direct realtime signal after successful persistence', async () => {
+    const rawMessage = createRawMessage(message);
+
+    await service.handleCreateMessage(rawMessage);
+
+    expect(
+      notificationsGateway.emitNotificationCreatedToUser,
+    ).toHaveBeenCalledWith('user-1', 'notification-1');
+    expect(channel.ack).toHaveBeenCalledWith(rawMessage);
+  });
+
+  it('emits a queue realtime signal after successful queue notification persistence', async () => {
+    const queueMessage = {
+      kind: 'queue' as const,
+      queue: NotificationQueue.COURSE_APPROVAL,
+      title: 'Yêu cầu duyệt khóa học',
+      message: 'Một khóa học cần được duyệt.',
+      triggerKey: 'course-publication-request:course-1',
+      triggerDate: '2026-09-24',
+    };
+    const rawMessage = createRawMessage(queueMessage);
+
+    await service.handleCreateMessage(rawMessage);
+
+    expect(
+      notificationsGateway.emitNotificationCreatedForQueue,
+    ).toHaveBeenCalledWith(NotificationQueue.COURSE_APPROVAL, 'notification-1');
+    expect(channel.ack).toHaveBeenCalledWith(rawMessage);
+  });
+
+  it('does not emit when notification creation is a duplicate no-op', async () => {
+    notificationsService.createFromQueueMessage.mockResolvedValueOnce({
+      created: false,
+      duplicate: true,
+    });
+    const rawMessage = createRawMessage(message);
+
+    await service.handleCreateMessage(rawMessage);
+
+    expect(
+      notificationsGateway.emitNotificationCreatedToUser,
+    ).not.toHaveBeenCalled();
+    expect(
+      notificationsGateway.emitNotificationCreatedForQueue,
+    ).not.toHaveBeenCalled();
+    expect(channel.ack).toHaveBeenCalledWith(rawMessage);
+  });
+
   it('routes malformed messages to the DLQ and acknowledges them', async () => {
     const rawMessage = createRawMessage({ kind: 'direct' });
 
@@ -82,6 +143,9 @@ describe('NotificationsQueueService', () => {
       rawMessage.content,
       expect.objectContaining({ persistent: true }),
     );
+    expect(
+      notificationsGateway.emitNotificationCreatedToUser,
+    ).not.toHaveBeenCalled();
     expect(channel.ack).toHaveBeenCalledWith(rawMessage);
   });
 
@@ -101,7 +165,56 @@ describe('NotificationsQueueService', () => {
         headers: expect.objectContaining({ [NOTIFICATION_RETRY_HEADER]: 1 }),
       }),
     );
+    expect(
+      notificationsGateway.emitNotificationCreatedToUser,
+    ).not.toHaveBeenCalled();
+    expect(
+      notificationsGateway.emitNotificationCreatedForQueue,
+    ).not.toHaveBeenCalled();
     expect(channel.ack).toHaveBeenCalledWith(rawMessage);
+  });
+
+  it('does not emit malformed messages and routes them to the DLQ', async () => {
+    const rawMessage = createRawMessage({ kind: 'direct' });
+
+    await service.handleCreateMessage(rawMessage);
+
+    expect(
+      notificationsGateway.emitNotificationCreatedToUser,
+    ).not.toHaveBeenCalled();
+    expect(
+      notificationsGateway.emitNotificationCreatedForQueue,
+    ).not.toHaveBeenCalled();
+    expect(channel.publish).toHaveBeenCalledWith(
+      NOTIFICATION_EXCHANGE,
+      NOTIFICATION_CREATE_DLQ,
+      rawMessage.content,
+      expect.objectContaining({ persistent: true }),
+    );
+    expect(channel.ack).toHaveBeenCalledWith(rawMessage);
+  });
+
+  it('acks persisted messages when best-effort realtime emission fails', async () => {
+    const errorSpy = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
+    notificationsGateway.emitNotificationCreatedToUser.mockImplementationOnce(
+      () => {
+        throw new Error('socket server unavailable');
+      },
+    );
+    const rawMessage = createRawMessage(message);
+
+    await service.handleCreateMessage(rawMessage);
+
+    expect(channel.publish).not.toHaveBeenCalled();
+    expect(channel.ack).toHaveBeenCalledWith(rawMessage);
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Could not emit notification created event',
+      expect.stringContaining('socket server unavailable'),
+    );
+
+    errorSpy.mockRestore();
   });
 
   it('routes exhausted retries to the DLQ and acknowledges them', async () => {

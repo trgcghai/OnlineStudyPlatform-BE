@@ -5,6 +5,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   Length,
   Max,
   Min,
@@ -21,6 +22,14 @@ export enum EssayGradingStatusFilter {
 }
 
 export class ListEssayGradingSubmissionsQueryDto {
+  @IsOptional()
+  @IsUUID()
+  courseId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  lessonId?: string;
+
   @IsOptional()
   @IsEnum(EssayGradingStatusFilter)
   status?: EssayGradingStatusFilter;
@@ -71,7 +80,12 @@ export interface EssayGradingQuestionResponse {
 
 export interface EssayGradingSubmissionResponse {
   attemptId: string;
+  courseId: string;
+  courseTitle: string;
+  lessonId: string;
+  lessonTitle: string;
   quizId: string;
+  quizTitle: string;
   learner: EssayGradingLearnerResponse;
   submittedAt: Date | null;
   totalScore: number;

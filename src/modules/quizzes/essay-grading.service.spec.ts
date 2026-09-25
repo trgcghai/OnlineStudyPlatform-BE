@@ -258,6 +258,7 @@ describe('EssayGradingService', () => {
       notificationsQueueService as unknown as NotificationsQueueService,
     );
     coursesRepository.findOne.mockResolvedValue(makeCourse());
+    quizzesRepository.find.mockResolvedValue([makeQuiz()]);
     quizzesRepository.findOne.mockResolvedValue(makeQuiz());
     usersRepository.find.mockResolvedValue([makeLearner()]);
   });
@@ -267,19 +268,20 @@ describe('EssayGradingService', () => {
   it('lists pending essay submissions with learner details', async () => {
     attemptsRepository.find.mockResolvedValue([makeAttempt()]);
 
-    const result = await service.listSubmissions(
-      instructorId,
-      courseId,
-      quizId,
-      {
-        status: EssayGradingStatusFilter.PENDING,
-      },
-    );
+    const result = await service.listSubmissions(instructorId, {
+      status: EssayGradingStatusFilter.PENDING,
+    });
 
     expect(result).toEqual({
       items: [
         expect.objectContaining({
           attemptId,
+          courseId,
+          courseTitle: 'Course',
+          lessonId,
+          lessonTitle: 'Lesson',
+          quizId,
+          quizTitle: 'Quiz',
           learner: {
             id: learnerId,
             name: 'Learner',
@@ -319,14 +321,9 @@ describe('EssayGradingService', () => {
       }),
     ]);
 
-    const result = await service.listSubmissions(
-      instructorId,
-      courseId,
-      quizId,
-      {
-        status: EssayGradingStatusFilter.GRADED,
-      },
-    );
+    const result = await service.listSubmissions(instructorId, {
+      status: EssayGradingStatusFilter.GRADED,
+    });
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0].attemptId).toBe(
@@ -341,16 +338,11 @@ describe('EssayGradingService', () => {
       makeAttempt({ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' }),
     ]);
 
-    const result = await service.listSubmissions(
-      instructorId,
-      courseId,
-      quizId,
-      {
-        status: EssayGradingStatusFilter.PENDING,
-        page: 2,
-        limit: 2,
-      },
-    );
+    const result = await service.listSubmissions(instructorId, {
+      status: EssayGradingStatusFilter.PENDING,
+      page: 2,
+      limit: 2,
+    });
 
     expect(result.items.map((item) => item.attemptId)).toEqual([
       'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
@@ -369,8 +361,14 @@ describe('EssayGradingService', () => {
     );
 
     await expect(
-      service.listSubmissions(instructorId, courseId, quizId, {}),
+      service.listSubmissions(instructorId, { courseId }),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('requires courseId when filtering by lessonId', async () => {
+    await expect(
+      service.listSubmissions(instructorId, { lessonId }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects grading points above the essay max score', async () => {
@@ -492,7 +490,7 @@ describe('EssayGradingService', () => {
       expect.objectContaining({
         kind: 'direct',
         targetUserId: learnerId,
-        actionUrl: `/learner/courses/${courseId}/learn`,
+        actionUrl: `/learner/courses/${courseId}/learn?lessonId=${lessonId}`,
         triggerKey: `essay-graded:${attemptId}`,
         triggerDate: '2026-09-02',
         metadata: expect.objectContaining({
