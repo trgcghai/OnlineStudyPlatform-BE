@@ -490,7 +490,7 @@ describe('EssayGradingService', () => {
       expect.objectContaining({
         kind: 'direct',
         targetUserId: learnerId,
-        actionUrl: `/learner/courses/${courseId}/learn`,
+        actionUrl: `/learner/courses/${courseId}/learn?lessonId=${lessonId}`,
         triggerKey: `essay-graded:${attemptId}`,
         triggerDate: '2026-09-02',
         metadata: expect.objectContaining({

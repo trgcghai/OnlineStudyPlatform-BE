@@ -454,7 +454,7 @@ export class EssayGradingService {
         targetUserId: input.learnerId,
         title: 'Bài tự luận đã được chấm',
         message: 'Giảng viên đã hoàn tất chấm bài tự luận của bạn.',
-        actionUrl: `/learner/courses/${input.courseId}/learn`,
+        actionUrl: `/learner/courses/${input.courseId}/learn?lessonId=${input.lessonId}`,
         metadata: {
           attemptId: input.attemptId,
           quizId: input.quizId,

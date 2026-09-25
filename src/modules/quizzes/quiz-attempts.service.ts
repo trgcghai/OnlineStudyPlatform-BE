@@ -626,7 +626,7 @@ export class QuizAttemptsService {
         targetUserId: input.instructorId,
         title: 'Bài tự luận cần chấm',
         message: 'Một học viên đã nộp bài kiểm tra có câu tự luận cần chấm.',
-        actionUrl: `/instructor/essay-grading?courseId=${input.courseId}&lessonId=${input.lessonId}#${input.quizId}`,
+        actionUrl: `/instructor/essay-grading?courseId=${input.courseId}&lessonId=${input.lessonId}`,
         metadata: {
           attemptId: input.attemptId,
           quizId: input.quizId,
