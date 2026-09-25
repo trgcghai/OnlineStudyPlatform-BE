@@ -17,6 +17,7 @@ import {
   NOTIFICATION_RETRY_HEADER,
 } from './notification-queue.constants';
 import { NotificationCreateMessage } from './dto/notification.dto';
+import { NotificationsGateway } from './notifications.gateway';
 import { NotificationsService } from './notifications.service';
 
 @Injectable()
@@ -30,6 +31,7 @@ export class NotificationsQueueService
   constructor(
     private readonly configService: ConfigService,
     private readonly notificationsService: NotificationsService,
+    private readonly notificationsGateway: NotificationsGateway,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -61,7 +63,13 @@ export class NotificationsQueueService
 
     try {
       const message = this.parseCreateMessage(rawMessage.content);
-      await this.notificationsService.createFromQueueMessage(message);
+      const result =
+        await this.notificationsService.createFromQueueMessage(message);
+      this.emitNotificationCreated(
+        message,
+        result.notificationId,
+        result.created,
+      );
       channel.ack(rawMessage);
     } catch (error) {
       if (error instanceof SyntaxError || error instanceof TypeError) {
@@ -72,6 +80,36 @@ export class NotificationsQueueService
 
       this.retryOrDlq(rawMessage);
       channel.ack(rawMessage);
+    }
+  }
+
+  private emitNotificationCreated(
+    message: NotificationCreateMessage,
+    notificationId: string | undefined,
+    created: boolean,
+  ): void {
+    if (!created || !notificationId) {
+      return;
+    }
+
+    try {
+      if (message.kind === 'direct') {
+        this.notificationsGateway.emitNotificationCreatedToUser(
+          message.targetUserId ?? '',
+          notificationId,
+        );
+        return;
+      }
+
+      this.notificationsGateway.emitNotificationCreatedForQueue(
+        message.queue!,
+        notificationId,
+      );
+    } catch (error) {
+      this.logger.error(
+        'Could not emit notification created event',
+        error instanceof Error ? error.stack : String(error),
+      );
     }
   }
 
