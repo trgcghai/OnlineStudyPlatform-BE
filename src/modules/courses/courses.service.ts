@@ -25,6 +25,7 @@ import { Quiz } from '../quizzes/entities/quiz.entity';
 import type { QuizSummaryResponse } from '../quizzes/dto/quiz.dto';
 import { UserRole } from '../users/entities/user.entity';
 import { ConfigService as PaymentConfigService } from '../payments/config.service';
+import { CourseAssetCleanupQueuePublisher } from './cleanup/queue/course-asset-cleanup-queue.publisher';
 import {
   AdminCourseContentListResult,
   CourseApprovalListResult,
@@ -67,6 +68,7 @@ export class CoursesService {
     @InjectRepository(Question)
     private readonly questionsRepository: Repository<Question>,
     private readonly paymentConfigService: PaymentConfigService,
+    private readonly courseAssetCleanupQueue: CourseAssetCleanupQueuePublisher,
   ) {}
 
   async create(
@@ -333,8 +335,21 @@ export class CoursesService {
   }
 
   async remove(id: string, instructorId: string): Promise<void> {
-    await this.getOwnedCourseEntity(id, instructorId);
+    const course = await this.getOwnedCourseEntity(id, instructorId);
     this.assertCourseCanBeDeleted(id);
+
+    const lessons = await this.lessonsRepository.find({
+      where: { courseId: id },
+    });
+    const objectKeys = this.collectCourseObjectKeys(course, lessons);
+
+    if (objectKeys.length > 0) {
+      await this.courseAssetCleanupQueue.enqueue({
+        courseId: id,
+        objectKeys,
+      });
+    }
+
     await this.coursesRepository.delete(id);
   }
 
@@ -625,6 +640,37 @@ export class CoursesService {
   ): string | null {
     const prefix = this.buildPublicObjectUrl(endpoint, bucket, '');
     return publicUrl.startsWith(prefix) ? publicUrl.slice(prefix.length) : null;
+  }
+
+  private collectCourseObjectKeys(course: Course, lessons: Lesson[]): string[] {
+    const bucket = this.configService.getOrThrow<string>('MINIO_BUCKET');
+    const endpoints = [
+      this.configService.getOrThrow<string>('MINIO_ENDPOINT'),
+      this.configService.get<string>('MINIO_PUBLIC_ENDPOINT'),
+    ].filter((endpoint): endpoint is string => Boolean(endpoint));
+    const urls = [
+      course.thumbnail,
+      ...lessons.flatMap((lesson) => [lesson.videoUrl, lesson.materialUrl]),
+    ];
+
+    return [
+      ...new Set(
+        urls.flatMap((url) => {
+          if (!url) return [];
+
+          for (const endpoint of endpoints) {
+            const objectKey = this.getObjectKeyFromPublicUrl(
+              endpoint,
+              bucket,
+              url,
+            );
+            if (objectKey) return [objectKey];
+          }
+
+          return [];
+        }),
+      ),
+    ];
   }
 
   private async deleteThumbnailObjectQuietly(

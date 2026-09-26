@@ -17,6 +17,7 @@ import {
 } from './entities/course.entity';
 import { Question, QuestionType } from '../quizzes/entities/question.entity';
 import { Quiz } from '../quizzes/entities/quiz.entity';
+import { CourseAssetCleanupQueuePublisher } from './cleanup/queue/course-asset-cleanup-queue.publisher';
 
 describe('CoursesService', () => {
   let service: CoursesService;
@@ -28,7 +29,7 @@ describe('CoursesService', () => {
     count: jest.Mock;
     createQueryBuilder: jest.Mock;
   };
-  let configService: { getOrThrow: jest.Mock };
+  let configService: { get: jest.Mock; getOrThrow: jest.Mock };
   let minioClient: { putObject: jest.Mock; removeObject: jest.Mock };
   let enrollmentRepo: { exists: jest.Mock };
   let lessonsRepo: { find: jest.Mock };
@@ -42,6 +43,7 @@ describe('CoursesService', () => {
     getFreeCourseLimit: jest.Mock;
     getCoursePricingReference: jest.Mock;
   };
+  let courseAssetCleanupQueue: { enqueue: jest.Mock };
   let dataSource: { createQueryRunner: jest.Mock };
   let queryRunner: {
     connect: jest.Mock;
@@ -135,6 +137,10 @@ describe('CoursesService', () => {
       createQueryBuilder: jest.fn(),
     };
     configService = {
+      get: jest.fn((key: string) => {
+        if (key === 'MINIO_PUBLIC_ENDPOINT') return 'http://localhost:9000';
+        return undefined;
+      }),
       getOrThrow: jest.fn((key: string) => {
         if (key === 'MINIO_BUCKET') return 'lms-bucket';
         if (key === 'MINIO_ENDPOINT') return 'http://localhost:9000';
@@ -160,6 +166,9 @@ describe('CoursesService', () => {
         allowedPrices: [0, 99000, 199000],
       }),
     };
+    courseAssetCleanupQueue = {
+      enqueue: jest.fn().mockResolvedValue(undefined),
+    };
     queryRunner = {
       connect: jest.fn().mockResolvedValue(undefined),
       startTransaction: jest.fn().mockResolvedValue(undefined),
@@ -182,6 +191,7 @@ describe('CoursesService', () => {
       quizzesRepo as unknown as Repository<Quiz>,
       questionsRepo as unknown as Repository<Question>,
       paymentConfigService as never,
+      courseAssetCleanupQueue as unknown as CourseAssetCleanupQueuePublisher,
     );
   });
 
@@ -1176,6 +1186,57 @@ describe('CoursesService', () => {
       await service.remove(courseId, instructorId);
 
       expect(repo.delete).toHaveBeenCalledWith(courseId);
+      expect(courseAssetCleanupQueue.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('queues every owned MinIO object before deleting the course', async () => {
+      configService.getOrThrow.mockImplementation((key: string) => {
+        if (key === 'MINIO_BUCKET') return 'lms-bucket';
+        if (key === 'MINIO_ENDPOINT') return 'http://minio:9000';
+        return undefined;
+      });
+      repo.findOne.mockResolvedValue(
+        makeCourse({
+          thumbnail: `http://localhost:9000/lms-bucket/courses/${courseId}/thumbnails/cover.png`,
+        }),
+      );
+      lessonsRepo.find.mockResolvedValue([
+        makeLesson({
+          videoUrl: `http://localhost:9000/lms-bucket/lesson-imports/import-1/assets/lesson-1/videos/video.mp4`,
+          materialUrl: `http://minio:9000/lms-bucket/courses/${courseId}/lessons/lesson-1/materials/guide.pdf`,
+        }),
+      ]);
+
+      await service.remove(courseId, instructorId);
+
+      expect(courseAssetCleanupQueue.enqueue).toHaveBeenCalledWith({
+        courseId,
+        objectKeys: [
+          `courses/${courseId}/thumbnails/cover.png`,
+          'lesson-imports/import-1/assets/lesson-1/videos/video.mp4',
+          `courses/${courseId}/lessons/lesson-1/materials/guide.pdf`,
+        ],
+      });
+      expect(
+        courseAssetCleanupQueue.enqueue.mock.invocationCallOrder[0],
+      ).toBeLessThan(repo.delete.mock.invocationCallOrder[0]);
+    });
+
+    it('keeps the course when RabbitMQ cannot accept its cleanup job', async () => {
+      repo.findOne.mockResolvedValue(
+        makeCourse({
+          thumbnail: `http://localhost:9000/lms-bucket/courses/${courseId}/thumbnails/cover.png`,
+        }),
+      );
+      courseAssetCleanupQueue.enqueue.mockRejectedValue(
+        new Error('rabbitmq down'),
+      );
+
+      await expect(service.remove(courseId, instructorId)).rejects.toThrow(
+        'rabbitmq down',
+      );
+
+      expect(repo.delete).not.toHaveBeenCalled();
     });
 
     it('returns 403 and does not delete when another Instructor owns the course', async () => {

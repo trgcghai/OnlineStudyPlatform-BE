@@ -7,13 +7,30 @@ import {
   LessonsController,
 } from './lessons.controller';
 import { Lesson } from './entities/lesson.entity';
+import { LessonImport } from './entities/lesson-import.entity';
+import { LessonImportService } from './import/lesson-import.service';
+import { LessonImportCleanupService } from './import/lesson-import-cleanup.service';
+import { LessonImportProcessorService } from './import/lesson-import-processor.service';
+import { LessonImportQueueConsumer } from './import/queue/lesson-import-queue.consumer';
+import { LessonImportQueuePublisher } from './import/queue/lesson-import-queue.publisher';
 import { LearningAccessService } from './learning-access.service';
 import { LessonsService } from './lessons.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Lesson, Course]), CourseProgressModule],
+  imports: [
+    TypeOrmModule.forFeature([Lesson, LessonImport, Course]),
+    CourseProgressModule,
+  ],
   controllers: [LessonsController, LessonDetailController],
-  providers: [LessonsService, LearningAccessService],
+  providers: [
+    LessonsService,
+    LearningAccessService,
+    LessonImportService,
+    LessonImportCleanupService,
+    LessonImportProcessorService,
+    LessonImportQueueConsumer,
+    LessonImportQueuePublisher,
+  ],
   exports: [LessonsService, LearningAccessService],
 })
 export class LessonsModule {}

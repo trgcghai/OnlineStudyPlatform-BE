@@ -11,6 +11,9 @@ import { CoursesController } from './courses.controller';
 import { PublicCoursesController } from './public-courses.controller';
 import { Course } from './entities/course.entity';
 import { CoursesService } from './courses.service';
+import { CourseAssetCleanupQueuePublisher } from './cleanup/queue/course-asset-cleanup-queue.publisher';
+import { CourseAssetCleanupQueueConsumer } from './cleanup/queue/course-asset-cleanup-queue.consumer';
+import { CourseAssetCleanupService } from './cleanup/course-asset-cleanup.service';
 
 @Module({
   imports: [
@@ -23,7 +26,12 @@ import { CoursesService } from './courses.service';
     CoursesController,
     AdminCourseController,
   ],
-  providers: [CoursesService],
+  providers: [
+    CoursesService,
+    CourseAssetCleanupService,
+    CourseAssetCleanupQueueConsumer,
+    CourseAssetCleanupQueuePublisher,
+  ],
   exports: [CoursesService],
 })
 export class CoursesModule {}

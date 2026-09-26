@@ -3,7 +3,6 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { randomUUID } from 'crypto';
-import { Workbook } from 'exceljs';
 import { DataSource, ObjectLiteral, Repository } from 'typeorm';
 import {
   BadRequestException,
@@ -12,6 +11,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Course, CourseStatus } from '../courses/entities/course.entity';
+import { ExcelService } from '../file/excel.service';
 import { CourseProgressService } from '../learning/course-progress.service';
 import { Lesson } from '../lessons/entities/lesson.entity';
 import {
@@ -118,6 +118,10 @@ describe('QuizzesService', () => {
     refreshLessonCompletionsForLesson: jest.Mock;
     recomputeCourseEnrollmentsProgress: jest.Mock;
   };
+  let excelService: {
+    parseExcelImport: jest.Mock;
+    requireQuizMetadata: jest.Mock;
+  };
   let mockQueryRunner: {
     manager: { find: jest.Mock; update: jest.Mock };
     connect: jest.Mock;
@@ -149,6 +153,10 @@ describe('QuizzesService', () => {
       recomputeCourseEnrollmentsProgress: jest
         .fn()
         .mockResolvedValue(undefined),
+    };
+    excelService = {
+      parseExcelImport: jest.fn(),
+      requireQuizMetadata: jest.fn((metadata) => metadata),
     };
 
     mockQueryRunner = {
@@ -189,6 +197,7 @@ describe('QuizzesService', () => {
           provide: CourseProgressService,
           useValue: courseProgressService,
         },
+        { provide: ExcelService, useValue: excelService },
       ],
     }).compile();
 
@@ -210,11 +219,24 @@ describe('QuizzesService', () => {
       transactionManager.save.mockImplementation((entity) =>
         Promise.resolve(entity),
       );
+      excelService.parseExcelImport.mockResolvedValue({
+        quiz: null,
+        questions: [
+          {
+            sourceOrder: 1,
+            type: 'MCQ',
+            content: 'Imported question',
+            options: ['Yes', 'No'],
+            correctAnswers: [0],
+            points: 2,
+          },
+        ],
+      });
       const result = await service.importExcel(
         courseId,
         lessonId,
         instructorId,
-        await createQuizExcelBuffer(),
+        Buffer.alloc(0),
       );
 
       expect(result).toMatchObject({
@@ -235,15 +257,14 @@ describe('QuizzesService', () => {
     });
 
     it('does not start a database transaction when Excel validation fails', async () => {
+      excelService.parseExcelImport.mockRejectedValue(
+        new BadRequestException({
+          message: 'Excel validation failed',
+          details: ['Questions!2 MCQ requires at least 2 options'],
+        }),
+      );
       await expect(
-        service.importExcel(
-          courseId,
-          lessonId,
-          instructorId,
-          await createQuizExcelBuffer([
-            [1, 'MCQ', 'Question', 'Only option', '', '', 0],
-          ]),
-        ),
+        service.importExcel(courseId, lessonId, instructorId, Buffer.alloc(0)),
       ).rejects.toBeInstanceOf(BadRequestException);
 
       expect(transactionManager.save).not.toHaveBeenCalled();
@@ -252,26 +273,6 @@ describe('QuizzesService', () => {
       ).not.toHaveBeenCalled();
     });
   });
-
-  async function createQuizExcelBuffer(
-    rows: Array<Array<string | number>> = [
-      [1, 'MCQ', 'Imported question', 'Yes', 'No', 'A', 2],
-    ],
-  ): Promise<Buffer> {
-    const workbook = new Workbook();
-    const questions = workbook.addWorksheet('Questions');
-    questions.addRow([
-      'order',
-      'type',
-      'question',
-      'option_a',
-      'option_b',
-      'correct_answers',
-      'points',
-    ]);
-    rows.forEach((row) => questions.addRow(row));
-    return Buffer.from(await workbook.xlsx.writeBuffer());
-  }
 
   describe('assertLessonOwnership', () => {
     it('should throw NotFoundException when lesson does not exist', async () => {
