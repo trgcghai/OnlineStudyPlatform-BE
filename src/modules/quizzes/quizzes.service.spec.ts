@@ -3,6 +3,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { randomUUID } from 'crypto';
+import { Workbook } from 'exceljs';
 import { DataSource, ObjectLiteral, Repository } from 'typeorm';
 import {
   BadRequestException,
@@ -125,6 +126,13 @@ describe('QuizzesService', () => {
     rollbackTransaction: jest.Mock;
     release: jest.Mock;
   };
+  let transactionManager: {
+    findOne: jest.Mock;
+    count: jest.Mock;
+    find: jest.Mock;
+    create: jest.Mock;
+    save: jest.Mock;
+  };
 
   const courseId = 'course-1';
   const lessonId = 'lesson-1';
@@ -154,6 +162,13 @@ describe('QuizzesService', () => {
       rollbackTransaction: jest.fn().mockResolvedValue(undefined),
       release: jest.fn().mockResolvedValue(undefined),
     };
+    transactionManager = {
+      findOne: jest.fn(),
+      count: jest.fn(),
+      find: jest.fn(),
+      create: jest.fn((_, entity) => entity),
+      save: jest.fn((entity) => Promise.resolve(entity)),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -167,6 +182,7 @@ describe('QuizzesService', () => {
           provide: DataSource,
           useValue: {
             createQueryRunner: jest.fn().mockReturnValue(mockQueryRunner),
+            transaction: jest.fn((callback) => callback(transactionManager)),
           },
         },
         {
@@ -182,6 +198,80 @@ describe('QuizzesService', () => {
     quizzesRepo.findOne.mockResolvedValue(makeQuiz());
     questionsRepo.findOne.mockResolvedValue(makeQuestion());
   });
+
+  describe('importExcel', () => {
+    it('appends validated questions to the lesson quiz in one transaction', async () => {
+      const existing = makeQuiz({
+        questions: [makeQuestion({ id: 'existing-question', points: 5 })],
+      });
+      transactionManager.findOne.mockResolvedValue(existing);
+      transactionManager.count.mockResolvedValue(0);
+      transactionManager.find.mockResolvedValue(existing.questions);
+      transactionManager.save.mockImplementation((entity) =>
+        Promise.resolve(entity),
+      );
+      const result = await service.importExcel(
+        courseId,
+        lessonId,
+        instructorId,
+        await createQuizExcelBuffer(),
+      );
+
+      expect(result).toMatchObject({
+        quizId: existing.id,
+        title: existing.title,
+        createdQuiz: false,
+        questionCount: 2,
+        totalPoints: 7,
+        passScore: 70,
+      });
+      expect(transactionManager.create).toHaveBeenCalledWith(
+        Question,
+        expect.objectContaining({ quizId: existing.id, position: 1 }),
+      );
+      expect(
+        courseProgressService.refreshLessonCompletionsForLesson,
+      ).toHaveBeenCalledWith(lessonId);
+    });
+
+    it('does not start a database transaction when Excel validation fails', async () => {
+      await expect(
+        service.importExcel(
+          courseId,
+          lessonId,
+          instructorId,
+          await createQuizExcelBuffer([
+            [1, 'MCQ', 'Question', 'Only option', '', '', 0],
+          ]),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(transactionManager.save).not.toHaveBeenCalled();
+      expect(
+        courseProgressService.refreshLessonCompletionsForLesson,
+      ).not.toHaveBeenCalled();
+    });
+  });
+
+  async function createQuizExcelBuffer(
+    rows: Array<Array<string | number>> = [
+      [1, 'MCQ', 'Imported question', 'Yes', 'No', 'A', 2],
+    ],
+  ): Promise<Buffer> {
+    const workbook = new Workbook();
+    const questions = workbook.addWorksheet('Questions');
+    questions.addRow([
+      'order',
+      'type',
+      'question',
+      'option_a',
+      'option_b',
+      'correct_answers',
+      'points',
+    ]);
+    rows.forEach((row) => questions.addRow(row));
+    return Buffer.from(await workbook.xlsx.writeBuffer());
+  }
 
   describe('assertLessonOwnership', () => {
     it('should throw NotFoundException when lesson does not exist', async () => {

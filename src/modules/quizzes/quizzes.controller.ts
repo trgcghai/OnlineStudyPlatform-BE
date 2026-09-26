@@ -5,12 +5,21 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  BadRequestException,
+  UploadedFile,
+  UseInterceptors,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import {
+  QUIZ_EXCEL_EXTENSION,
+  QUIZ_EXCEL_FIELD_NAME,
+  QUIZ_EXCEL_MAX_SIZE_BYTES,
+} from '../../common/constants/file.constant';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -40,6 +49,35 @@ export class QuizzesController {
     @Body() dto: CreateQuizDto,
   ) {
     return this.quizzesService.create(courseId, lessonId, instructorId, dto);
+  }
+
+  @Post('import')
+  @Roles(UserRole.INSTRUCTOR)
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(
+    FileInterceptor(QUIZ_EXCEL_FIELD_NAME, {
+      limits: { fileSize: QUIZ_EXCEL_MAX_SIZE_BYTES, files: 1 },
+    }),
+  )
+  importExcel(
+    @Param('courseId', ParseUUIDPipe) courseId: string,
+    @Param('lessonId', ParseUUIDPipe) lessonId: string,
+    @CurrentUser('id') instructorId: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('An .xlsx file is required');
+    }
+    if (!file.originalname.toLowerCase().endsWith(QUIZ_EXCEL_EXTENSION)) {
+      throw new BadRequestException('Only .xlsx files are supported');
+    }
+
+    return this.quizzesService.importExcel(
+      courseId,
+      lessonId,
+      instructorId,
+      file.buffer,
+    );
   }
 
   @Get()

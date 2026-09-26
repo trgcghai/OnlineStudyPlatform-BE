@@ -194,3 +194,13 @@ export interface QuizSummaryResponse {
   createdAt: Date;
   updatedAt: Date;
 }
+
+export interface QuizImportResponse {
+  quizId: string;
+  title: string;
+  questionCount: number;
+  totalPoints: number;
+  passScore: number;
+  passScorePoints: number;
+  createdQuiz: boolean;
+}

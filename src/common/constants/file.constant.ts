@@ -29,3 +29,7 @@ export const LESSON_MATERIAL_ALLOWED_MIME_TYPES = [
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 ];
+
+export const QUIZ_EXCEL_FIELD_NAME = 'file';
+export const QUIZ_EXCEL_MAX_SIZE_BYTES = 2 * 1024 * 1024;
+export const QUIZ_EXCEL_EXTENSION = '.xlsx';
