@@ -1,13 +1,34 @@
 import { Global, Module, OnModuleInit, Inject, Logger } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { S3Client } from '@aws-sdk/client-s3';
 import * as Minio from 'minio';
-import { MINIO_CLIENT } from '../../common/constants/file.constant';
+import {
+  MINIO_CLIENT,
+  MINIO_PUBLIC_S3_CLIENT,
+  MINIO_S3_CLIENT,
+} from '../../common/constants/file.constant';
+import { ExcelService } from './excel.service';
+import { ZipService } from './zip.service';
+
+function createS3Client(configService: ConfigService, endpoint: string) {
+  return new S3Client({
+    endpoint,
+    region: 'us-east-1',
+    forcePathStyle: true,
+    credentials: {
+      accessKeyId: configService.getOrThrow<string>('MINIO_ACCESS_KEY'),
+      secretAccessKey: configService.getOrThrow<string>('MINIO_SECRET_KEY'),
+    },
+  });
+}
 
 @Global()
 @Module({
   imports: [ConfigModule],
   controllers: [],
   providers: [
+    ExcelService,
+    ZipService,
     {
       provide: MINIO_CLIENT,
       useFactory: (configService: ConfigService) => {
@@ -26,8 +47,33 @@ import { MINIO_CLIENT } from '../../common/constants/file.constant';
       },
       inject: [ConfigService],
     },
+    {
+      provide: MINIO_S3_CLIENT,
+      useFactory: (configService: ConfigService) =>
+        createS3Client(
+          configService,
+          configService.getOrThrow<string>('MINIO_ENDPOINT'),
+        ),
+      inject: [ConfigService],
+    },
+    {
+      provide: MINIO_PUBLIC_S3_CLIENT,
+      useFactory: (configService: ConfigService) =>
+        createS3Client(
+          configService,
+          configService.get<string>('MINIO_PUBLIC_ENDPOINT') ??
+            configService.getOrThrow<string>('MINIO_ENDPOINT'),
+        ),
+      inject: [ConfigService],
+    },
   ],
-  exports: [MINIO_CLIENT],
+  exports: [
+    ExcelService,
+    ZipService,
+    MINIO_CLIENT,
+    MINIO_S3_CLIENT,
+    MINIO_PUBLIC_S3_CLIENT,
+  ],
 })
 export class FileModule implements OnModuleInit {
   private readonly logger = new Logger(FileModule.name);

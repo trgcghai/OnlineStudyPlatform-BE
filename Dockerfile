@@ -22,7 +22,10 @@ RUN pnpm build && pnpm prune --prod --ignore-scripts
 FROM node:22-alpine AS production
 WORKDIR /app
 ENV NODE_ENV=production
-RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
+RUN addgroup -g 1001 -S nodejs \
+  && adduser -S nodejs -u 1001 \
+  && mkdir -p /var/lib/lesson-imports \
+  && chown -R nodejs:nodejs /var/lib/lesson-imports
 COPY --from=build --chown=nodejs:nodejs /app/dist ./dist
 COPY --from=build --chown=nodejs:nodejs /app/node_modules ./node_modules
 COPY --from=build --chown=nodejs:nodejs /app/package.json ./

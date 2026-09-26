@@ -37,7 +37,9 @@ import {
   ReorderLessonsDto,
   UpdateLessonDto,
 } from './dto/lesson.dto';
+import { InitiateLessonImportDto } from './dto/lesson-import.dto';
 import { LessonUploadExceptionFilter } from './filters/lesson-upload-exception.filter';
+import { LessonImportService } from './import/lesson-import.service';
 import { LessonsService } from './lessons.service';
 
 export function lessonFileFilter(
@@ -91,7 +93,10 @@ const lessonUploadOptions = {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @UseFilters(LessonUploadExceptionFilter)
 export class LessonsController {
-  constructor(private readonly lessonsService: LessonsService) {}
+  constructor(
+    private readonly lessonsService: LessonsService,
+    private readonly lessonImportService: LessonImportService,
+  ) {}
 
   @Get()
   @Roles(UserRole.INSTRUCTOR)
@@ -124,6 +129,49 @@ export class LessonsController {
       files?.video?.[0],
       files?.material?.[0],
     );
+  }
+
+  @Post('imports/initiate')
+  @Roles(UserRole.INSTRUCTOR)
+  @HttpCode(HttpStatus.CREATED)
+  initiateImport(
+    @Param('courseId', ParseUUIDPipe) courseId: string,
+    @CurrentUser('id') instructorId: string,
+    @Body() dto: InitiateLessonImportDto,
+  ) {
+    return this.lessonImportService.initiate(courseId, instructorId, dto);
+  }
+
+  @Post('imports/:importId/complete')
+  @Roles(UserRole.INSTRUCTOR)
+  @HttpCode(HttpStatus.ACCEPTED)
+  completeImport(
+    @Param('courseId', ParseUUIDPipe) courseId: string,
+    @Param('importId', ParseUUIDPipe) importId: string,
+    @CurrentUser('id') instructorId: string,
+  ) {
+    return this.lessonImportService.complete(courseId, importId, instructorId);
+  }
+
+  @Get('imports/:importId')
+  @Roles(UserRole.INSTRUCTOR)
+  getImportStatus(
+    @Param('courseId', ParseUUIDPipe) courseId: string,
+    @Param('importId', ParseUUIDPipe) importId: string,
+    @CurrentUser('id') instructorId: string,
+  ) {
+    return this.lessonImportService.getStatus(courseId, importId, instructorId);
+  }
+
+  @Delete('imports/:importId')
+  @Roles(UserRole.INSTRUCTOR)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  abortImport(
+    @Param('courseId', ParseUUIDPipe) courseId: string,
+    @Param('importId', ParseUUIDPipe) importId: string,
+    @CurrentUser('id') instructorId: string,
+  ) {
+    return this.lessonImportService.abort(courseId, importId, instructorId);
   }
 
   @Patch('reorder')

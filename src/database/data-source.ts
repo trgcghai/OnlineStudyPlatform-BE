@@ -10,6 +10,7 @@ import { LearningAnalyticsEvent } from '../modules/learning/entities/learning-an
 import { LessonProgress } from '../modules/learning/entities/lesson-progress.entity';
 import { LessonWatchEvent } from '../modules/learning/entities/lesson-watch-event.entity';
 import { Lesson } from '../modules/lessons/entities/lesson.entity';
+import { LessonImport } from '../modules/lessons/entities/lesson-import.entity';
 import { Notification } from '../modules/notifications/entities/notification.entity';
 import { OrderItem } from '../modules/orders/entities/order-item.entity';
 import { Order } from '../modules/orders/entities/order.entity';
@@ -43,6 +44,7 @@ const dataSource = new DataSource({
     LessonProgress,
     LessonWatchEvent,
     Lesson,
+    LessonImport,
     Notification,
     OrderItem,
     Order,

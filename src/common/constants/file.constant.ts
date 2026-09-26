@@ -1,4 +1,6 @@
 export const MINIO_CLIENT = 'MINIO_CLIENT';
+export const MINIO_S3_CLIENT = 'MINIO_S3_CLIENT';
+export const MINIO_PUBLIC_S3_CLIENT = 'MINIO_PUBLIC_S3_CLIENT';
 
 export const AVATAR_FIELD_NAME = 'avatar';
 export const AVATAR_MAX_SIZE_BYTES = 5 * 1024 * 1024;
@@ -29,6 +31,16 @@ export const LESSON_MATERIAL_ALLOWED_MIME_TYPES = [
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 ];
+
+export const LESSON_IMPORT_EXTENSION = '.zip';
+export const LESSON_IMPORT_MAX_SIZE_BYTES = 1024 * 1024 * 1024;
+export const LESSON_IMPORT_MAX_EXTRACTED_SIZE_BYTES = 2 * 1024 * 1024 * 1024;
+export const LESSON_IMPORT_MAX_ENTRIES = 102;
+export const LESSON_IMPORT_MAX_LESSONS = 50;
+export const LESSON_IMPORT_EXCEL_MAX_SIZE_BYTES = 2 * 1024 * 1024;
+export const LESSON_IMPORT_PART_SIZE_BYTES = 32 * 1024 * 1024;
+export const LESSON_IMPORT_PRESIGNED_TTL_SECONDS = 6 * 60 * 60;
+export const LESSON_IMPORT_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 export const QUIZ_EXCEL_FIELD_NAME = 'file';
 export const QUIZ_EXCEL_MAX_SIZE_BYTES = 2 * 1024 * 1024;
