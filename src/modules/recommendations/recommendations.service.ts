@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { PublicCourseResponse } from '../courses/dto/course.dto';
@@ -18,6 +18,8 @@ const AI_RECOMMENDATION_CANDIDATE_LIMIT = 20;
 
 @Injectable()
 export class RecommendationsService {
+  private readonly logger = new Logger(RecommendationsService.name);
+
   constructor(
     @InjectRepository(Course)
     private readonly coursesRepository: Repository<Course>,
@@ -204,7 +206,17 @@ export class RecommendationsService {
       })),
     });
 
-    return aiResponse?.courseIds ?? [];
+    if (!aiResponse) {
+      this.logger.warn(
+        `AI recommendations unavailable for learner ${learnerId}; using heuristic fallback`,
+      );
+      return [];
+    }
+
+    this.logger.log(
+      `AI recommendations returned ${aiResponse.courseIds.length} course IDs for learner ${learnerId}`,
+    );
+    return aiResponse.courseIds;
   }
 
   private sortByHeuristic(
