@@ -32,7 +32,7 @@ export class BankSeed implements OnApplicationBootstrap {
         .findOneAndUpdate(
           { source: BANK_CATALOG_SOURCE },
           { source: BANK_CATALOG_SOURCE, banks, fetchedAt: new Date() },
-          { upsert: true, new: true },
+          { upsert: true, returnDocument: 'after' },
         )
         .exec();
       this.logger.log(`Seeded ${banks.length} VietQR banks`);

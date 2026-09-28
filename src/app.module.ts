@@ -24,6 +24,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { AiChatModule } from './modules/ai-chat/ai-chat.module';
 import { OrdersModule } from './modules/orders/orders.module';
+import { RecommendationsModule } from './modules/recommendations/recommendations.module';
 
 @Module({
   imports: [
@@ -66,6 +67,7 @@ import { OrdersModule } from './modules/orders/orders.module';
     QuizzesModule,
     PaymentsModule,
     AiChatModule,
+    RecommendationsModule,
     OrdersModule,
     SeedsModule,
   ],

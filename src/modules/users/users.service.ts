@@ -595,7 +595,7 @@ export class UsersService {
       .findOneAndUpdate(
         { source: BANK_CATALOG_SOURCE },
         { source: BANK_CATALOG_SOURCE, banks, fetchedAt: new Date() },
-        { upsert: true, new: true },
+        { upsert: true, returnDocument: 'after' },
       )
       .exec();
   }
