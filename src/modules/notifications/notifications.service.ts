@@ -158,7 +158,7 @@ export class NotificationsService {
     const notification = await this.notificationModel.findOneAndUpdate(
       { _id: id, ...this.buildUserNotificationFilter(user) },
       { seen: true },
-      { new: true },
+      { returnDocument: 'after' },
     );
 
     if (!notification) {

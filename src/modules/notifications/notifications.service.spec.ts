@@ -344,7 +344,7 @@ describe('NotificationsService', () => {
     expect(findOneAndUpdate).toHaveBeenCalledWith(
       { _id: '64b7f8f8f8f8f8f8f8f8f8f8', userId: 'user-id' },
       { seen: true },
-      { new: true },
+      { returnDocument: 'after' },
     );
     expect(result.seen).toBe(true);
   });

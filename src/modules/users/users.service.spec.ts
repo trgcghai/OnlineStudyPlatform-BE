@@ -183,7 +183,7 @@ describe('UsersService', () => {
           source: 'vietqr',
           banks: result,
         }),
-        { upsert: true, new: true },
+        { upsert: true, returnDocument: 'after' },
       );
 
       await service.listBanks();
