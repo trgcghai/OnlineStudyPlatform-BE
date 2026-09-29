@@ -30,6 +30,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { Cached, InvalidateCache } from '../redis/redis.decorators';
 import { UserRole } from '../users/entities/user.entity';
 import {
   CreateLessonDto,
@@ -99,6 +100,7 @@ export class LessonsController {
   ) {}
 
   @Get()
+  @Cached({ namespace: 'instructor:lessons:list', ttl: 60, scope: 'user' })
   @Roles(UserRole.INSTRUCTOR)
   listByCourse(
     @Param('courseId', ParseUUIDPipe) courseId: string,
@@ -109,6 +111,14 @@ export class LessonsController {
   }
 
   @Post()
+  @InvalidateCache([
+    'courses:public:detail',
+    'instructor:courses:detail',
+    'instructor:lessons:list',
+    'instructor:lessons:detail',
+    'learning:course',
+    'learning:lesson',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(FileFieldsInterceptor(lessonFileFields, lessonUploadOptions))
@@ -143,6 +153,14 @@ export class LessonsController {
   }
 
   @Post('imports/:importId/complete')
+  @InvalidateCache([
+    'courses:public:detail',
+    'instructor:courses:detail',
+    'instructor:lessons:list',
+    'instructor:lessons:detail',
+    'learning:course',
+    'learning:lesson',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.ACCEPTED)
   completeImport(
@@ -175,6 +193,14 @@ export class LessonsController {
   }
 
   @Patch('reorder')
+  @InvalidateCache([
+    'courses:public:detail',
+    'instructor:courses:detail',
+    'instructor:lessons:list',
+    'instructor:lessons:detail',
+    'learning:course',
+    'learning:lesson',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.OK)
   reorder(
@@ -193,6 +219,7 @@ export class LessonDetailController {
   constructor(private readonly lessonsService: LessonsService) {}
 
   @Get(':id')
+  @Cached({ namespace: 'instructor:lessons:detail', ttl: 60, scope: 'user' })
   @Roles(UserRole.INSTRUCTOR)
   findOne(
     @Param('id', ParseUUIDPipe) id: string,
@@ -202,6 +229,14 @@ export class LessonDetailController {
   }
 
   @Patch(':id')
+  @InvalidateCache([
+    'courses:public:detail',
+    'instructor:courses:detail',
+    'instructor:lessons:list',
+    'instructor:lessons:detail',
+    'learning:course',
+    'learning:lesson',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(FileFieldsInterceptor(lessonFileFields, lessonUploadOptions))
@@ -225,6 +260,14 @@ export class LessonDetailController {
   }
 
   @Delete(':id')
+  @InvalidateCache([
+    'courses:public:detail',
+    'instructor:courses:detail',
+    'instructor:lessons:list',
+    'instructor:lessons:detail',
+    'learning:course',
+    'learning:lesson',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(

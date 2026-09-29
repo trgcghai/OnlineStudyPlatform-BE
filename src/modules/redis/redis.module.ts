@@ -1,8 +1,11 @@
 import { Global, Inject, Module, OnModuleDestroy } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
+import { REDIS_CLIENT } from './redis.constants';
+import { RedisInterceptor } from './redis.interceptor';
+import { RedisService } from './redis.service';
 
-export const REDIS_CLIENT = 'REDIS_CLIENT';
+export { REDIS_CLIENT } from './redis.constants';
 
 @Global()
 @Module({
@@ -17,8 +20,10 @@ export const REDIS_CLIENT = 'REDIS_CLIENT';
           port: Number(configService.getOrThrow<string>('REDIS_PORT')),
         }),
     },
+    RedisService,
+    RedisInterceptor,
   ],
-  exports: [REDIS_CLIENT],
+  exports: [REDIS_CLIENT, RedisService, RedisInterceptor],
 })
 export class RedisModule implements OnModuleDestroy {
   constructor(@Inject(REDIS_CLIENT) private readonly client: Redis) {}

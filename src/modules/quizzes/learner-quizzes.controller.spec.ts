@@ -3,6 +3,10 @@ import { Reflector } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ROLES_KEY } from '../../common/constants/auth.constant';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import {
+  CACHE_INVALIDATE_METADATA,
+  CACHE_METADATA,
+} from '../redis/redis.constants';
 import { UserRole } from '../users/entities/user.entity';
 import { SubmitQuizAttemptDto } from './dto/quiz-attempt.dto';
 import { LearnerQuizzesController } from './learner-quizzes.controller';
@@ -23,6 +27,11 @@ describe('LearnerQuizzesController', () => {
   const quizId = '44444444-4444-4444-8444-444444444444';
   const attemptId = '55555555-5555-4555-8555-555555555555';
   const questionId = '66666666-6666-4666-8666-666666666666';
+  const handlerOf = (methodName: keyof LearnerQuizzesController) =>
+    Object.getOwnPropertyDescriptor(
+      LearnerQuizzesController.prototype,
+      methodName,
+    )!.value;
 
   beforeEach(async () => {
     service = {
@@ -109,6 +118,45 @@ describe('LearnerQuizzesController', () => {
         UserRole.LEARNER,
       ]);
     }
+  });
+
+  it('caches learner quiz loading per user', () => {
+    expect(Reflect.getMetadata(CACHE_METADATA, handlerOf('loadQuiz'))).toEqual({
+      namespace: 'learning:quiz',
+      ttl: 60,
+      scope: 'user',
+    });
+  });
+
+  it('caches learner quiz attempt history per user', () => {
+    expect(
+      Reflect.getMetadata(CACHE_METADATA, handlerOf('listAttempts')),
+    ).toEqual({
+      namespace: 'learning:quiz-attempts',
+      ttl: 30,
+      scope: 'user',
+    });
+  });
+
+  it('invalidates learner quiz cache on attempt start', () => {
+    expect(
+      Reflect.getMetadata(CACHE_INVALIDATE_METADATA, handlerOf('startAttempt')),
+    ).toEqual(['learning:quiz', 'learning:quiz-attempts', 'dashboard:learner']);
+  });
+
+  it('invalidates learner quiz, learning, and dashboard cache on submit', () => {
+    expect(
+      Reflect.getMetadata(
+        CACHE_INVALIDATE_METADATA,
+        handlerOf('submitAttempt'),
+      ),
+    ).toEqual([
+      'learning:quiz',
+      'learning:quiz-attempts',
+      'learning:course',
+      'learning:lesson',
+      'dashboard:learner',
+    ]);
   });
 });
 

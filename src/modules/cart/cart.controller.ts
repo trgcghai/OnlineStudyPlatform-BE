@@ -15,8 +15,9 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import { UserRole } from '../users/entities/user.entity';
 import { PaymentsService } from '../payments/payments.service';
+import { Cached, InvalidateCache } from '../redis/redis.decorators';
+import { UserRole } from '../users/entities/user.entity';
 import { CartService } from './cart.service';
 import { AddCartItemDto, ListCartQueryDto } from './dto/cart.dto';
 
@@ -30,11 +31,13 @@ export class CartController {
   ) {}
 
   @Post('checkout')
+  @InvalidateCache(['cart:learner'])
   checkout(@CurrentUser('id') learnerId: string) {
     return this.paymentsService.createCartCheckout(learnerId);
   }
 
   @Get()
+  @Cached({ namespace: 'cart:learner', ttl: 30, scope: 'user' })
   listCart(
     @CurrentUser('id') learnerId: string,
     @Query() query: ListCartQueryDto,
@@ -43,11 +46,13 @@ export class CartController {
   }
 
   @Post('items')
+  @InvalidateCache(['cart:learner'])
   addItem(@CurrentUser('id') learnerId: string, @Body() dto: AddCartItemDto) {
     return this.cartService.addItem(learnerId, dto.courseId);
   }
 
   @Delete('items/:courseId')
+  @InvalidateCache(['cart:learner'])
   @HttpCode(HttpStatus.NO_CONTENT)
   removeItem(
     @CurrentUser('id') learnerId: string,
