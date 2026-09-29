@@ -15,6 +15,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 import {
   QUIZ_EXCEL_EXTENSION,
   QUIZ_EXCEL_FIELD_NAME,
@@ -58,6 +59,7 @@ export class QuizzesController {
   }
 
   @Post('import')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @InvalidateCache([
     'instructor:quizzes:list',
     'instructor:quizzes:detail',

@@ -13,7 +13,7 @@ import { CoursesModule } from './modules/courses/courses.module';
 import { LessonsModule } from './modules/lessons/lessons.module';
 import { EnrollmentsModule } from './modules/enrollments/enrollments.module';
 import { CartModule } from './modules/cart/cart.module';
-import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { NotificationsModule } from './modules/notifications/notifications.module';
@@ -27,9 +27,17 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { AiSummaryModule } from './modules/ai-summary/ai-summary.module';
 import { RedisInterceptor } from './modules/redis/redis.interceptor';
 import { RecommendationsModule } from './modules/recommendations/recommendations.module';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60_000,
+        limit: 100,
+      },
+    ]),
     ScheduleModule.forRoot(),
     RedisModule,
     FileModule,
@@ -87,6 +95,10 @@ import { RecommendationsModule } from './modules/recommendations/recommendations
     {
       provide: APP_INTERCEPTOR,
       useClass: RedisInterceptor,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
     },
   ],
 })
