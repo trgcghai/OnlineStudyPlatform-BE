@@ -8,6 +8,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -55,6 +56,7 @@ export class PaymentsController {
   }
 
   @Post('transactions/:transactionId/cancel')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Roles(UserRole.LEARNER)
   cancelTransaction(
     @CurrentUser('id') learnerId: string,

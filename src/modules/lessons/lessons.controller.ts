@@ -17,6 +17,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import {
   LESSON_MATERIAL_ALLOWED_MIME_TYPES,
@@ -111,6 +112,7 @@ export class LessonsController {
   }
 
   @Post()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @InvalidateCache([
     'courses:public:detail',
     'instructor:courses:detail',
@@ -153,6 +155,7 @@ export class LessonsController {
   }
 
   @Post('imports/:importId/complete')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @InvalidateCache([
     'courses:public:detail',
     'instructor:courses:detail',
@@ -229,6 +232,7 @@ export class LessonDetailController {
   }
 
   @Patch(':id')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @InvalidateCache([
     'courses:public:detail',
     'instructor:courses:detail',

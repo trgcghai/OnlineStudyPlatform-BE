@@ -7,6 +7,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -50,6 +51,7 @@ export class LearningController {
   }
 
   @Post(':courseId/lessons/:lessonId/watch-events')
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
   @InvalidateCache(['learning:course', 'learning:lesson', 'dashboard:learner'])
   recordWatchEvent(
     @Param('courseId', ParseUUIDPipe) courseId: string,
