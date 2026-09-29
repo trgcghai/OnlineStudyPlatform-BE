@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { Throttle } from '@nestjs/throttler';
 
 import { UserRole } from '../users/entities/user.entity';
 import { AuthService } from './auth.service';
@@ -42,6 +43,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('login')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   async login(
     @Body() loginDto: LoginDto,
@@ -57,30 +59,35 @@ export class AuthController {
   }
 
   @Post('register')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.CREATED)
   register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
   }
 
   @Post('email/verify')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   verifyEmail(@Body() verifyDto: VerifyEmailOtpDto) {
     return this.authService.verifyEmail(verifyDto.email, verifyDto.otp);
   }
 
   @Post('email/resend-otp')
+  @Throttle({ default: { limit: 5, ttl: 3_600_000 } })
   @HttpCode(HttpStatus.OK)
   resendEmailOtp(@Body() resendDto: ResendEmailOtpDto) {
     return this.authService.resendEmailOtp(resendDto.email);
   }
 
   @Post('password-reset/request-otp')
+  @Throttle({ default: { limit: 5, ttl: 3_600_000 } })
   @HttpCode(HttpStatus.OK)
   requestPasswordResetOtp(@Body() resetDto: RequestPasswordResetOtpDto) {
     return this.authService.requestPasswordResetOtp(resetDto.email);
   }
 
   @Post('password-reset/verify-otp')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   verifyPasswordResetOtp(@Body() verifyDto: VerifyPasswordResetOtpDto) {
     return this.authService.verifyPasswordResetOtp(
@@ -90,12 +97,14 @@ export class AuthController {
   }
 
   @Post('password-reset/reset')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   resetPassword(@Body() resetDto: ResetPasswordDto) {
     return this.authService.resetPassword(resetDto);
   }
 
   @Post('refresh')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   async refresh(
     @Req() request: CookieRequest,
@@ -113,6 +122,7 @@ export class AuthController {
   }
 
   @Post('logout')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   async logout(
     @Req() request: CookieRequest,
