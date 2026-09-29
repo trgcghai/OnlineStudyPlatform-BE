@@ -9,6 +9,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -39,6 +40,7 @@ export class LearnerQuizzesController {
   }
 
   @Post(':quizId/attempts')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @InvalidateCache([
     'learning:quiz',
     'learning:quiz-attempts',
@@ -61,6 +63,7 @@ export class LearnerQuizzesController {
   }
 
   @Post(':quizId/attempts/:attemptId/submit')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @InvalidateCache([
     'learning:quiz',
     'learning:quiz-attempts',

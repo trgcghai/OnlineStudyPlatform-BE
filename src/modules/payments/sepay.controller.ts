@@ -9,6 +9,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { SePayWebhookPayload } from './dto/payment.dto';
 import { PaymentsService } from './payments.service';
@@ -21,6 +22,7 @@ export class SePayWebhookController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
   @Post('webhook')
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @UseGuards(SePayAuthGuard)
   async handleWebhook(

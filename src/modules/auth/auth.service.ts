@@ -1,8 +1,6 @@
 import {
   BadRequestException,
   ForbiddenException,
-  HttpException,
-  HttpStatus,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -22,17 +20,11 @@ import { User, UserStatus } from '../users/entities/user.entity';
 import { UserResponse } from '../users/dto/user.dto';
 import {
   ACCESS_TOKEN_BLACKLIST_KEY_PREFIX,
-  EMAIL_VERIFICATION_COOLDOWN_KEY_PREFIX,
   EMAIL_VERIFICATION_OTP_KEY_PREFIX,
-  EMAIL_VERIFICATION_RATE_LIMIT_KEY_PREFIX,
-  PASSWORD_RESET_COOLDOWN_KEY_PREFIX,
   PASSWORD_RESET_OTP_KEY_PREFIX,
-  PASSWORD_RESET_RATE_LIMIT_KEY_PREFIX,
   PASSWORD_RESET_TOKEN_KEY_PREFIX,
   REFRESH_SESSION_KEY_PREFIX,
-  RESEND_COOLDOWN_SECONDS,
-  RESEND_RATE_LIMIT_SECONDS,
-  MAX_RESENDS_PER_WINDOW,
+  OTP_RESEND_COOLDOWN_SECONDS,
   OTP_SALT_ROUNDS,
   OTP_TTL_SECONDS,
   RESET_TOKEN_TTL_SECONDS,
@@ -67,7 +59,7 @@ export class AuthService {
     const user = await this.usersService.create(registerDto, {
       status: UserStatus.PENDING_VERIFICATION,
     });
-    const dispatch = await this.issueEmailVerificationOtp(user.email, false);
+    const dispatch = await this.issueEmailVerificationOtp(user.email);
 
     return { user, ...dispatch };
   }
@@ -115,20 +107,16 @@ export class AuthService {
       return this.createOtpDispatchResult(normalizedEmail, 'unavailable');
     }
 
-    return this.issueEmailVerificationOtp(normalizedEmail, true);
+    return this.issueEmailVerificationOtp(normalizedEmail);
   }
 
   async requestPasswordResetOtp(
     email: string,
   ): Promise<PasswordResetRequestResult> {
     const normalizedEmail = this.normalizeEmail(email);
-
-    await this.assertCanRequestPasswordReset(normalizedEmail);
-
     const user = await this.usersService.findByEmail(normalizedEmail);
 
     if (!user || user.status !== UserStatus.ACTIVE) {
-      await this.setPasswordResetCooldown(normalizedEmail);
       return this.createPasswordResetDispatchResult(normalizedEmail);
     }
 
@@ -153,8 +141,6 @@ export class AuthService {
         throw error;
       }
     }
-
-    await this.setPasswordResetCooldown(normalizedEmail);
 
     return this.createPasswordResetDispatchResult(normalizedEmail);
   }
@@ -307,17 +293,12 @@ export class AuthService {
 
   private async issueEmailVerificationOtp(
     email: string,
-    enforceRateLimit: boolean,
   ): Promise<OtpDispatchResult> {
     const normalizedEmail = this.normalizeEmail(email);
     const user = await this.usersService.findByEmail(normalizedEmail);
 
     if (!user || user.status !== UserStatus.PENDING_VERIFICATION) {
       throw new BadRequestException('Account is not pending verification');
-    }
-
-    if (enforceRateLimit) {
-      await this.assertCanResendEmailVerificationOtp(normalizedEmail);
     }
 
     const otp = String(randomInt(100000, 1000000));
@@ -349,43 +330,7 @@ export class AuthService {
       }
     }
 
-    await this.redis.set(
-      this.getEmailVerificationCooldownKey(normalizedEmail),
-      '1',
-      'EX',
-      RESEND_COOLDOWN_SECONDS,
-    );
-
     return this.createOtpDispatchResult(normalizedEmail, delivery);
-  }
-
-  private async assertCanResendEmailVerificationOtp(
-    email: string,
-  ): Promise<void> {
-    const cooldownTtl = await this.redis.ttl(
-      this.getEmailVerificationCooldownKey(email),
-    );
-
-    if (cooldownTtl > 0) {
-      throw new HttpException(
-        `Please wait ${cooldownTtl} seconds before requesting another OTP`,
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-
-    const rateLimitKey = this.getEmailVerificationRateLimitKey(email);
-    const attempts = await this.redis.incr(rateLimitKey);
-
-    if (attempts === 1) {
-      await this.redis.expire(rateLimitKey, RESEND_RATE_LIMIT_SECONDS);
-    }
-
-    if (attempts > MAX_RESENDS_PER_WINDOW) {
-      throw new HttpException(
-        'Too many OTP requests',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
   }
 
   private createOtpDispatchResult(
@@ -395,7 +340,7 @@ export class AuthService {
     return {
       email,
       expiresInSeconds: OTP_TTL_SECONDS,
-      resendCooldownSeconds: RESEND_COOLDOWN_SECONDS,
+      resendCooldownSeconds: OTP_RESEND_COOLDOWN_SECONDS,
       emailDelivery,
     };
   }
@@ -408,57 +353,13 @@ export class AuthService {
     return `${EMAIL_VERIFICATION_OTP_KEY_PREFIX}:${email}`;
   }
 
-  private getEmailVerificationCooldownKey(email: string): string {
-    return `${EMAIL_VERIFICATION_COOLDOWN_KEY_PREFIX}:${email}`;
-  }
-
-  private getEmailVerificationRateLimitKey(email: string): string {
-    return `${EMAIL_VERIFICATION_RATE_LIMIT_KEY_PREFIX}:${email}`;
-  }
-
-  private async assertCanRequestPasswordReset(email: string): Promise<void> {
-    const cooldownTtl = await this.redis.ttl(
-      this.getPasswordResetCooldownKey(email),
-    );
-
-    if (cooldownTtl > 0) {
-      throw new HttpException(
-        `Please wait ${cooldownTtl} seconds before requesting another OTP`,
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-
-    const rateLimitKey = this.getPasswordResetRateLimitKey(email);
-    const attempts = await this.redis.incr(rateLimitKey);
-
-    if (attempts === 1) {
-      await this.redis.expire(rateLimitKey, RESEND_RATE_LIMIT_SECONDS);
-    }
-
-    if (attempts > MAX_RESENDS_PER_WINDOW) {
-      throw new HttpException(
-        'Too many OTP requests',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-  }
-
-  private async setPasswordResetCooldown(email: string): Promise<void> {
-    await this.redis.set(
-      this.getPasswordResetCooldownKey(email),
-      '1',
-      'EX',
-      RESEND_COOLDOWN_SECONDS,
-    );
-  }
-
   private createPasswordResetDispatchResult(
     email: string,
   ): PasswordResetRequestResult {
     return {
       email,
       expiresInSeconds: OTP_TTL_SECONDS,
-      resendCooldownSeconds: RESEND_COOLDOWN_SECONDS,
+      resendCooldownSeconds: OTP_RESEND_COOLDOWN_SECONDS,
       emailDelivery: 'sent',
       message:
         'If the email belongs to an eligible account, a password reset OTP has been sent.',
@@ -477,14 +378,6 @@ export class AuthService {
 
   private getPasswordResetOtpKey(email: string): string {
     return `${PASSWORD_RESET_OTP_KEY_PREFIX}:${email}`;
-  }
-
-  private getPasswordResetCooldownKey(email: string): string {
-    return `${PASSWORD_RESET_COOLDOWN_KEY_PREFIX}:${email}`;
-  }
-
-  private getPasswordResetRateLimitKey(email: string): string {
-    return `${PASSWORD_RESET_RATE_LIMIT_KEY_PREFIX}:${email}`;
   }
 
   private getPasswordResetTokenKey(resetToken: string): string {

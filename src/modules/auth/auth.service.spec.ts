@@ -1,8 +1,6 @@
 import {
   BadRequestException,
   ForbiddenException,
-  HttpException,
-  HttpStatus,
   InternalServerErrorException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -226,11 +224,12 @@ describe('AuthService', () => {
     );
   });
 
-  it('resends an OTP for a pending account', async () => {
-    usersService.findByEmail.mockResolvedValue({
-      ...user,
-      status: UserStatus.PENDING_VERIFICATION,
-    });
+  it('resends an OTP for a pending account without service-level rate counters', async () => {
+    usersService.findByEmail.mockResolvedValue(
+      Object.assign({}, user, {
+        status: UserStatus.PENDING_VERIFICATION,
+      }),
+    );
 
     await expect(service.resendEmailOtp(user.email)).resolves.toEqual({
       email: user.email,
@@ -238,12 +237,9 @@ describe('AuthService', () => {
       resendCooldownSeconds: 60,
       emailDelivery: 'sent',
     });
-    expect(redis.ttl).toHaveBeenCalledWith(
-      'auth:email-verification:cooldown:test@example.com',
-    );
-    expect(redis.incr).toHaveBeenCalledWith(
-      'auth:email-verification:rate:test@example.com',
-    );
+    expect(redis.ttl).not.toHaveBeenCalled();
+    expect(redis.incr).not.toHaveBeenCalled();
+    expect(redis.expire).not.toHaveBeenCalled();
     expect(mailService.sendVerificationOtp).toHaveBeenCalledWith(
       user.email,
       expect.stringMatching(/^\d{6}$/),
@@ -268,33 +264,6 @@ describe('AuthService', () => {
 
     await expect(service.verifyEmail(user.email, '123456')).rejects.toEqual(
       new BadRequestException('OTP has already been used'),
-    );
-  });
-
-  it('blocks OTP resend during cooldown', async () => {
-    usersService.findByEmail.mockResolvedValue({
-      ...user,
-      status: UserStatus.PENDING_VERIFICATION,
-    });
-    redis.ttl.mockResolvedValue(45);
-
-    await expect(service.resendEmailOtp(user.email)).rejects.toEqual(
-      new HttpException(
-        'Please wait 45 seconds before requesting another OTP',
-        HttpStatus.TOO_MANY_REQUESTS,
-      ),
-    );
-  });
-
-  it('rate limits repeated OTP resends', async () => {
-    usersService.findByEmail.mockResolvedValue({
-      ...user,
-      status: UserStatus.PENDING_VERIFICATION,
-    });
-    redis.incr.mockResolvedValue(6);
-
-    await expect(service.resendEmailOtp(user.email)).rejects.toEqual(
-      new HttpException('Too many OTP requests', HttpStatus.TOO_MANY_REQUESTS),
     );
   });
 
@@ -326,6 +295,9 @@ describe('AuthService', () => {
       user.email,
       expect.stringMatching(/^\d{6}$/),
     );
+    expect(redis.ttl).not.toHaveBeenCalled();
+    expect(redis.incr).not.toHaveBeenCalled();
+    expect(redis.expire).not.toHaveBeenCalled();
   });
 
   it('keeps password reset requests generic for missing accounts', async () => {
@@ -374,24 +346,6 @@ describe('AuthService', () => {
     await expect(
       service.verifyPasswordResetOtp(user.email, '123456'),
     ).rejects.toEqual(new BadRequestException('Invalid or expired OTP'));
-  });
-
-  it('applies cooldown and rate limits to password reset requests', async () => {
-    redis.ttl.mockResolvedValueOnce(30);
-
-    await expect(service.requestPasswordResetOtp(user.email)).rejects.toEqual(
-      new HttpException(
-        'Please wait 30 seconds before requesting another OTP',
-        HttpStatus.TOO_MANY_REQUESTS,
-      ),
-    );
-
-    redis.ttl.mockResolvedValueOnce(-2);
-    redis.incr.mockResolvedValueOnce(6);
-
-    await expect(service.requestPasswordResetOtp(user.email)).rejects.toEqual(
-      new HttpException('Too many OTP requests', HttpStatus.TOO_MANY_REQUESTS),
-    );
   });
 
   it('resets the password and revokes existing refresh sessions', async () => {
