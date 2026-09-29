@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ROLES_KEY } from '../../common/constants/auth.constant';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { CACHE_INVALIDATE_METADATA } from '../redis/redis.constants';
 import { UserRole } from '../users/entities/user.entity';
 import { EnrollmentsController } from './enrollments.controller';
 import { EnrollmentsService } from './enrollments.service';
@@ -93,5 +94,18 @@ describe('EnrollmentsController auth metadata', () => {
         handlerOf('findCourseEnrollmentsForInstructor'),
       ),
     ).toEqual([UserRole.INSTRUCTOR]);
+  });
+
+  it('invalidates learner-facing caches after enrollment', () => {
+    expect(
+      Reflect.getMetadata(CACHE_INVALIDATE_METADATA, handlerOf('enroll')),
+    ).toEqual([
+      'enrollments:learner',
+      'recommendations:learner',
+      'courses:public:detail',
+      'learning:course',
+      'learning:lesson',
+      'dashboard:learner',
+    ]);
   });
 });

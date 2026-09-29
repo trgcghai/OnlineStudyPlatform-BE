@@ -20,6 +20,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { Cached } from '../redis/redis.decorators';
 import { AvatarUploadExceptionFilter } from './filters/avatar-upload-exception.filter';
 import { UpsertInstructorAccountDto } from './dto/instructor-account.dto';
 import {
@@ -61,6 +62,7 @@ export class UsersController {
   }
 
   @Get('banks')
+  @Cached({ namespace: 'users:banks', ttl: 21600 })
   listBanks() {
     return this.usersService.listBanks();
   }

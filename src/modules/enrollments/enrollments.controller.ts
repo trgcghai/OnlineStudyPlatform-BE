@@ -13,6 +13,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { Cached, InvalidateCache } from '../redis/redis.decorators';
 import { UserRole } from '../users/entities/user.entity';
 import { ListCourseEnrollmentsQueryDto } from './dto/enrollment.dto';
 import { EnrollmentsService } from './enrollments.service';
@@ -23,6 +24,14 @@ export class EnrollmentsController {
   constructor(private readonly enrollmentsService: EnrollmentsService) {}
 
   @Post('courses/:courseId/enrollments')
+  @InvalidateCache([
+    'enrollments:learner',
+    'recommendations:learner',
+    'courses:public:detail',
+    'learning:course',
+    'learning:lesson',
+    'dashboard:learner',
+  ])
   @Roles(UserRole.LEARNER)
   @HttpCode(HttpStatus.CREATED)
   enroll(
@@ -33,6 +42,7 @@ export class EnrollmentsController {
   }
 
   @Get('enrollments/me')
+  @Cached({ namespace: 'enrollments:learner', ttl: 60, scope: 'user' })
   @Roles(UserRole.LEARNER)
   findMine(@CurrentUser('id') learnerId: string) {
     return this.enrollmentsService.findMine(learnerId);

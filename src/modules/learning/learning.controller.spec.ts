@@ -2,6 +2,10 @@ import { LearningController } from './learning.controller';
 import { LearningProgressService } from './learning-progress.service';
 import { LearningService } from './learning.service';
 import { LessonWatchEventType } from './entities/lesson-watch-event.entity';
+import {
+  CACHE_INVALIDATE_METADATA,
+  CACHE_METADATA,
+} from '../redis/redis.constants';
 
 describe('LearningController', () => {
   let controller: LearningController;
@@ -16,6 +20,9 @@ describe('LearningController', () => {
   const learnerId = '11111111-1111-4111-8111-111111111111';
   const courseId = '22222222-2222-4222-8222-222222222222';
   const lessonId = '33333333-3333-4333-8333-333333333333';
+  const handlerOf = (methodName: keyof LearningController) =>
+    Object.getOwnPropertyDescriptor(LearningController.prototype, methodName)!
+      .value;
 
   beforeEach(() => {
     learningService = {
@@ -81,5 +88,34 @@ describe('LearningController', () => {
       lessonId,
       dto,
     );
+  });
+
+  it('caches course learning per user', () => {
+    expect(Reflect.getMetadata(CACHE_METADATA, handlerOf('getCourse'))).toEqual(
+      {
+        namespace: 'learning:course',
+        ttl: 60,
+        scope: 'user',
+      },
+    );
+  });
+
+  it('caches lesson learning per user', () => {
+    expect(Reflect.getMetadata(CACHE_METADATA, handlerOf('getLesson'))).toEqual(
+      {
+        namespace: 'learning:lesson',
+        ttl: 30,
+        scope: 'user',
+      },
+    );
+  });
+
+  it('invalidates learning and dashboard cache after watch events', () => {
+    expect(
+      Reflect.getMetadata(
+        CACHE_INVALIDATE_METADATA,
+        handlerOf('recordWatchEvent'),
+      ),
+    ).toEqual(['learning:course', 'learning:lesson', 'dashboard:learner']);
   });
 });

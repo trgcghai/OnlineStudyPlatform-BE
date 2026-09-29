@@ -13,6 +13,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { Cached, InvalidateCache } from '../redis/redis.decorators';
 import { UserRole } from '../users/entities/user.entity';
 import { SubmitQuizAttemptDto } from './dto/quiz-attempt.dto';
 import { QuizAttemptsService } from './quiz-attempts.service';
@@ -23,6 +24,7 @@ export class LearnerQuizzesController {
   constructor(private readonly quizAttemptsService: QuizAttemptsService) {}
 
   @Get()
+  @Cached({ namespace: 'learning:quiz', ttl: 60, scope: 'user' })
   @Roles(UserRole.LEARNER)
   loadQuiz(
     @Param('courseId', ParseUUIDPipe) courseId: string,
@@ -37,6 +39,11 @@ export class LearnerQuizzesController {
   }
 
   @Post(':quizId/attempts')
+  @InvalidateCache([
+    'learning:quiz',
+    'learning:quiz-attempts',
+    'dashboard:learner',
+  ])
   @Roles(UserRole.LEARNER)
   @HttpCode(HttpStatus.CREATED)
   startAttempt(
@@ -54,6 +61,13 @@ export class LearnerQuizzesController {
   }
 
   @Post(':quizId/attempts/:attemptId/submit')
+  @InvalidateCache([
+    'learning:quiz',
+    'learning:quiz-attempts',
+    'learning:course',
+    'learning:lesson',
+    'dashboard:learner',
+  ])
   @Roles(UserRole.LEARNER)
   @HttpCode(HttpStatus.OK)
   submitAttempt(
@@ -75,6 +89,7 @@ export class LearnerQuizzesController {
   }
 
   @Get(':quizId/attempts')
+  @Cached({ namespace: 'learning:quiz-attempts', ttl: 30, scope: 'user' })
   @Roles(UserRole.LEARNER)
   listAttempts(
     @Param('courseId', ParseUUIDPipe) courseId: string,
