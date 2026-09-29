@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -11,7 +12,13 @@ import { randomUUID } from 'crypto';
 import type { Client as MinioClient } from 'minio';
 import { DataSource, Repository } from 'typeorm';
 import { MINIO_CLIENT } from '../../common/constants/file.constant';
-import { Course } from '../courses/entities/course.entity';
+import { AiSummaryService } from '../ai-summary/ai-summary.service';
+import {
+  LessonSummary,
+  LessonSummaryStatus,
+} from '../ai-summary/entities/lesson-summary.entity';
+import { LessonAudioService } from '../ai-summary/lesson-audio.service';
+import { Course, CourseStatus } from '../courses/entities/course.entity';
 import { CourseProgressService } from '../learning/course-progress.service';
 import {
   CreateLessonDto,
@@ -25,15 +32,21 @@ import { Lesson } from './entities/lesson.entity';
 
 @Injectable()
 export class LessonsService {
+  private readonly logger = new Logger(LessonsService.name);
+
   constructor(
     @InjectRepository(Lesson)
     private readonly lessonsRepository: Repository<Lesson>,
+    @InjectRepository(LessonSummary)
+    private readonly summariesRepository: Repository<LessonSummary>,
     @InjectRepository(Course)
     private readonly coursesRepository: Repository<Course>,
     private readonly configService: ConfigService,
     @Inject(MINIO_CLIENT) private readonly minioClient: MinioClient,
     private readonly dataSource: DataSource,
     private readonly courseProgressService: CourseProgressService,
+    private readonly aiSummaryService: AiSummaryService,
+    private readonly lessonAudioService: LessonAudioService,
   ) {}
 
   async listByCourse(
@@ -74,7 +87,7 @@ export class LessonsService {
     videoFile?: Express.Multer.File,
     materialFile?: Express.Multer.File,
   ): Promise<LessonResponse> {
-    await this.assertCourseOwnership(courseId, instructorId);
+    const course = await this.assertCourseOwnership(courseId, instructorId);
 
     const maxPosition = await this.lessonsRepository.maximum('position', {
       courseId,
@@ -109,6 +122,23 @@ export class LessonsService {
           this.configService.getOrThrow<string>('MINIO_BUCKET'),
           videoKey,
         );
+        const derivedAudio = await this.createSummaryAudioQuietly(
+          videoFile.buffer,
+          videoFile.originalname,
+          savedLesson.courseId,
+          savedLesson.id,
+        );
+        if (derivedAudio) {
+          uploadedKeys.push({
+            bucket: derivedAudio.bucket,
+            key: derivedAudio.key,
+          });
+        }
+        await this.resetSummarySource(
+          savedLesson.id,
+          savedLesson.videoUrl,
+          derivedAudio?.url ?? null,
+        );
       }
 
       if (materialFile) {
@@ -133,6 +163,9 @@ export class LessonsService {
       await this.courseProgressService.recomputeCourseEnrollmentsProgress(
         courseId,
       );
+      if (videoFile && course.status === CourseStatus.PUBLISHED) {
+        await this.enqueueSummaryQuietly(savedLesson.id);
+      }
       return this.toLessonResponse(savedLesson);
     } catch (error) {
       await this.cleanupUploadedFiles(uploadedKeys);
@@ -148,6 +181,9 @@ export class LessonsService {
     materialFile?: Express.Multer.File,
   ): Promise<LessonResponse> {
     const lesson = await this.getOwnedLessonEntity(id, instructorId);
+    const existingSummary = videoFile
+      ? await this.summariesRepository.findOne({ where: { lessonId: id } })
+      : null;
     const bucket = this.configService.getOrThrow<string>('MINIO_BUCKET');
     const endpoint = this.configService.getOrThrow<string>('MINIO_ENDPOINT');
 
@@ -174,6 +210,16 @@ export class LessonsService {
         );
         if (oldKey) keysToDelete.push({ bucket, key: oldKey });
       }
+      if (existingSummary?.audioUrl) {
+        try {
+          keysToDelete.push({
+            bucket,
+            key: this.lessonAudioService.getObjectKey(existingSummary.audioUrl),
+          });
+        } catch {
+          // Ignore malformed legacy derived-audio URLs during replacement.
+        }
+      }
       const videoKey = await this.uploadFile(
         lesson.courseId,
         lesson.id,
@@ -181,6 +227,18 @@ export class LessonsService {
         'videos',
       );
       lesson.videoUrl = this.buildPublicObjectUrl(endpoint, bucket, videoKey);
+      const derivedAudio = await this.createSummaryAudioQuietly(
+        videoFile.buffer,
+        videoFile.originalname,
+        lesson.courseId,
+        lesson.id,
+      );
+      await this.resetSummarySource(
+        lesson.id,
+        lesson.videoUrl,
+        derivedAudio?.url ?? null,
+        existingSummary,
+      );
     }
 
     if (materialFile) {
@@ -207,6 +265,10 @@ export class LessonsService {
 
     const savedLesson = await this.lessonsRepository.save(lesson);
 
+    if (videoFile && lesson.course.status === CourseStatus.PUBLISHED) {
+      await this.enqueueSummaryQuietly(savedLesson.id);
+    }
+
     await this.deleteObjectsQuietly(keysToDelete);
 
     return this.toLessonResponse(savedLesson);
@@ -214,6 +276,9 @@ export class LessonsService {
 
   async remove(id: string, instructorId: string): Promise<void> {
     const lesson = await this.getOwnedLessonEntity(id, instructorId);
+    const summary = await this.summariesRepository.findOne({
+      where: { lessonId: id },
+    });
     const bucket = this.configService.getOrThrow<string>('MINIO_BUCKET');
     const endpoint = this.configService.getOrThrow<string>('MINIO_ENDPOINT');
 
@@ -235,6 +300,17 @@ export class LessonsService {
         lesson.materialUrl,
       );
       if (key) keysToDelete.push({ bucket, key });
+    }
+
+    if (summary?.audioUrl) {
+      try {
+        keysToDelete.push({
+          bucket,
+          key: this.lessonAudioService.getObjectKey(summary.audioUrl),
+        });
+      } catch {
+        // Ignore malformed legacy derived-audio URLs during deletion.
+      }
     }
 
     await this.lessonsRepository.remove(lesson);
@@ -436,6 +512,62 @@ export class LessonsService {
       } catch {
         // Best-effort cleanup; stale objects must not fail the request.
       }
+    }
+  }
+
+  private async enqueueSummaryQuietly(lessonId: string): Promise<void> {
+    try {
+      await this.aiSummaryService.enqueueLesson(lessonId);
+    } catch (error) {
+      this.logger.error(
+        `Could not enqueue AI summary for lesson ${lessonId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  private async resetSummarySource(
+    lessonId: string,
+    videoUrl: string,
+    audioUrl: string | null,
+    current?: LessonSummary | null,
+  ): Promise<void> {
+    const summary =
+      current ??
+      this.summariesRepository.create({
+        lessonId,
+      });
+    summary.summaryText = null;
+    summary.status = LessonSummaryStatus.PENDING;
+    summary.error = null;
+    summary.sourceVideoUrl = videoUrl;
+    summary.audioUrl = audioUrl;
+    summary.updatedAt = new Date();
+    await this.summariesRepository.save(summary);
+  }
+
+  private async createSummaryAudioQuietly(
+    source: Buffer,
+    sourceName: string,
+    courseId: string,
+    lessonId: string,
+  ): Promise<{ bucket: string; key: string; url: string } | null> {
+    try {
+      const audio = await this.lessonAudioService.extractAndUpload(
+        source,
+        sourceName,
+        `courses/${courseId}/lessons/${lessonId}/summary-audio`,
+      );
+      return {
+        bucket: this.configService.getOrThrow<string>('MINIO_BUCKET'),
+        key: audio.objectKey,
+        url: audio.url,
+      };
+    } catch (error) {
+      this.logger.warn(
+        `Could not prepare summary audio for lesson ${lessonId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
     }
   }
 

@@ -1,6 +1,10 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import {
+  LessonSummary,
+  LessonSummaryStatus,
+} from '../ai-summary/entities/lesson-summary.entity';
+import {
   Course,
   CourseLearningOrder,
   CourseStatus,
@@ -18,6 +22,7 @@ describe('LearningService', () => {
   let service: LearningService;
   let coursesRepository: { findOne: jest.Mock };
   let lessonsRepository: { find: jest.Mock; findOne: jest.Mock };
+  let summariesRepository: { findOne: jest.Mock };
   let enrollmentsRepository: { findOne: jest.Mock };
   let progressService: { getCompletedLessonIds: jest.Mock };
 
@@ -73,9 +78,24 @@ describe('LearningService', () => {
     ...overrides,
   });
 
+  const makeSummary = (
+    overrides: Partial<LessonSummary> = {},
+  ): LessonSummary => ({
+    lessonId: '66666666-6666-4666-8666-666666666666',
+    lesson: undefined as never,
+    summaryText: null,
+    status: LessonSummaryStatus.PENDING,
+    error: null,
+    sourceVideoUrl: null,
+    audioUrl: null,
+    updatedAt: null,
+    ...overrides,
+  });
+
   beforeEach(() => {
     coursesRepository = { findOne: jest.fn() };
     lessonsRepository = { find: jest.fn(), findOne: jest.fn() };
+    summariesRepository = { findOne: jest.fn().mockResolvedValue(null) };
     enrollmentsRepository = { findOne: jest.fn() };
     progressService = {
       getCompletedLessonIds: jest.fn().mockResolvedValue(new Set<string>()),
@@ -83,6 +103,7 @@ describe('LearningService', () => {
     service = new LearningService(
       coursesRepository as unknown as Repository<Course>,
       lessonsRepository as unknown as Repository<Lesson>,
+      summariesRepository as unknown as Repository<LessonSummary>,
       enrollmentsRepository as unknown as Repository<Enrollment>,
       new LearningAccessService(),
       progressService as unknown as LearningProgressService,
@@ -284,6 +305,74 @@ describe('LearningService', () => {
       await expect(
         service.getLessonLearning(learnerId, courseId, 'other-lesson'),
       ).rejects.toEqual(new NotFoundException('Lesson not found'));
+    });
+  });
+
+  describe('getLessonSummary', () => {
+    it('returns a ready summary for an accessible enrolled lesson', async () => {
+      const summaryUpdatedAt = new Date('2026-08-29T00:00:00.000Z');
+      const lesson = makeLesson({ id: 'lesson-0' });
+      coursesRepository.findOne.mockResolvedValue(makeCourse());
+      enrollmentsRepository.findOne.mockResolvedValue(makeEnrollment());
+      lessonsRepository.find.mockResolvedValue([lesson]);
+      lessonsRepository.findOne.mockResolvedValue(lesson);
+      summariesRepository.findOne.mockResolvedValue(
+        makeSummary({
+          lessonId: lesson.id,
+          status: LessonSummaryStatus.READY,
+          summaryText: 'Nội dung tóm tắt.',
+          updatedAt: summaryUpdatedAt,
+        }),
+      );
+
+      await expect(
+        service.getLessonSummary(learnerId, courseId, 'lesson-0'),
+      ).resolves.toEqual({
+        lessonId: 'lesson-0',
+        status: LessonSummaryStatus.READY,
+        summaryText: 'Nội dung tóm tắt.',
+        updatedAt: summaryUpdatedAt,
+      });
+    });
+
+    it('returns pending without exposing an internal error', async () => {
+      const lesson = makeLesson({ id: 'lesson-0' });
+      coursesRepository.findOne.mockResolvedValue(makeCourse());
+      enrollmentsRepository.findOne.mockResolvedValue(makeEnrollment());
+      lessonsRepository.find.mockResolvedValue([lesson]);
+      lessonsRepository.findOne.mockResolvedValue(lesson);
+      summariesRepository.findOne.mockResolvedValue(
+        makeSummary({ lessonId: lesson.id, error: 'internal failure' }),
+      );
+
+      const result = await service.getLessonSummary(
+        learnerId,
+        courseId,
+        'lesson-0',
+      );
+
+      expect(result).toEqual({
+        lessonId: 'lesson-0',
+        status: LessonSummaryStatus.PENDING,
+        summaryText: null,
+        updatedAt: null,
+      });
+      expect(result).not.toHaveProperty('summaryError');
+    });
+
+    it('blocks a summary for an inaccessible sequential lesson', async () => {
+      const firstLesson = makeLesson({ id: 'lesson-0', position: 0 });
+      const blockedLesson = makeLesson({ id: 'lesson-1', position: 1 });
+      coursesRepository.findOne.mockResolvedValue(
+        makeCourse({ learningOrder: CourseLearningOrder.SEQUENTIAL }),
+      );
+      enrollmentsRepository.findOne.mockResolvedValue(makeEnrollment());
+      lessonsRepository.find.mockResolvedValue([firstLesson, blockedLesson]);
+      lessonsRepository.findOne.mockResolvedValue(blockedLesson);
+
+      await expect(
+        service.getLessonSummary(learnerId, courseId, 'lesson-1'),
+      ).rejects.toEqual(new ForbiddenException(SEQUENTIAL_BLOCK_MESSAGE));
     });
   });
 });

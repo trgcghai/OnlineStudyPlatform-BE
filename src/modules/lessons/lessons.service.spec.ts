@@ -3,6 +3,12 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { DataSource, Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
+import { AiSummaryService } from '../ai-summary/ai-summary.service';
+import {
+  LessonSummary,
+  LessonSummaryStatus,
+} from '../ai-summary/entities/lesson-summary.entity';
+import { LessonAudioService } from '../ai-summary/lesson-audio.service';
 import { LessonsService } from './lessons.service';
 import { Lesson } from './entities/lesson.entity';
 import { Course, CourseStatus } from '../courses/entities/course.entity';
@@ -68,10 +74,16 @@ function createMockRepository<T>(overrides: Partial<Repository<T>> = {}) {
 describe('LessonsService', () => {
   let service: LessonsService;
   let lessonsRepo: ReturnType<typeof createMockRepository<Lesson>>;
+  let summariesRepo: ReturnType<typeof createMockRepository<LessonSummary>>;
   let coursesRepo: ReturnType<typeof createMockRepository<Course>>;
   let minioClient: Record<string, jest.Mock>;
   let courseProgressService: {
     recomputeCourseEnrollmentsProgress: jest.Mock;
+  };
+  let aiSummaryService: { enqueueLesson: jest.Mock };
+  let lessonAudioService: {
+    extractAndUpload: jest.Mock;
+    getObjectKey: jest.Mock;
   };
   let mockQueryRunner: {
     manager: { find: jest.Mock; update: jest.Mock };
@@ -89,6 +101,7 @@ describe('LessonsService', () => {
 
   beforeEach(async () => {
     lessonsRepo = createMockRepository();
+    summariesRepo = createMockRepository();
     coursesRepo = createMockRepository();
     minioClient = {
       putObject: jest.fn().mockResolvedValue(undefined),
@@ -98,6 +111,19 @@ describe('LessonsService', () => {
       recomputeCourseEnrollmentsProgress: jest
         .fn()
         .mockResolvedValue(undefined),
+    };
+    aiSummaryService = {
+      enqueueLesson: jest.fn().mockResolvedValue(undefined),
+    };
+    lessonAudioService = {
+      extractAndUpload: jest.fn().mockResolvedValue({
+        objectKey: 'courses/course-1/lessons/lesson-1/summary-audio/audio.ogg',
+        url: `${endpoint}/${bucket}/courses/course-1/lessons/lesson-1/summary-audio/audio.ogg`,
+      }),
+      getObjectKey: jest.fn((url: string) => {
+        const marker = `/${bucket}/`;
+        return new URL(url).pathname.split(marker)[1];
+      }),
     };
 
     mockQueryRunner = {
@@ -118,6 +144,10 @@ describe('LessonsService', () => {
         {
           provide: getRepositoryToken(Lesson),
           useValue: lessonsRepo,
+        },
+        {
+          provide: getRepositoryToken(LessonSummary),
+          useValue: summariesRepo,
         },
         {
           provide: getRepositoryToken(Course),
@@ -146,6 +176,14 @@ describe('LessonsService', () => {
         {
           provide: CourseProgressService,
           useValue: courseProgressService,
+        },
+        {
+          provide: AiSummaryService,
+          useValue: aiSummaryService,
+        },
+        {
+          provide: LessonAudioService,
+          useValue: lessonAudioService,
         },
       ],
     }).compile();
@@ -269,6 +307,50 @@ describe('LessonsService', () => {
         { 'Content-Type': 'video/mp4' },
       );
       expect(result.videoUrl).toContain(endpoint);
+      expect(lessonAudioService.extractAndUpload).toHaveBeenCalledWith(
+        videoFile.buffer,
+        videoFile.originalname,
+        expect.stringContaining('/summary-audio'),
+      );
+      expect((summariesRepo.save as jest.Mock).mock.calls).toContainEqual([
+        expect.objectContaining({
+          lessonId: savedLesson.id,
+          sourceVideoUrl: savedLesson.videoUrl,
+          audioUrl: expect.stringContaining('/summary-audio/'),
+          status: LessonSummaryStatus.PENDING,
+        }),
+      ]);
+      expect(aiSummaryService.enqueueLesson).not.toHaveBeenCalled();
+    });
+
+    it('queues a summary when a video is added to a published course', async () => {
+      coursesRepo.findOne.mockResolvedValue(
+        makeCourse({
+          id: courseId,
+          instructorId,
+          status: CourseStatus.PUBLISHED,
+        }),
+      );
+      lessonsRepo.maximum.mockResolvedValue(null);
+      const savedLesson = makeLesson({ courseId, position: 0 });
+      lessonsRepo.save.mockResolvedValue(savedLesson);
+      const videoFile = {
+        buffer: Buffer.from('video'),
+        size: 1000,
+        originalname: 'test.mp4',
+        mimetype: 'video/mp4',
+      } as Express.Multer.File;
+
+      await service.create(
+        courseId,
+        instructorId,
+        { title: 'Published lesson' },
+        videoFile,
+      );
+
+      expect(aiSummaryService.enqueueLesson).toHaveBeenCalledWith(
+        savedLesson.id,
+      );
     });
 
     it('should upload material when provided', async () => {
@@ -324,6 +406,7 @@ describe('LessonsService', () => {
 
       expect(result.title).toBe('New Title');
       expect(result.description).toBe('New desc');
+      expect(aiSummaryService.enqueueLesson).not.toHaveBeenCalled();
     });
 
     it('should replace video and delete old one', async () => {
@@ -351,6 +434,42 @@ describe('LessonsService', () => {
         expect.stringContaining('old-video'),
       );
       expect(minioClient.putObject).toHaveBeenCalled();
+    });
+
+    it('queues a replacement video summary without failing the update', async () => {
+      const existingLesson = makeLesson({
+        id: 'lesson-1',
+        courseId,
+        videoUrl: `${endpoint}/${bucket}/courses/${courseId}/lessons/lesson-1/videos/old.mp4`,
+        course: makeCourse({
+          id: courseId,
+          instructorId,
+          status: CourseStatus.PUBLISHED,
+        }),
+      });
+      lessonsRepo.findOne.mockResolvedValue(existingLesson);
+      lessonsRepo.save.mockImplementation((entity: unknown) =>
+        Promise.resolve(entity as Lesson),
+      );
+      aiSummaryService.enqueueLesson.mockRejectedValueOnce(
+        new Error('redis down'),
+      );
+      const videoFile = {
+        buffer: Buffer.from('replacement'),
+        size: 2000,
+        originalname: 'replacement.mp4',
+        mimetype: 'video/mp4',
+      } as Express.Multer.File;
+
+      const result = await service.update(
+        'lesson-1',
+        instructorId,
+        {},
+        videoFile,
+      );
+
+      expect(result.videoUrl).toContain(endpoint);
+      expect(aiSummaryService.enqueueLesson).toHaveBeenCalledWith('lesson-1');
     });
 
     it('should throw NotFoundException for non-existent lesson', async () => {

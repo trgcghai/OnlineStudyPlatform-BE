@@ -12,6 +12,7 @@ describe('LearningController', () => {
   let learningService: {
     getCourseLearning: jest.Mock;
     getLessonLearning: jest.Mock;
+    getLessonSummary: jest.Mock;
   };
   let progressService: {
     recordWatchEvent: jest.Mock;
@@ -28,6 +29,7 @@ describe('LearningController', () => {
     learningService = {
       getCourseLearning: jest.fn(),
       getLessonLearning: jest.fn(),
+      getLessonSummary: jest.fn(),
     };
     progressService = {
       recordWatchEvent: jest.fn(),
@@ -59,6 +61,20 @@ describe('LearningController', () => {
       controller.getLesson(courseId, lessonId, learnerId),
     ).resolves.toBe(response);
     expect(learningService.getLessonLearning).toHaveBeenCalledWith(
+      learnerId,
+      courseId,
+      lessonId,
+    );
+  });
+
+  it('delegates lesson summary loading to LearningService', async () => {
+    const response = { lessonId, status: 'ready', summaryText: 'Tóm tắt' };
+    learningService.getLessonSummary.mockResolvedValue(response);
+
+    await expect(
+      controller.getLessonSummary(courseId, lessonId, learnerId),
+    ).resolves.toBe(response);
+    expect(learningService.getLessonSummary).toHaveBeenCalledWith(
       learnerId,
       courseId,
       lessonId,

@@ -5,6 +5,10 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import {
+  LessonSummary,
+  LessonSummaryStatus,
+} from '../ai-summary/entities/lesson-summary.entity';
 import { Course, CourseStatus } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { Lesson } from '../lessons/entities/lesson.entity';
@@ -14,6 +18,7 @@ import {
   LearningCourseSummaryResponse,
   LearningEnrollmentResponse,
   LearningLessonDetailResponse,
+  LearningLessonAiSummaryResponse,
   LearningLessonSummaryResponse,
 } from './dto/learning.dto';
 import { LearningProgressService } from './learning-progress.service';
@@ -28,6 +33,8 @@ export class LearningService {
     private readonly coursesRepository: Repository<Course>,
     @InjectRepository(Lesson)
     private readonly lessonsRepository: Repository<Lesson>,
+    @InjectRepository(LessonSummary)
+    private readonly summariesRepository: Repository<LessonSummary>,
     @InjectRepository(Enrollment)
     private readonly enrollmentsRepository: Repository<Enrollment>,
     private readonly learningAccessService: LearningAccessService,
@@ -101,6 +108,49 @@ export class LearningService {
       courseId: lesson.courseId,
       videoUrl: lesson.videoUrl,
       materialUrl: lesson.materialUrl,
+    };
+  }
+
+  async getLessonSummary(
+    learnerId: string,
+    courseId: string,
+    lessonId: string,
+  ): Promise<LearningLessonAiSummaryResponse> {
+    const { course, lessons } = await this.loadLearningContext(
+      learnerId,
+      courseId,
+    );
+    const lesson = await this.lessonsRepository.findOne({
+      where: { id: lessonId, courseId },
+    });
+    if (!lesson || lesson.courseId !== courseId) {
+      throw new NotFoundException('Lesson not found');
+    }
+
+    const completedLessonIds =
+      await this.learningProgressService.getCompletedLessonIds(
+        learnerId,
+        courseId,
+      );
+    const decision = this.learningAccessService.determineLessonAccess(
+      course.learningOrder,
+      lesson,
+      lessons,
+      completedLessonIds,
+    );
+    if (!decision.allowed) {
+      throw new ForbiddenException(decision.message);
+    }
+
+    const summary = await this.summariesRepository.findOne({
+      where: { lessonId: lesson.id },
+    });
+
+    return {
+      lessonId: lesson.id,
+      status: summary?.status ?? LessonSummaryStatus.PENDING,
+      summaryText: summary?.summaryText ?? null,
+      updatedAt: summary?.updatedAt ?? null,
     };
   }
 

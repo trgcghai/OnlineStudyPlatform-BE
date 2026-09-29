@@ -5,6 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
+import { AiSummaryService } from '../ai-summary/ai-summary.service';
+import { LessonSummary } from '../ai-summary/entities/lesson-summary.entity';
 import { NotificationQueue } from '../notifications/entities/notification.entity';
 import { NotificationsQueueService } from '../notifications/notifications-queue.service';
 import { Lesson } from '../lessons/entities/lesson.entity';
@@ -33,6 +35,7 @@ describe('CoursesService', () => {
   let minioClient: { putObject: jest.Mock; removeObject: jest.Mock };
   let enrollmentRepo: { exists: jest.Mock };
   let lessonsRepo: { find: jest.Mock };
+  let summariesRepo: { find: jest.Mock };
   let quizzesRepo: { find: jest.Mock };
   let questionsRepo: { find: jest.Mock };
   let notificationsQueueService: {
@@ -44,6 +47,7 @@ describe('CoursesService', () => {
     getCoursePricingReference: jest.Mock;
   };
   let courseAssetCleanupQueue: { enqueue: jest.Mock };
+  let aiSummaryService: { enqueueCourse: jest.Mock };
   let dataSource: { createQueryRunner: jest.Mock };
   let queryRunner: {
     connect: jest.Mock;
@@ -92,6 +96,20 @@ describe('CoursesService', () => {
     course: makeCourse(),
     createdAt: new Date('2026-01-01T00:00:00Z'),
     updatedAt: new Date('2026-01-01T00:00:00Z'),
+    ...overrides,
+  });
+
+  const makeSummary = (
+    overrides: Partial<LessonSummary> = {},
+  ): LessonSummary => ({
+    lessonId: '55555555-5555-4555-8555-555555555555',
+    lesson: undefined as never,
+    summaryText: null,
+    status: 'pending' as never,
+    error: null,
+    sourceVideoUrl: null,
+    audioUrl: null,
+    updatedAt: null,
     ...overrides,
   });
 
@@ -153,6 +171,7 @@ describe('CoursesService', () => {
     };
     enrollmentRepo = { exists: jest.fn() };
     lessonsRepo = { find: jest.fn().mockResolvedValue([]) };
+    summariesRepo = { find: jest.fn().mockResolvedValue([]) };
     quizzesRepo = { find: jest.fn().mockResolvedValue([]) };
     questionsRepo = { find: jest.fn().mockResolvedValue([]) };
     notificationsQueueService = {
@@ -168,6 +187,9 @@ describe('CoursesService', () => {
     };
     courseAssetCleanupQueue = {
       enqueue: jest.fn().mockResolvedValue(undefined),
+    };
+    aiSummaryService = {
+      enqueueCourse: jest.fn().mockResolvedValue(undefined),
     };
     queryRunner = {
       connect: jest.fn().mockResolvedValue(undefined),
@@ -188,10 +210,12 @@ describe('CoursesService', () => {
       dataSource as unknown as DataSource,
       enrollmentRepo as never,
       lessonsRepo as unknown as Repository<Lesson>,
+      summariesRepo as unknown as Repository<LessonSummary>,
       quizzesRepo as unknown as Repository<Quiz>,
       questionsRepo as unknown as Repository<Question>,
       paymentConfigService as never,
       courseAssetCleanupQueue as unknown as CourseAssetCleanupQueuePublisher,
+      aiSummaryService as unknown as AiSummaryService,
     );
   });
 
@@ -939,6 +963,7 @@ describe('CoursesService', () => {
       });
       expect(result.status).toBe(CourseStatus.PUBLISHED);
       expect(result.rejectReason).toBeNull();
+      expect(aiSummaryService.enqueueCourse).toHaveBeenCalledWith(courseId);
     });
 
     it('rejects a pending course with a trimmed reason and notifies the Instructor', async () => {
@@ -971,6 +996,7 @@ describe('CoursesService', () => {
         triggerDate: expect.any(String),
       });
       expect(result.status).toBe(CourseStatus.REJECTED);
+      expect(aiSummaryService.enqueueCourse).not.toHaveBeenCalled();
       expect(result.rejectReason).toBe('Nội dung chưa đủ rõ.');
     });
 
@@ -1033,6 +1059,23 @@ describe('CoursesService', () => {
       });
 
       expect(result.status).toBe(CourseStatus.PUBLISHED);
+    });
+
+    it('keeps publication successful when AI summary enqueue fails', async () => {
+      repo.findOne.mockResolvedValue(
+        makeCourse({ status: CourseStatus.PENDING }),
+      );
+      repo.save.mockImplementation((input: Course) => input);
+      aiSummaryService.enqueueCourse.mockRejectedValueOnce(
+        new Error('redis down'),
+      );
+
+      const result = await service.reviewCourseStatus(courseId, {
+        status: CourseStatus.PUBLISHED,
+      });
+
+      expect(result.status).toBe(CourseStatus.PUBLISHED);
+      expect(aiSummaryService.enqueueCourse).toHaveBeenCalledWith(courseId);
     });
   });
 
@@ -1206,6 +1249,11 @@ describe('CoursesService', () => {
           materialUrl: `http://minio:9000/lms-bucket/courses/${courseId}/lessons/lesson-1/materials/guide.pdf`,
         }),
       ]);
+      summariesRepo.find.mockResolvedValue([
+        makeSummary({
+          audioUrl: `http://minio:9000/lms-bucket/courses/${courseId}/lessons/lesson-1/summary-audio/audio.ogg`,
+        }),
+      ]);
 
       await service.remove(courseId, instructorId);
 
@@ -1215,6 +1263,7 @@ describe('CoursesService', () => {
           `courses/${courseId}/thumbnails/cover.png`,
           'lesson-imports/import-1/assets/lesson-1/videos/video.mp4',
           `courses/${courseId}/lessons/lesson-1/materials/guide.pdf`,
+          `courses/${courseId}/lessons/lesson-1/summary-audio/audio.ogg`,
         ],
       });
       expect(

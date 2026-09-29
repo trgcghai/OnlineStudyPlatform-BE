@@ -26,6 +26,8 @@ import type { QuizSummaryResponse } from '../quizzes/dto/quiz.dto';
 import { UserRole } from '../users/entities/user.entity';
 import { ConfigService as PaymentConfigService } from '../payments/config.service';
 import { CourseAssetCleanupQueuePublisher } from './cleanup/queue/course-asset-cleanup-queue.publisher';
+import { AiSummaryService } from '../ai-summary/ai-summary.service';
+import { LessonSummary } from '../ai-summary/entities/lesson-summary.entity';
 import {
   AdminCourseContentListResult,
   CourseApprovalListResult,
@@ -63,12 +65,15 @@ export class CoursesService {
     private readonly enrollmentsRepository: Repository<Enrollment>,
     @InjectRepository(Lesson)
     private readonly lessonsRepository: Repository<Lesson>,
+    @InjectRepository(LessonSummary)
+    private readonly summariesRepository: Repository<LessonSummary>,
     @InjectRepository(Quiz)
     private readonly quizzesRepository: Repository<Quiz>,
     @InjectRepository(Question)
     private readonly questionsRepository: Repository<Question>,
     private readonly paymentConfigService: PaymentConfigService,
     private readonly courseAssetCleanupQueue: CourseAssetCleanupQueuePublisher,
+    private readonly aiSummaryService: AiSummaryService,
   ) {}
 
   async create(
@@ -341,7 +346,13 @@ export class CoursesService {
     const lessons = await this.lessonsRepository.find({
       where: { courseId: id },
     });
-    const objectKeys = this.collectCourseObjectKeys(course, lessons);
+    const summaries =
+      lessons.length > 0
+        ? await this.summariesRepository.find({
+            where: { lessonId: In(lessons.map((lesson) => lesson.id)) },
+          })
+        : [];
+    const objectKeys = this.collectCourseObjectKeys(course, lessons, summaries);
 
     if (objectKeys.length > 0) {
       await this.courseAssetCleanupQueue.enqueue({
@@ -478,6 +489,17 @@ export class CoursesService {
         'Could not enqueue course review notification',
         error instanceof Error ? error.stack : String(error),
       );
+    }
+
+    if (dto.status === CourseStatus.PUBLISHED) {
+      try {
+        await this.aiSummaryService.enqueueCourse(course.id);
+      } catch (error) {
+        this.logger.error(
+          'Could not enqueue published course summaries',
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
     }
 
     return this.toCourseResponse(savedCourse);
@@ -642,7 +664,11 @@ export class CoursesService {
     return publicUrl.startsWith(prefix) ? publicUrl.slice(prefix.length) : null;
   }
 
-  private collectCourseObjectKeys(course: Course, lessons: Lesson[]): string[] {
+  private collectCourseObjectKeys(
+    course: Course,
+    lessons: Lesson[],
+    summaries: LessonSummary[],
+  ): string[] {
     const bucket = this.configService.getOrThrow<string>('MINIO_BUCKET');
     const endpoints = [
       this.configService.getOrThrow<string>('MINIO_ENDPOINT'),
@@ -651,6 +677,7 @@ export class CoursesService {
     const urls = [
       course.thumbnail,
       ...lessons.flatMap((lesson) => [lesson.videoUrl, lesson.materialUrl]),
+      ...summaries.map((summary) => summary.audioUrl),
     ];
 
     return [

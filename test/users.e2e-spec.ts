@@ -6,7 +6,7 @@ import { DataSource, In } from 'typeorm';
 import request from 'supertest';
 import { AppModule } from './../src/app.module';
 import { User } from './../src/modules/users/entities/user.entity';
-import { MINIO_CLIENT } from 'src/common/constants/file.constant';
+import { MINIO_CLIENT } from '../src/common/constants/file.constant';
 import { App } from 'supertest/types';
 
 type ErrorBody = {

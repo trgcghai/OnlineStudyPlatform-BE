@@ -24,8 +24,9 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { AiChatModule } from './modules/ai-chat/ai-chat.module';
 import { OrdersModule } from './modules/orders/orders.module';
-import { RecommendationsModule } from './modules/recommendations/recommendations.module';
+import { AiSummaryModule } from './modules/ai-summary/ai-summary.module';
 import { RedisInterceptor } from './modules/redis/redis.interceptor';
+import { RecommendationsModule } from './modules/recommendations/recommendations.module';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 
 @Module({
@@ -75,9 +76,10 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
     QuizzesModule,
     PaymentsModule,
     AiChatModule,
-    RecommendationsModule,
+    AiSummaryModule,
     OrdersModule,
     SeedsModule,
+    RecommendationsModule,
   ],
   controllers: [AppController],
   providers: [

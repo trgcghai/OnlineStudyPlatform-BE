@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { LessonSummary } from '../ai-summary/entities/lesson-summary.entity';
 import { Course } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { Lesson } from '../lessons/entities/lesson.entity';
@@ -22,6 +23,7 @@ import { LearningService } from './learning.service';
     TypeOrmModule.forFeature([
       Course,
       Lesson,
+      LessonSummary,
       Enrollment,
       Quiz,
       QuizAttempt,

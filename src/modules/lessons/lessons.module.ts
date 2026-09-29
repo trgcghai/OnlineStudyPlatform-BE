@@ -15,11 +15,14 @@ import { LessonImportQueueConsumer } from './import/queue/lesson-import-queue.co
 import { LessonImportQueuePublisher } from './import/queue/lesson-import-queue.publisher';
 import { LearningAccessService } from './learning-access.service';
 import { LessonsService } from './lessons.service';
+import { AiSummaryModule } from '../ai-summary/ai-summary.module';
+import { LessonSummary } from '../ai-summary/entities/lesson-summary.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Lesson, LessonImport, Course]),
+    TypeOrmModule.forFeature([Lesson, LessonImport, Course, LessonSummary]),
     CourseProgressModule,
+    AiSummaryModule,
   ],
   controllers: [LessonsController, LessonDetailController],
   providers: [
