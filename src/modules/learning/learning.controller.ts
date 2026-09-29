@@ -11,6 +11,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { Cached, InvalidateCache } from '../redis/redis.decorators';
 import { UserRole } from '../users/entities/user.entity';
 import { CreateWatchEventDto } from './dto/watch-event.dto';
 import { LearningProgressService } from './learning-progress.service';
@@ -26,6 +27,7 @@ export class LearningController {
   ) {}
 
   @Get(':courseId')
+  @Cached({ namespace: 'learning:course', ttl: 60, scope: 'user' })
   getCourse(
     @Param('courseId', ParseUUIDPipe) courseId: string,
     @CurrentUser('id') learnerId: string,
@@ -34,6 +36,7 @@ export class LearningController {
   }
 
   @Get(':courseId/lessons/:lessonId')
+  @Cached({ namespace: 'learning:lesson', ttl: 30, scope: 'user' })
   getLesson(
     @Param('courseId', ParseUUIDPipe) courseId: string,
     @Param('lessonId', ParseUUIDPipe) lessonId: string,
@@ -56,6 +59,7 @@ export class LearningController {
   }
 
   @Post(':courseId/lessons/:lessonId/watch-events')
+  @InvalidateCache(['learning:course', 'learning:lesson', 'dashboard:learner'])
   recordWatchEvent(
     @Param('courseId', ParseUUIDPipe) courseId: string,
     @Param('lessonId', ParseUUIDPipe) lessonId: string,

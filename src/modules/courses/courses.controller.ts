@@ -26,6 +26,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { Cached, InvalidateCache } from '../redis/redis.decorators';
 import { UserRole } from '../users/entities/user.entity';
 import { CoursesService } from './courses.service';
 import {
@@ -42,6 +43,7 @@ export class CoursesController {
   constructor(private readonly coursesService: CoursesService) {}
 
   @Post()
+  @InvalidateCache(['courses:public:list', 'instructor:courses:list'])
   @Roles(UserRole.INSTRUCTOR)
   create(
     @CurrentUser('id') instructorId: string,
@@ -51,6 +53,7 @@ export class CoursesController {
   }
 
   @Get('me')
+  @Cached({ namespace: 'instructor:courses:list', ttl: 60, scope: 'user' })
   @Roles(UserRole.INSTRUCTOR)
   findMine(
     @CurrentUser('id') instructorId: string,
@@ -66,6 +69,7 @@ export class CoursesController {
   }
 
   @Get(':id')
+  @Cached({ namespace: 'instructor:courses:detail', ttl: 60, scope: 'user' })
   @Roles(UserRole.INSTRUCTOR)
   getOwned(
     @Param('id', ParseUUIDPipe) id: string,
@@ -75,6 +79,14 @@ export class CoursesController {
   }
 
   @Post(':id/request-publish')
+  @InvalidateCache([
+    'courses:public:list',
+    'courses:public:detail',
+    'instructor:courses:list',
+    'instructor:courses:detail',
+    'learning:course',
+    'learning:lesson',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.OK)
   requestPublish(
@@ -85,6 +97,14 @@ export class CoursesController {
   }
 
   @Patch(':id/status')
+  @InvalidateCache([
+    'courses:public:list',
+    'courses:public:detail',
+    'instructor:courses:list',
+    'instructor:courses:detail',
+    'learning:course',
+    'learning:lesson',
+  ])
   @Roles(UserRole.ADMIN)
   reviewCourseStatus(
     @Param('id', ParseUUIDPipe) id: string,
@@ -94,6 +114,14 @@ export class CoursesController {
   }
 
   @Patch(':id')
+  @InvalidateCache([
+    'courses:public:list',
+    'courses:public:detail',
+    'instructor:courses:list',
+    'instructor:courses:detail',
+    'learning:course',
+    'learning:lesson',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   update(
     @Param('id', ParseUUIDPipe) id: string,
@@ -104,6 +132,14 @@ export class CoursesController {
   }
 
   @Delete(':id')
+  @InvalidateCache([
+    'courses:public:list',
+    'courses:public:detail',
+    'instructor:courses:list',
+    'instructor:courses:detail',
+    'learning:course',
+    'learning:lesson',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(
@@ -114,6 +150,14 @@ export class CoursesController {
   }
 
   @Post(':id/thumbnail')
+  @InvalidateCache([
+    'courses:public:list',
+    'courses:public:detail',
+    'instructor:courses:list',
+    'instructor:courses:detail',
+    'learning:course',
+    'learning:lesson',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.OK)
   @UseFilters(ThumbnailUploadExceptionFilter)

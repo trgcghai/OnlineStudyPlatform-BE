@@ -1,10 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { CACHE_METADATA } from '../redis/redis.constants';
 import { DashboardController } from './dashboard.controller';
 import { LearnerDashboardService } from './learner-dashboard.service';
 
 describe('DashboardController', () => {
   let controller: DashboardController;
   let learnerDashboardService: { getDashboard: jest.Mock };
+
+  const handlerOf = (methodName: keyof DashboardController) =>
+    Object.getOwnPropertyDescriptor(DashboardController.prototype, methodName)!
+      .value;
 
   beforeEach(async () => {
     learnerDashboardService = {
@@ -48,6 +53,16 @@ describe('DashboardController', () => {
       },
       courses: [],
       recentActivities: [],
+    });
+  });
+
+  it('caches learner dashboard per user with a short TTL', () => {
+    expect(
+      Reflect.getMetadata(CACHE_METADATA, handlerOf('getLearnerDashboard')),
+    ).toEqual({
+      namespace: 'dashboard:learner',
+      ttl: 30,
+      scope: 'user',
     });
   });
 });

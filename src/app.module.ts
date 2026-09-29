@@ -25,6 +25,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { AiChatModule } from './modules/ai-chat/ai-chat.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { AiSummaryModule } from './modules/ai-summary/ai-summary.module';
+import { RedisInterceptor } from './modules/redis/redis.interceptor';
 
 @Module({
   imports: [
@@ -81,6 +82,10 @@ import { AiSummaryModule } from './modules/ai-summary/ai-summary.module';
     {
       provide: APP_INTERCEPTOR,
       useClass: ResponseInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: RedisInterceptor,
     },
   ],
 })

@@ -24,6 +24,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { Cached, InvalidateCache } from '../redis/redis.decorators';
 import { UserRole } from '../users/entities/user.entity';
 import {
   CreateQuestionDto,
@@ -40,6 +41,11 @@ export class QuizzesController {
   constructor(private readonly quizzesService: QuizzesService) {}
 
   @Post()
+  @InvalidateCache([
+    'instructor:quizzes:list',
+    'instructor:quizzes:detail',
+    'learning:quiz',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.CREATED)
   create(
@@ -52,6 +58,11 @@ export class QuizzesController {
   }
 
   @Post('import')
+  @InvalidateCache([
+    'instructor:quizzes:list',
+    'instructor:quizzes:detail',
+    'learning:quiz',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
@@ -81,6 +92,7 @@ export class QuizzesController {
   }
 
   @Get()
+  @Cached({ namespace: 'instructor:quizzes:list', ttl: 60, scope: 'user' })
   @Roles(UserRole.INSTRUCTOR)
   list(
     @Param('courseId', ParseUUIDPipe) courseId: string,
@@ -97,6 +109,11 @@ export class QuizQuestionsController {
   constructor(private readonly quizzesService: QuizzesService) {}
 
   @Post()
+  @InvalidateCache([
+    'instructor:quizzes:list',
+    'instructor:quizzes:detail',
+    'learning:quiz',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.CREATED)
   addQuestion(
@@ -108,6 +125,11 @@ export class QuizQuestionsController {
   }
 
   @Patch('reorder')
+  @InvalidateCache([
+    'instructor:quizzes:list',
+    'instructor:quizzes:detail',
+    'learning:quiz',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.OK)
   reorder(
@@ -125,6 +147,7 @@ export class QuizManageController {
   constructor(private readonly quizzesService: QuizzesService) {}
 
   @Get(':id')
+  @Cached({ namespace: 'instructor:quizzes:detail', ttl: 60, scope: 'user' })
   @Roles(UserRole.INSTRUCTOR)
   findOne(
     @Param('id', ParseUUIDPipe) id: string,
@@ -134,6 +157,11 @@ export class QuizManageController {
   }
 
   @Patch(':id')
+  @InvalidateCache([
+    'instructor:quizzes:list',
+    'instructor:quizzes:detail',
+    'learning:quiz',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.OK)
   update(
@@ -145,6 +173,11 @@ export class QuizManageController {
   }
 
   @Delete(':id')
+  @InvalidateCache([
+    'instructor:quizzes:list',
+    'instructor:quizzes:detail',
+    'learning:quiz',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(
@@ -161,6 +194,11 @@ export class QuestionManageController {
   constructor(private readonly quizzesService: QuizzesService) {}
 
   @Patch(':id')
+  @InvalidateCache([
+    'instructor:quizzes:list',
+    'instructor:quizzes:detail',
+    'learning:quiz',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.OK)
   update(
@@ -172,6 +210,11 @@ export class QuestionManageController {
   }
 
   @Delete(':id')
+  @InvalidateCache([
+    'instructor:quizzes:list',
+    'instructor:quizzes:detail',
+    'learning:quiz',
+  ])
   @Roles(UserRole.INSTRUCTOR)
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(
