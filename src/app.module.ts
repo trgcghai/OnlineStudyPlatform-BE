@@ -26,7 +26,7 @@ import { AiChatModule } from './modules/ai-chat/ai-chat.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { AiSummaryModule } from './modules/ai-summary/ai-summary.module';
 import { RedisInterceptor } from './modules/redis/redis.interceptor';
-
+import { RecommendationsModule } from './modules/recommendations/recommendations.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -71,6 +71,7 @@ import { RedisInterceptor } from './modules/redis/redis.interceptor';
     AiSummaryModule,
     OrdersModule,
     SeedsModule,
+    RecommendationsModule,
   ],
   controllers: [AppController],
   providers: [
