@@ -14,12 +14,22 @@ import { CoursesService } from './courses.service';
 import { CourseAssetCleanupQueuePublisher } from './cleanup/queue/course-asset-cleanup-queue.publisher';
 import { CourseAssetCleanupQueueConsumer } from './cleanup/queue/course-asset-cleanup-queue.consumer';
 import { CourseAssetCleanupService } from './cleanup/course-asset-cleanup.service';
+import { AiSummaryModule } from '../ai-summary/ai-summary.module';
+import { LessonSummary } from '../ai-summary/entities/lesson-summary.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Course, Enrollment, Lesson, Quiz, Question]),
+    TypeOrmModule.forFeature([
+      Course,
+      Enrollment,
+      Lesson,
+      LessonSummary,
+      Quiz,
+      Question,
+    ]),
     NotificationsModule,
     PaymentsModule,
+    AiSummaryModule,
   ],
   controllers: [
     PublicCoursesController,

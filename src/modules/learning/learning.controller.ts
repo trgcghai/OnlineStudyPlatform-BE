@@ -46,6 +46,15 @@ export class LearningController {
     );
   }
 
+  @Get(':courseId/lessons/:lessonId/summary')
+  getLessonSummary(
+    @Param('courseId', ParseUUIDPipe) courseId: string,
+    @Param('lessonId', ParseUUIDPipe) lessonId: string,
+    @CurrentUser('id') learnerId: string,
+  ) {
+    return this.learningService.getLessonSummary(learnerId, courseId, lessonId);
+  }
+
   @Post(':courseId/lessons/:lessonId/watch-events')
   recordWatchEvent(
     @Param('courseId', ParseUUIDPipe) courseId: string,

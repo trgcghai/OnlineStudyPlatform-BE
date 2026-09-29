@@ -10,7 +10,13 @@ import { extname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { DataSource, Repository } from 'typeorm';
 import { MINIO_CLIENT } from '../../../common/constants/file.constant';
-import { Course } from '../../courses/entities/course.entity';
+import { AiSummaryService } from '../../ai-summary/ai-summary.service';
+import {
+  LessonSummary,
+  LessonSummaryStatus,
+} from '../../ai-summary/entities/lesson-summary.entity';
+import { LessonAudioService } from '../../ai-summary/lesson-audio.service';
+import { Course, CourseStatus } from '../../courses/entities/course.entity';
 import {
   LessonImportRow,
   LessonZipArchive,
@@ -31,6 +37,7 @@ interface PreparedLesson {
   id: string;
   row: LessonImportRow;
   videoUrl: string | null;
+  summaryAudioUrl: string | null;
   materialUrl: string | null;
 }
 
@@ -56,6 +63,8 @@ export class LessonImportProcessorService {
     private readonly dataSource: DataSource,
     private readonly progressService: CourseProgressService,
     private readonly zipService: ZipService,
+    private readonly lessonAudioService: LessonAudioService,
+    private readonly aiSummaryService: AiSummaryService,
   ) {}
 
   async process(importId: string): Promise<void> {
@@ -150,18 +159,29 @@ export class LessonImportProcessorService {
         id: randomUUID(),
         row,
         videoUrl: null,
+        summaryAudioUrl: null,
         materialUrl: null,
       }));
       await this.removeAssetPrefixQuietly(lessonImport.id);
       let uploaded = 0;
       for (const lesson of prepared) {
         if (lesson.row.videoFilename) {
+          const videoAsset = archive.getAsset(
+            'videos',
+            lesson.row.videoFilename,
+          );
           lesson.videoUrl = await this.uploadReferencedEntry(
             archive,
-            archive.getAsset('videos', lesson.row.videoFilename),
+            videoAsset,
             lessonImport.id,
             lesson.id,
             'videos',
+          );
+          lesson.summaryAudioUrl = await this.createSummaryAudioQuietly(
+            archive,
+            videoAsset,
+            lessonImport.id,
+            lesson.id,
           );
           uploaded += 1;
         }
@@ -192,41 +212,83 @@ export class LessonImportProcessorService {
     lessonImport: LessonImport,
     prepared: PreparedLesson[],
   ): Promise<void> {
-    await this.dataSource.transaction(async (manager) => {
-      const course = await manager.findOne(Course, {
-        where: { id: lessonImport.courseId },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!course || course.instructorId !== lessonImport.instructorId) {
-        throw new ZipValidationError(['Course ownership changed']);
+    const summaryLessonIds = await this.dataSource.transaction(
+      async (manager) => {
+        const course = await manager.findOne(Course, {
+          where: { id: lessonImport.courseId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!course || course.instructorId !== lessonImport.instructorId) {
+          throw new ZipValidationError(['Course ownership changed']);
+        }
+        const finalLesson = await manager.findOne(Lesson, {
+          where: { courseId: lessonImport.courseId },
+          order: { position: 'DESC' },
+        });
+        const firstPosition = (finalLesson?.position ?? -1) + 1;
+        const lessons = prepared.map((item, index) =>
+          manager.create(Lesson, {
+            id: item.id,
+            courseId: lessonImport.courseId,
+            title: item.row.title,
+            description: item.row.description,
+            duration: 0,
+            position: firstPosition + index,
+            videoUrl: item.videoUrl,
+            materialUrl: item.materialUrl,
+          }),
+        );
+        await manager.save(Lesson, lessons);
+        const summaries = prepared
+          .filter((item) => Boolean(item.videoUrl))
+          .map((item) =>
+            manager.create(LessonSummary, {
+              lessonId: item.id,
+              summaryText: null,
+              status: LessonSummaryStatus.PENDING,
+              error: null,
+              sourceVideoUrl: item.videoUrl,
+              audioUrl: item.summaryAudioUrl,
+              updatedAt: new Date(),
+            }),
+          );
+        if (summaries.length > 0) {
+          await manager.save(LessonSummary, summaries);
+        }
+        await manager.update(LessonImport, lessonImport.id, {
+          status: LessonImportStatus.COMPLETED,
+          progress: 100,
+          createdLessonCount: lessons.length,
+          firstPosition,
+          lastPosition: firstPosition + lessons.length - 1,
+          completedAt: new Date(),
+          errorDetails: [],
+        });
+        return course.status === CourseStatus.PUBLISHED
+          ? lessons
+              .filter((lesson) => Boolean(lesson.videoUrl))
+              .map((lesson) => lesson.id)
+          : [];
+      },
+    );
+    await this.enqueueSummariesQuietly(summaryLessonIds);
+  }
+
+  private async enqueueSummariesQuietly(lessonIds: string[]): Promise<void> {
+    const results = await Promise.allSettled(
+      lessonIds.map((lessonId) =>
+        this.aiSummaryService.enqueueLesson(lessonId),
+      ),
+    );
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        this.logger.error(
+          `Could not enqueue AI summary for imported lesson ${lessonIds[index]}`,
+          result.reason instanceof Error
+            ? result.reason.stack
+            : String(result.reason),
+        );
       }
-      const finalLesson = await manager.findOne(Lesson, {
-        where: { courseId: lessonImport.courseId },
-        order: { position: 'DESC' },
-      });
-      const firstPosition = (finalLesson?.position ?? -1) + 1;
-      const lessons = prepared.map((item, index) =>
-        manager.create(Lesson, {
-          id: item.id,
-          courseId: lessonImport.courseId,
-          title: item.row.title,
-          description: item.row.description,
-          duration: 0,
-          position: firstPosition + index,
-          videoUrl: item.videoUrl,
-          materialUrl: item.materialUrl,
-        }),
-      );
-      await manager.save(Lesson, lessons);
-      await manager.update(LessonImport, lessonImport.id, {
-        status: LessonImportStatus.COMPLETED,
-        progress: 100,
-        createdLessonCount: lessons.length,
-        firstPosition,
-        lastPosition: firstPosition + lessons.length - 1,
-        completedAt: new Date(),
-        errorDetails: [],
-      });
     });
   }
 
@@ -248,6 +310,28 @@ export class LessonImportProcessorService {
       { 'Content-Type': MIME_TYPES[extension] },
     );
     return `${this.publicEndpoint.replace(/\/+$/, '')}/${this.bucket}/${key}`;
+  }
+
+  private async createSummaryAudioQuietly(
+    archive: LessonZipArchive,
+    asset: LessonZipAsset,
+    importId: string,
+    lessonId: string,
+  ): Promise<string | null> {
+    try {
+      const source = await archive.openStream(asset);
+      const audio = await this.lessonAudioService.extractAndUpload(
+        source,
+        asset.path,
+        `lesson-imports/${importId}/assets/${lessonId}/summary-audio`,
+      );
+      return audio.url;
+    } catch (error) {
+      this.logger.warn(
+        `Could not prepare summary audio for imported lesson ${lessonId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
   }
 
   private async removeSourceQuietly(lessonImport: LessonImport): Promise<void> {

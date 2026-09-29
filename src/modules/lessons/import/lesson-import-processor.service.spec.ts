@@ -1,5 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import { Course } from '../../courses/entities/course.entity';
+import { Course, CourseStatus } from '../../courses/entities/course.entity';
 import {
   LessonImport,
   LessonImportStatus,
@@ -35,6 +35,12 @@ describe('LessonImportProcessorService', () => {
   const zipService = {
     openLessonImport: jest.fn(),
   };
+  const lessonAudioService = {
+    extractAndUpload: jest.fn(),
+  };
+  const aiSummaryService = {
+    enqueueLesson: jest.fn(),
+  };
   let service: LessonImportProcessorService;
 
   beforeEach(() => {
@@ -51,6 +57,8 @@ describe('LessonImportProcessorService', () => {
       dataSource as never,
       progressService as never,
       zipService as never,
+      lessonAudioService as never,
+      aiSummaryService as never,
     );
   });
 
@@ -58,7 +66,11 @@ describe('LessonImportProcessorService', () => {
     manager.findOne.mockImplementation((entity: object) =>
       Promise.resolve(
         entity === Course
-          ? { id: 'course-id', instructorId: 'instructor-id' }
+          ? {
+              id: 'course-id',
+              instructorId: 'instructor-id',
+              status: CourseStatus.DRAFT,
+            }
           : { position: 3 },
       ),
     );
@@ -78,12 +90,14 @@ describe('LessonImportProcessorService', () => {
           id: 'lesson-1',
           row: { title: 'First', description: '' },
           videoUrl: null,
+          summaryAudioUrl: null,
           materialUrl: null,
         },
         {
           id: 'lesson-2',
           row: { title: 'Second', description: '' },
           videoUrl: null,
+          summaryAudioUrl: null,
           materialUrl: null,
         },
       ],
@@ -99,6 +113,105 @@ describe('LessonImportProcessorService', () => {
         firstPosition: 4,
         lastPosition: 5,
       }),
+    );
+    expect(aiSummaryService.enqueueLesson).not.toHaveBeenCalled();
+  });
+
+  it('enqueues only imported video lessons after a published course transaction commits', async () => {
+    manager.findOne.mockImplementation((entity: object) =>
+      Promise.resolve(
+        entity === Course
+          ? {
+              id: 'course-id',
+              instructorId: 'instructor-id',
+              status: CourseStatus.PUBLISHED,
+            }
+          : null,
+      ),
+    );
+    manager.save.mockResolvedValue(undefined);
+    manager.update.mockResolvedValue(undefined);
+    aiSummaryService.enqueueLesson.mockResolvedValue(true);
+    const internals = service as unknown as {
+      persistLessons(value: LessonImport, lessons: object[]): Promise<void>;
+    };
+
+    await internals.persistLessons(
+      Object.assign(new LessonImport(), {
+        id: importId,
+        courseId: 'course-id',
+        instructorId: 'instructor-id',
+      }),
+      [
+        {
+          id: 'video-lesson',
+          row: { title: 'Video', description: '' },
+          videoUrl: 'http://localhost/video.mp4',
+          summaryAudioUrl: 'http://localhost/audio.ogg',
+          materialUrl: null,
+        },
+        {
+          id: 'material-lesson',
+          row: { title: 'Material', description: '' },
+          videoUrl: null,
+          summaryAudioUrl: null,
+          materialUrl: 'http://localhost/material.pdf',
+        },
+      ],
+    );
+
+    expect(aiSummaryService.enqueueLesson).toHaveBeenCalledTimes(1);
+    expect(aiSummaryService.enqueueLesson).toHaveBeenCalledWith('video-lesson');
+    expect(manager.update).toHaveBeenCalledWith(
+      LessonImport,
+      importId,
+      expect.objectContaining({ status: LessonImportStatus.COMPLETED }),
+    );
+  });
+
+  it('keeps a published lesson import completed when summary enqueue fails', async () => {
+    manager.findOne.mockImplementation((entity: object) =>
+      Promise.resolve(
+        entity === Course
+          ? {
+              id: 'course-id',
+              instructorId: 'instructor-id',
+              status: CourseStatus.PUBLISHED,
+            }
+          : null,
+      ),
+    );
+    manager.save.mockResolvedValue(undefined);
+    manager.update.mockResolvedValue(undefined);
+    aiSummaryService.enqueueLesson.mockRejectedValue(
+      new Error('Redis unavailable'),
+    );
+    const internals = service as unknown as {
+      persistLessons(value: LessonImport, lessons: object[]): Promise<void>;
+    };
+
+    await expect(
+      internals.persistLessons(
+        Object.assign(new LessonImport(), {
+          id: importId,
+          courseId: 'course-id',
+          instructorId: 'instructor-id',
+        }),
+        [
+          {
+            id: 'video-lesson',
+            row: { title: 'Video', description: '' },
+            videoUrl: 'http://localhost/video.mp4',
+            summaryAudioUrl: null,
+            materialUrl: null,
+          },
+        ],
+      ),
+    ).resolves.toBeUndefined();
+    expect(manager.update).toHaveBeenCalledWith(
+      LessonImport,
+      importId,
+      expect.objectContaining({ status: LessonImportStatus.COMPLETED }),
     );
   });
 

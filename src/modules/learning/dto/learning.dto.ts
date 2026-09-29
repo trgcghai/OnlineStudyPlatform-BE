@@ -1,4 +1,5 @@
 import { CourseLearningOrder } from '../../courses/entities/course.entity';
+import { LessonSummaryStatus } from '../../ai-summary/entities/lesson-summary.entity';
 
 export interface LearningCourseSummaryResponse {
   id: string;
@@ -37,6 +38,13 @@ export interface LearningLessonDetailResponse extends LearningLessonSummaryRespo
   courseId: string;
   videoUrl: string | null;
   materialUrl: string | null;
+}
+
+export interface LearningLessonAiSummaryResponse {
+  lessonId: string;
+  status: LessonSummaryStatus;
+  summaryText: string | null;
+  updatedAt: Date | null;
 }
 
 export interface LearningLessonProgressResponse {
