@@ -3,6 +3,10 @@ import { Reflector } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ROLES_KEY } from '../../common/constants/auth.constant';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import {
+  CACHE_INVALIDATE_METADATA,
+  CACHE_METADATA,
+} from '../redis/redis.constants';
 import { UserRole } from '../users/entities/user.entity';
 import { QuestionType } from './entities/question.entity';
 import {
@@ -35,6 +39,28 @@ describe('QuizzesController', () => {
   const quizId = '55555555-5555-4555-8555-555555555555';
   const questionId = '66666666-6666-4666-8666-666666666666';
   const instructorId = '11111111-1111-4111-8111-111111111111';
+  const quizzesHandlerOf = (methodName: keyof QuizzesController): object =>
+    Object.getOwnPropertyDescriptor(QuizzesController.prototype, methodName)!
+      .value as object;
+  const quizQuestionsHandlerOf = (
+    methodName: keyof QuizQuestionsController,
+  ): object =>
+    Object.getOwnPropertyDescriptor(
+      QuizQuestionsController.prototype,
+      methodName,
+    )!.value as object;
+  const quizManageHandlerOf = (
+    methodName: keyof QuizManageController,
+  ): object =>
+    Object.getOwnPropertyDescriptor(QuizManageController.prototype, methodName)!
+      .value as object;
+  const questionManageHandlerOf = (
+    methodName: keyof QuestionManageController,
+  ): object =>
+    Object.getOwnPropertyDescriptor(
+      QuestionManageController.prototype,
+      methodName,
+    )!.value as object;
 
   beforeEach(async () => {
     service = {
@@ -141,6 +167,40 @@ describe('QuizzesController', () => {
       questionId,
       instructorId,
     );
+  });
+
+  it('caches instructor quiz reads by current user', () => {
+    expect(
+      Reflect.getMetadata(CACHE_METADATA, quizzesHandlerOf('list')),
+    ).toEqual({
+      namespace: 'instructor:quizzes:list',
+      ttl: 60,
+      scope: 'user',
+    });
+    expect(
+      Reflect.getMetadata(CACHE_METADATA, quizManageHandlerOf('findOne')),
+    ).toEqual({
+      namespace: 'instructor:quizzes:detail',
+      ttl: 60,
+      scope: 'user',
+    });
+  });
+
+  it.each([
+    ['create', quizzesHandlerOf('create')],
+    ['importExcel', quizzesHandlerOf('importExcel')],
+    ['update', quizManageHandlerOf('update')],
+    ['remove', quizManageHandlerOf('remove')],
+    ['addQuestion', quizQuestionsHandlerOf('addQuestion')],
+    ['reorder', quizQuestionsHandlerOf('reorder')],
+    ['updateQuestion', questionManageHandlerOf('update')],
+    ['removeQuestion', questionManageHandlerOf('remove')],
+  ])('invalidates instructor quiz cache on %s', (_handlerName, handler) => {
+    expect(Reflect.getMetadata(CACHE_INVALIDATE_METADATA, handler)).toEqual([
+      'instructor:quizzes:list',
+      'instructor:quizzes:detail',
+      'learning:quiz',
+    ]);
   });
 });
 

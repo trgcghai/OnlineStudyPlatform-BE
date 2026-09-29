@@ -3,6 +3,10 @@ import { Reflector } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ROLES_KEY } from '../../common/constants/auth.constant';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import {
+  CACHE_INVALIDATE_METADATA,
+  CACHE_METADATA,
+} from '../redis/redis.constants';
 import { UserRole } from '../users/entities/user.entity';
 import { CoursesController } from './courses.controller';
 import { CoursesService } from './courses.service';
@@ -24,6 +28,9 @@ describe('CoursesController', () => {
 
   const instructorId = '11111111-1111-4111-8111-111111111111';
   const courseId = '33333333-3333-4333-8333-333333333333';
+  const handlerOf = (methodName: keyof CoursesController): object =>
+    Object.getOwnPropertyDescriptor(CoursesController.prototype, methodName)!
+      .value as object;
 
   beforeEach(async () => {
     service = {
@@ -112,6 +119,85 @@ describe('CoursesController', () => {
     await controller.reviewCourseStatus(courseId, dto);
 
     expect(service.reviewCourseStatus).toHaveBeenCalledWith(courseId, dto);
+  });
+
+  it('caches instructor course reads by current user', () => {
+    expect(Reflect.getMetadata(CACHE_METADATA, handlerOf('findMine'))).toEqual({
+      namespace: 'instructor:courses:list',
+      ttl: 60,
+      scope: 'user',
+    });
+    expect(Reflect.getMetadata(CACHE_METADATA, handlerOf('getOwned'))).toEqual({
+      namespace: 'instructor:courses:detail',
+      ttl: 60,
+      scope: 'user',
+    });
+  });
+
+  it.each([
+    ['create', ['courses:public:list', 'instructor:courses:list']],
+    [
+      'requestPublish',
+      [
+        'courses:public:list',
+        'courses:public:detail',
+        'instructor:courses:list',
+        'instructor:courses:detail',
+        'learning:course',
+        'learning:lesson',
+      ],
+    ],
+    [
+      'reviewCourseStatus',
+      [
+        'courses:public:list',
+        'courses:public:detail',
+        'instructor:courses:list',
+        'instructor:courses:detail',
+        'learning:course',
+        'learning:lesson',
+      ],
+    ],
+    [
+      'update',
+      [
+        'courses:public:list',
+        'courses:public:detail',
+        'instructor:courses:list',
+        'instructor:courses:detail',
+        'learning:course',
+        'learning:lesson',
+      ],
+    ],
+    [
+      'remove',
+      [
+        'courses:public:list',
+        'courses:public:detail',
+        'instructor:courses:list',
+        'instructor:courses:detail',
+        'learning:course',
+        'learning:lesson',
+      ],
+    ],
+    [
+      'uploadThumbnail',
+      [
+        'courses:public:list',
+        'courses:public:detail',
+        'instructor:courses:list',
+        'instructor:courses:detail',
+        'learning:course',
+        'learning:lesson',
+      ],
+    ],
+  ])('invalidates instructor course cache on %s', (handlerName, namespaces) => {
+    expect(
+      Reflect.getMetadata(
+        CACHE_INVALIDATE_METADATA,
+        handlerOf(handlerName as keyof CoursesController),
+      ),
+    ).toEqual(namespaces);
   });
 });
 
