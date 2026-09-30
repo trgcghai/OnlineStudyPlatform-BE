@@ -12,7 +12,6 @@ import { ChatSession } from './entities/chat-session.entity';
 describe('AiChatService', () => {
   let service: AiChatService;
   let coursesRepository: { findOne: jest.Mock };
-  let lessonsRepository: { find: jest.Mock };
   let enrollmentsRepository: { findOne: jest.Mock };
   let sessionsRepository: {
     findOne: jest.Mock;
@@ -56,7 +55,6 @@ describe('AiChatService', () => {
 
   beforeEach(() => {
     coursesRepository = { findOne: jest.fn().mockResolvedValue(course) };
-    lessonsRepository = { find: jest.fn().mockResolvedValue([lesson]) };
     enrollmentsRepository = {
       findOne: jest.fn().mockResolvedValue({ learnerId, courseId }),
     };
@@ -101,7 +99,6 @@ describe('AiChatService', () => {
     };
     service = new AiChatService(
       coursesRepository as unknown as Repository<Course>,
-      lessonsRepository as unknown as Repository<Lesson>,
       enrollmentsRepository as unknown as Repository<Enrollment>,
       sessionsRepository as unknown as Repository<ChatSession>,
       messagesRepository as unknown as Repository<ChatMessage>,
@@ -110,7 +107,7 @@ describe('AiChatService', () => {
     );
   });
 
-  it('sends learner/course scope, persisted history, sources, and threshold to AI', async () => {
+  it('sends learner/course scope, persisted history, and threshold to AI', async () => {
     const previousMessage = {
       id: 'previous-user-message',
       sessionId,
@@ -136,14 +133,9 @@ describe('AiChatService', () => {
         question: 'Dependency injection dung the nao?',
         similarityThreshold: 0.3,
         history: [{ role: ChatMessageRole.USER, content: 'Provider la gi?' }],
-        sources: expect.arrayContaining([
-          expect.objectContaining({
-            lessonId: lesson.id,
-            lessonTitle: lesson.title,
-          }),
-        ]),
       }),
     );
+    expect(gateway.chat.mock.calls[0][0]).not.toHaveProperty('sources');
     expect(result.isAiAvailable).toBe(true);
     expect(result.reply).toEqual(
       expect.objectContaining({

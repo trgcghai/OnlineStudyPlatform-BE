@@ -17,12 +17,14 @@ import { LearningAccessService } from './learning-access.service';
 import { LessonsService } from './lessons.service';
 import { AiSummaryModule } from '../ai-summary/ai-summary.module';
 import { LessonSummary } from '../ai-summary/entities/lesson-summary.entity';
+import { AiKnowledgeModule } from '../ai-knowledge/ai-knowledge.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Lesson, LessonImport, Course, LessonSummary]),
     CourseProgressModule,
     AiSummaryModule,
+    AiKnowledgeModule,
   ],
   controllers: [LessonsController, LessonDetailController],
   providers: [

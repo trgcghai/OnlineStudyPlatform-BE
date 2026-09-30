@@ -11,6 +11,7 @@ import { pipeline } from 'node:stream/promises';
 import { DataSource, Repository } from 'typeorm';
 import { MINIO_CLIENT } from '../../../common/constants/file.constant';
 import { AiSummaryService } from '../../ai-summary/ai-summary.service';
+import { AiKnowledgeService } from '../../ai-knowledge/ai-knowledge.service';
 import {
   LessonSummary,
   LessonSummaryStatus,
@@ -65,6 +66,7 @@ export class LessonImportProcessorService {
     private readonly zipService: ZipService,
     private readonly lessonAudioService: LessonAudioService,
     private readonly aiSummaryService: AiSummaryService,
+    private readonly aiKnowledgeService: AiKnowledgeService,
   ) {}
 
   async process(importId: string): Promise<void> {
@@ -212,7 +214,7 @@ export class LessonImportProcessorService {
     lessonImport: LessonImport,
     prepared: PreparedLesson[],
   ): Promise<void> {
-    const summaryLessonIds = await this.dataSource.transaction(
+    const queuedLessonIds = await this.dataSource.transaction(
       async (manager) => {
         const course = await manager.findOne(Course, {
           where: { id: lessonImport.courseId },
@@ -265,13 +267,21 @@ export class LessonImportProcessorService {
           errorDetails: [],
         });
         return course.status === CourseStatus.PUBLISHED
-          ? lessons
-              .filter((lesson) => Boolean(lesson.videoUrl))
-              .map((lesson) => lesson.id)
-          : [];
+          ? {
+              summary: lessons
+                .filter((lesson) => Boolean(lesson.videoUrl))
+                .map((lesson) => lesson.id),
+              knowledge: lessons
+                .filter((lesson) => Boolean(lesson.materialUrl))
+                .map((lesson) => lesson.id),
+            }
+          : { summary: [], knowledge: [] };
       },
     );
-    await this.enqueueSummariesQuietly(summaryLessonIds);
+    await Promise.all([
+      this.enqueueSummariesQuietly(queuedLessonIds.summary),
+      this.enqueueKnowledgeQuietly(queuedLessonIds.knowledge),
+    ]);
   }
 
   private async enqueueSummariesQuietly(lessonIds: string[]): Promise<void> {
@@ -284,6 +294,24 @@ export class LessonImportProcessorService {
       if (result.status === 'rejected') {
         this.logger.error(
           `Could not enqueue AI summary for imported lesson ${lessonIds[index]}`,
+          result.reason instanceof Error
+            ? result.reason.stack
+            : String(result.reason),
+        );
+      }
+    });
+  }
+
+  private async enqueueKnowledgeQuietly(lessonIds: string[]): Promise<void> {
+    const results = await Promise.allSettled(
+      lessonIds.map((lessonId) =>
+        this.aiKnowledgeService.enqueueMaterial(lessonId),
+      ),
+    );
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        this.logger.error(
+          `Could not enqueue material knowledge for imported lesson ${lessonIds[index]}`,
           result.reason instanceof Error
             ? result.reason.stack
             : String(result.reason),

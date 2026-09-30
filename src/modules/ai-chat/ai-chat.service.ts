@@ -8,14 +8,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Course, CourseStatus } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
-import { Lesson } from '../lessons/entities/lesson.entity';
 import {
   AI_UNAVAILABLE_MESSAGE,
   AiChatGatewayService,
 } from './ai-chat-gateway.service';
 import {
   AiChatHistoryMessage,
-  AiChatSource,
   ChatMessageResponse,
   ChatSendResponse,
   ChatSessionResponse,
@@ -35,8 +33,6 @@ export class AiChatService {
   constructor(
     @InjectRepository(Course)
     private readonly coursesRepository: Repository<Course>,
-    @InjectRepository(Lesson)
-    private readonly lessonsRepository: Repository<Lesson>,
     @InjectRepository(Enrollment)
     private readonly enrollmentsRepository: Repository<Enrollment>,
     @InjectRepository(ChatSession)
@@ -67,10 +63,7 @@ export class AiChatService {
     courseId: string,
     question: string,
   ): Promise<ChatSendResponse> {
-    const { course, lessons } = await this.assertLearnerCanChat(
-      learnerId,
-      courseId,
-    );
+    await this.assertLearnerCanChat(learnerId, courseId);
     const session = await this.getOrCreateSession(learnerId, courseId);
     const historyMessages = await this.loadSessionMessages(session.id);
     const userMessage = await this.messagesRepository.save(
@@ -90,7 +83,6 @@ export class AiChatService {
       question: question.trim(),
       similarityThreshold: this.getSimilarityThreshold(),
       history: this.toHistory(historyMessages),
-      sources: this.buildSources(course, lessons),
     });
 
     const assistantMessage = await this.messagesRepository.save(
@@ -133,12 +125,7 @@ export class AiChatService {
       throw new ForbiddenException('Bạn cần đăng ký khóa học để dùng chatbot');
     }
 
-    const lessons = await this.lessonsRepository.find({
-      where: { courseId },
-      order: { position: 'ASC', createdAt: 'ASC' },
-    });
-
-    return { course, lessons };
+    return course;
   }
 
   private async getOrCreateSession(
@@ -162,32 +149,6 @@ export class AiChatService {
       order: { createdAt: 'ASC' },
       take: 100,
     });
-  }
-
-  private buildSources(course: Course, lessons: Lesson[]): AiChatSource[] {
-    const courseSource: AiChatSource = {
-      lessonId: null,
-      lessonTitle: course.title,
-      content: [course.title, course.description, course.category]
-        .filter(Boolean)
-        .join('\n'),
-    };
-
-    return [
-      courseSource,
-      ...lessons.map((lesson) => ({
-        lessonId: lesson.id,
-        lessonTitle: lesson.title,
-        content: [
-          lesson.title,
-          lesson.description,
-          lesson.materialUrl ? `Tai lieu: ${lesson.materialUrl}` : '',
-          lesson.videoUrl ? `Video: ${lesson.videoUrl}` : '',
-        ]
-          .filter(Boolean)
-          .join('\n'),
-      })),
-    ];
   }
 
   private toHistory(messages: ChatMessage[]): AiChatHistoryMessage[] {
@@ -224,6 +185,8 @@ export class AiChatService {
           lessonId: citation.lessonId,
           lessonTitle: citation.lessonTitle,
           excerpt: citation.excerpt,
+          sourceType: citation.sourceType,
+          locator: citation.locator,
         }),
       ),
       createdAt: message.createdAt,

@@ -9,6 +9,7 @@ import {
   LessonSummaryStatus,
 } from './entities/lesson-summary.entity';
 import { LessonAudioService } from './lesson-audio.service';
+import { AiKnowledgeService } from '../ai-knowledge/ai-knowledge.service';
 
 describe('AiSummaryProcessor', () => {
   let processor: AiSummaryProcessor;
@@ -23,6 +24,7 @@ describe('AiSummaryProcessor', () => {
     extractStoredVideo: jest.Mock;
     removeAudioQuietly: jest.Mock;
   };
+  let aiKnowledgeService: { enqueueTranscript: jest.Mock };
   const originalFetch = global.fetch;
 
   const videoUrl = 'http://minio/bucket/video.mp4';
@@ -94,11 +96,15 @@ describe('AiSummaryProcessor', () => {
       }),
       removeAudioQuietly: jest.fn().mockResolvedValue(undefined),
     };
+    aiKnowledgeService = {
+      enqueueTranscript: jest.fn().mockResolvedValue(true),
+    };
     processor = new AiSummaryProcessor(
       lessonsRepository as unknown as Repository<Lesson>,
       summariesRepository as unknown as Repository<LessonSummary>,
       configService as unknown as ConfigService,
       lessonAudioService as unknown as LessonAudioService,
+      aiKnowledgeService as unknown as AiKnowledgeService,
     );
   });
 
@@ -121,6 +127,18 @@ describe('AiSummaryProcessor', () => {
         headers: expect.objectContaining({ Authorization: 'Bearer secret' }),
         body: JSON.stringify({ lessonId: entity.id, audioUrl }),
       }),
+    );
+    expect(summariesRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcriptText: 'Dependency Injection cung cap dependency.',
+        transcriptLanguage: 'vi',
+        transcriptDurationSeconds: 30,
+        transcribedAt: expect.any(Date),
+      }),
+    );
+    expect(aiKnowledgeService.enqueueTranscript).toHaveBeenCalledWith(
+      entity.id,
+      true,
     );
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
@@ -204,6 +222,46 @@ describe('AiSummaryProcessor', () => {
         status: LessonSummaryStatus.FAILED,
         error: '[redacted-url] failed',
       }),
+    );
+  });
+
+  it('retains the transcript when Gemini summarization fails', async () => {
+    const lesson = makeLesson();
+    const summary = makeSummary();
+    lessonsRepository.findOne.mockResolvedValue(lesson);
+    summariesRepository.findOne.mockResolvedValue(summary);
+    global.fetch = jest.fn().mockImplementation((input: string | URL) => {
+      if (input.toString().endsWith('/transcribe')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: jest.fn().mockResolvedValue({
+            transcript: 'Noi dung day du cua bai giang.',
+            language: 'vi',
+            durationSeconds: 42,
+          }),
+        });
+      }
+      return Promise.reject(new Error('Gemini quota exhausted'));
+    });
+
+    await expect(
+      processor.process(makeJob({ attemptsMade: 2 })),
+    ).rejects.toThrow('AI summary service is unavailable');
+
+    expect(summary).toEqual(
+      expect.objectContaining({
+        transcriptText: 'Noi dung day du cua bai giang.',
+        transcriptLanguage: 'vi',
+        transcriptDurationSeconds: 42,
+        transcribedAt: expect.any(Date),
+        status: LessonSummaryStatus.FAILED,
+        error: 'Gemini quota exhausted',
+      }),
+    );
+    expect(aiKnowledgeService.enqueueTranscript).toHaveBeenCalledWith(
+      lesson.id,
+      true,
     );
   });
 

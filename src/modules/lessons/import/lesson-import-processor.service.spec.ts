@@ -41,6 +41,9 @@ describe('LessonImportProcessorService', () => {
   const aiSummaryService = {
     enqueueLesson: jest.fn(),
   };
+  const aiKnowledgeService = {
+    enqueueMaterial: jest.fn(),
+  };
   let service: LessonImportProcessorService;
 
   beforeEach(() => {
@@ -59,6 +62,7 @@ describe('LessonImportProcessorService', () => {
       zipService as never,
       lessonAudioService as never,
       aiSummaryService as never,
+      aiKnowledgeService as never,
     );
   });
 
@@ -162,6 +166,9 @@ describe('LessonImportProcessorService', () => {
 
     expect(aiSummaryService.enqueueLesson).toHaveBeenCalledTimes(1);
     expect(aiSummaryService.enqueueLesson).toHaveBeenCalledWith('video-lesson');
+    expect(aiKnowledgeService.enqueueMaterial).toHaveBeenCalledWith(
+      'material-lesson',
+    );
     expect(manager.update).toHaveBeenCalledWith(
       LessonImport,
       importId,
