@@ -43,17 +43,13 @@ export class AiKnowledgeService implements OnApplicationBootstrap {
     if (!this.getBoolean('AI_KNOWLEDGE_BACKFILL_ON_START', false)) return;
     try {
       const lessons = await this.lessonsRepository.find({
-        relations: { course: true },
+        select: { id: true },
+        where: { course: { status: CourseStatus.PUBLISHED } },
       });
-      const published = lessons.filter(
-        (lesson) => lesson.course?.status === CourseStatus.PUBLISHED,
-      );
-      for (const lesson of published) {
+      for (const lesson of lessons) {
         await this.enqueueLesson(lesson.id, false);
       }
-      this.logger.log(
-        `Knowledge backfill inspected ${published.length} lessons`,
-      );
+      this.logger.log(`Knowledge backfill inspected ${lessons.length} lessons`);
     } catch (error) {
       this.logger.error(
         'Knowledge backfill failed',

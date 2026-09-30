@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import { Repository } from 'typeorm';
 import { LessonSummary } from '../ai-summary/entities/lesson-summary.entity';
+import { CourseStatus } from '../courses/entities/course.entity';
 import { Lesson } from '../lessons/entities/lesson.entity';
 import { AI_KNOWLEDGE_INDEX_JOB } from './ai-knowledge.constants';
 import { AiKnowledgeService } from './ai-knowledge.service';
@@ -27,6 +28,7 @@ describe('AiKnowledgeService', () => {
     save: jest.Mock;
   };
   let queue: { add: jest.Mock };
+  let configService: { get: jest.Mock };
   let service: AiKnowledgeService;
 
   beforeEach(() => {
@@ -49,13 +51,32 @@ describe('AiKnowledgeService', () => {
       ),
     };
     queue = { add: jest.fn().mockResolvedValue(undefined) };
+    configService = { get: jest.fn() };
     service = new AiKnowledgeService(
       lessonsRepository as unknown as Repository<Lesson>,
       summariesRepository as unknown as Repository<LessonSummary>,
       sourcesRepository as unknown as Repository<LessonKnowledgeSource>,
       queue as unknown as Queue<AiKnowledgeJobData>,
-      { get: jest.fn() } as unknown as ConfigService,
+      configService as unknown as ConfigService,
     );
+  });
+
+  it('queries only published lesson ids during startup backfill', async () => {
+    configService.get.mockImplementation((key: string) =>
+      key === 'AI_KNOWLEDGE_BACKFILL_ON_START' ? 'true' : undefined,
+    );
+    lessonsRepository.find.mockResolvedValue([{ id: 'lesson-published' }]);
+    const enqueueLesson = jest
+      .spyOn(service, 'enqueueLesson')
+      .mockResolvedValue(1);
+
+    await service.onApplicationBootstrap();
+
+    expect(lessonsRepository.find).toHaveBeenCalledWith({
+      select: { id: true },
+      where: { course: { status: CourseStatus.PUBLISHED } },
+    });
+    expect(enqueueLesson).toHaveBeenCalledWith('lesson-published', false);
   });
 
   it('creates a pending material source and queues a hash-versioned job', async () => {
