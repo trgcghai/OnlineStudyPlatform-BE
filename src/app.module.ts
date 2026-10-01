@@ -28,6 +28,7 @@ import { AiSummaryModule } from './modules/ai-summary/ai-summary.module';
 import { RedisInterceptor } from './modules/redis/redis.interceptor';
 import { RecommendationsModule } from './modules/recommendations/recommendations.module';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { RiskModule } from './modules/risk/risk.module';
 
 @Module({
   imports: [
@@ -80,6 +81,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
     OrdersModule,
     SeedsModule,
     RecommendationsModule,
+    RiskModule,
   ],
   controllers: [AppController],
   providers: [
