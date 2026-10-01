@@ -3,6 +3,7 @@ import { config } from 'dotenv';
 import { DataSource } from 'typeorm';
 import { ChatMessage } from '../modules/ai-chat/entities/chat-message.entity';
 import { ChatSession } from '../modules/ai-chat/entities/chat-session.entity';
+import { LessonKnowledgeSource } from '../modules/ai-knowledge/entities/lesson-knowledge-source.entity';
 import { LessonSummary } from '../modules/ai-summary/entities/lesson-summary.entity';
 import { CartItem } from '../modules/cart/entities/cart-item.entity';
 import { Course } from '../modules/courses/entities/course.entity';
@@ -38,6 +39,7 @@ const dataSource = new DataSource({
   entities: [
     ChatMessage,
     ChatSession,
+    LessonKnowledgeSource,
     CartItem,
     Course,
     Enrollment,

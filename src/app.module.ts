@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { BullModule } from '@nestjs/bullmq';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
@@ -25,6 +26,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { AiChatModule } from './modules/ai-chat/ai-chat.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { AiSummaryModule } from './modules/ai-summary/ai-summary.module';
+import { AiKnowledgeModule } from './modules/ai-knowledge/ai-knowledge.module';
 import { RedisInterceptor } from './modules/redis/redis.interceptor';
 import { RecommendationsModule } from './modules/recommendations/recommendations.module';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -32,6 +34,17 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        connection: {
+          host: configService.getOrThrow<string>('REDIS_HOST'),
+          port: Number(configService.getOrThrow<string | number>('REDIS_PORT')),
+          maxRetriesPerRequest: null,
+        },
+      }),
+    }),
     ThrottlerModule.forRoot([
       {
         ttl: 60_000,
@@ -77,6 +90,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
     PaymentsModule,
     AiChatModule,
     AiSummaryModule,
+    AiKnowledgeModule,
     OrdersModule,
     SeedsModule,
     RecommendationsModule,

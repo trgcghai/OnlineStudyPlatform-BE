@@ -67,6 +67,10 @@ export class AiSummaryService {
         audioUrl: null,
       });
     summary.summaryText = null;
+    summary.transcriptText = null;
+    summary.transcriptLanguage = null;
+    summary.transcriptDurationSeconds = null;
+    summary.transcribedAt = null;
     summary.status = LessonSummaryStatus.PENDING;
     summary.error = null;
     summary.sourceVideoUrl = videoUrl;

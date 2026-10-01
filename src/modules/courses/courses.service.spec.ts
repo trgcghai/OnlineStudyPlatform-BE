@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
 import { AiSummaryService } from '../ai-summary/ai-summary.service';
+import { AiKnowledgeService } from '../ai-knowledge/ai-knowledge.service';
 import { LessonSummary } from '../ai-summary/entities/lesson-summary.entity';
 import { NotificationQueue } from '../notifications/entities/notification.entity';
 import { NotificationsQueueService } from '../notifications/notifications-queue.service';
@@ -48,6 +49,10 @@ describe('CoursesService', () => {
   };
   let courseAssetCleanupQueue: { enqueue: jest.Mock };
   let aiSummaryService: { enqueueCourse: jest.Mock };
+  let aiKnowledgeService: {
+    enqueueCourse: jest.Mock;
+    deleteCourseSources: jest.Mock;
+  };
   let dataSource: { createQueryRunner: jest.Mock };
   let queryRunner: {
     connect: jest.Mock;
@@ -191,6 +196,10 @@ describe('CoursesService', () => {
     aiSummaryService = {
       enqueueCourse: jest.fn().mockResolvedValue(undefined),
     };
+    aiKnowledgeService = {
+      enqueueCourse: jest.fn().mockResolvedValue(undefined),
+      deleteCourseSources: jest.fn().mockResolvedValue(undefined),
+    };
     queryRunner = {
       connect: jest.fn().mockResolvedValue(undefined),
       startTransaction: jest.fn().mockResolvedValue(undefined),
@@ -216,6 +225,7 @@ describe('CoursesService', () => {
       paymentConfigService as never,
       courseAssetCleanupQueue as unknown as CourseAssetCleanupQueuePublisher,
       aiSummaryService as unknown as AiSummaryService,
+      aiKnowledgeService as unknown as AiKnowledgeService,
     );
   });
 
