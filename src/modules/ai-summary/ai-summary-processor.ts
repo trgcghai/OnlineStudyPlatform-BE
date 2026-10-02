@@ -5,6 +5,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Job } from 'bullmq';
 import { Repository } from 'typeorm';
 import { Lesson } from '../lessons/entities/lesson.entity';
+import { AiKnowledgeService } from '../ai-knowledge/ai-knowledge.service';
 import {
   AI_SUMMARY_CONCURRENCY,
   AI_SUMMARY_QUEUE,
@@ -37,6 +38,7 @@ export class AiSummaryProcessor extends WorkerHost {
     private readonly summariesRepository: Repository<LessonSummary>,
     private readonly configService: ConfigService,
     private readonly lessonAudioService: LessonAudioService,
+    private readonly aiKnowledgeService: AiKnowledgeService,
   ) {
     super();
   }
@@ -72,6 +74,13 @@ export class AiSummaryProcessor extends WorkerHost {
         lessonId: lesson.id,
         audioUrl,
       });
+      const transcriptWasSaved = await this.persistTranscript(
+        lesson.id,
+        job.data.videoUrl,
+        transcription,
+      );
+      if (!transcriptWasSaved) return;
+      await this.enqueueTranscriptQuietly(lesson.id);
       const generatedSummary = await this.summarize({
         lessonId: lesson.id,
         title: lesson.title,
@@ -129,6 +138,40 @@ export class AiSummaryProcessor extends WorkerHost {
   private isFinalAttempt(job: Job<AiSummaryJobData>): boolean {
     const attempts = Number(job.opts.attempts ?? 1);
     return job.attemptsMade + 1 >= attempts;
+  }
+
+  private async persistTranscript(
+    lessonId: string,
+    expectedVideoUrl: string,
+    transcription: AiTranscribeResponse,
+  ): Promise<boolean> {
+    const lesson = await this.lessonsRepository.findOne({
+      where: { id: lessonId },
+    });
+    if (!lesson || lesson.videoUrl !== expectedVideoUrl) return false;
+
+    const summary = await this.summariesRepository.findOne({
+      where: { lessonId },
+    });
+    if (!summary || summary.sourceVideoUrl !== expectedVideoUrl) return false;
+    summary.transcriptText = transcription.transcript.trim();
+    summary.transcriptLanguage = transcription.language;
+    summary.transcriptDurationSeconds = transcription.durationSeconds;
+    summary.transcribedAt = new Date();
+    summary.updatedAt = new Date();
+    await this.summariesRepository.save(summary);
+    return true;
+  }
+
+  private async enqueueTranscriptQuietly(lessonId: string): Promise<void> {
+    try {
+      await this.aiKnowledgeService.enqueueTranscript(lessonId, true);
+    } catch (error) {
+      this.logger.error(
+        `Could not enqueue transcript knowledge for lesson ${lessonId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 
   private async markFailed(

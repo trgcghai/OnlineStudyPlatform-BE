@@ -48,4 +48,6 @@ export interface ChatCitationPayload {
   lessonId: string | null;
   lessonTitle: string;
   excerpt: string;
+  sourceType?: 'transcript' | 'material';
+  locator?: string | null;
 }

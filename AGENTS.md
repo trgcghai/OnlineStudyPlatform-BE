@@ -20,7 +20,7 @@ NestJS 11 + TypeScript backend. Use **pnpm** only; Docker builds run Node 22 wit
 - Required and optional env keys are listed in `.env.example`; payments add SePay bank/webhook settings, and AI chat uses optional `AI_URL`, `AI_TOKEN`, `AI_TIMEOUT_MS`, `AI_CHAT_SIMILARITY_THRESHOLD`.
 - Local env hints from `.env.example`: Postgres host port `5433`, MongoDB URI `mongodb://localhost:27017/kltn`, MinIO endpoint `http://localhost:9000`.
 - App-time PostgreSQL uses TypeORM `autoLoadEntities: true`; `synchronize` is true outside production unless `DB_SYNCHRONIZE` overrides it. The migration CLI is separate and has `synchronize: false` plus explicit entities in `src/database/data-source.ts`.
-- `SeedsModule` providers run on application bootstrap: sample users/courses/lessons/quizzes can mutate Postgres, payment config mutates MongoDB, and `BankSeed` fetches VietQR banks into MongoDB when reachable.
+- `SeedsModule` providers run on application bootstrap: three sample users can be created in Postgres, while `BankSeed` fetches VietQR banks into MongoDB when reachable. Courses, lessons, quizzes, and questions are never auto-seeded.
 - Redis is a global `REDIS_CLIENT` from `src/modules/redis/redis.module.ts` and calls `quit()` on module destroy.
 - MinIO is a global `MINIO_CLIENT`; `FileModule.onModuleInit()` creates `MINIO_BUCKET` if missing and applies a public read policy. `MINIO_ENDPOINT` must be a full URL.
 - Auth stores refresh sessions and access-token blacklist entries in Redis; JWT TTL strings must match `^\d+[smhd]$`.

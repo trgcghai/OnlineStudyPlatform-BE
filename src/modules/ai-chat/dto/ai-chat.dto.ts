@@ -22,6 +22,8 @@ export interface ChatCitationResponse {
   lessonId: string | null;
   lessonTitle: string;
   excerpt: string;
+  sourceType?: 'transcript' | 'material';
+  locator?: string | null;
 }
 
 export interface ChatSessionResponse {
@@ -32,12 +34,6 @@ export interface ChatSessionResponse {
 
 export interface ChatSendResponse extends ChatSessionResponse {
   reply: ChatMessageResponse;
-}
-
-export interface AiChatSource {
-  lessonId: string | null;
-  lessonTitle: string;
-  content: string;
 }
 
 export interface AiChatHistoryMessage {
@@ -51,7 +47,6 @@ export interface AiChatRequest {
   question: string;
   similarityThreshold: number;
   history: AiChatHistoryMessage[];
-  sources: AiChatSource[];
 }
 
 export interface AiChatResponse {

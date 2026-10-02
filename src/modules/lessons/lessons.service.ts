@@ -13,6 +13,7 @@ import type { Client as MinioClient } from 'minio';
 import { DataSource, Repository } from 'typeorm';
 import { MINIO_CLIENT } from '../../common/constants/file.constant';
 import { AiSummaryService } from '../ai-summary/ai-summary.service';
+import { AiKnowledgeService } from '../ai-knowledge/ai-knowledge.service';
 import {
   LessonSummary,
   LessonSummaryStatus,
@@ -46,6 +47,7 @@ export class LessonsService {
     private readonly dataSource: DataSource,
     private readonly courseProgressService: CourseProgressService,
     private readonly aiSummaryService: AiSummaryService,
+    private readonly aiKnowledgeService: AiKnowledgeService,
     private readonly lessonAudioService: LessonAudioService,
   ) {}
 
@@ -166,6 +168,9 @@ export class LessonsService {
       if (videoFile && course.status === CourseStatus.PUBLISHED) {
         await this.enqueueSummaryQuietly(savedLesson.id);
       }
+      if (materialFile && course.status === CourseStatus.PUBLISHED) {
+        await this.enqueueMaterialQuietly(savedLesson.id);
+      }
       return this.toLessonResponse(savedLesson);
     } catch (error) {
       await this.cleanupUploadedFiles(uploadedKeys);
@@ -266,7 +271,11 @@ export class LessonsService {
     const savedLesson = await this.lessonsRepository.save(lesson);
 
     if (videoFile && lesson.course.status === CourseStatus.PUBLISHED) {
+      await this.invalidateTranscriptQuietly(savedLesson.id);
       await this.enqueueSummaryQuietly(savedLesson.id);
+    }
+    if (materialFile && lesson.course.status === CourseStatus.PUBLISHED) {
+      await this.enqueueMaterialQuietly(savedLesson.id, true);
     }
 
     await this.deleteObjectsQuietly(keysToDelete);
@@ -313,6 +322,7 @@ export class LessonsService {
       }
     }
 
+    await this.deleteKnowledgeQuietly(lesson.id);
     await this.lessonsRepository.remove(lesson);
 
     await this.deleteObjectsQuietly(keysToDelete);
@@ -526,6 +536,42 @@ export class LessonsService {
     }
   }
 
+  private async enqueueMaterialQuietly(
+    lessonId: string,
+    force = false,
+  ): Promise<void> {
+    try {
+      await this.aiKnowledgeService.enqueueMaterial(lessonId, force);
+    } catch (error) {
+      this.logger.error(
+        `Could not enqueue material knowledge for lesson ${lessonId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  private async invalidateTranscriptQuietly(lessonId: string): Promise<void> {
+    try {
+      await this.aiKnowledgeService.invalidateTranscript(lessonId);
+    } catch (error) {
+      this.logger.error(
+        `Could not invalidate transcript knowledge for lesson ${lessonId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  private async deleteKnowledgeQuietly(lessonId: string): Promise<void> {
+    try {
+      await this.aiKnowledgeService.deleteLessonSources(lessonId);
+    } catch (error) {
+      this.logger.error(
+        `Could not enqueue knowledge cleanup for lesson ${lessonId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
   private async resetSummarySource(
     lessonId: string,
     videoUrl: string,
@@ -538,6 +584,10 @@ export class LessonsService {
         lessonId,
       });
     summary.summaryText = null;
+    summary.transcriptText = null;
+    summary.transcriptLanguage = null;
+    summary.transcriptDurationSeconds = null;
+    summary.transcribedAt = null;
     summary.status = LessonSummaryStatus.PENDING;
     summary.error = null;
     summary.sourceVideoUrl = videoUrl;

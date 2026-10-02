@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { DataSource, Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
 import { AiSummaryService } from '../ai-summary/ai-summary.service';
+import { AiKnowledgeService } from '../ai-knowledge/ai-knowledge.service';
 import {
   LessonSummary,
   LessonSummaryStatus,
@@ -81,6 +82,11 @@ describe('LessonsService', () => {
     recomputeCourseEnrollmentsProgress: jest.Mock;
   };
   let aiSummaryService: { enqueueLesson: jest.Mock };
+  let aiKnowledgeService: {
+    enqueueMaterial: jest.Mock;
+    invalidateTranscript: jest.Mock;
+    deleteLessonSources: jest.Mock;
+  };
   let lessonAudioService: {
     extractAndUpload: jest.Mock;
     getObjectKey: jest.Mock;
@@ -114,6 +120,11 @@ describe('LessonsService', () => {
     };
     aiSummaryService = {
       enqueueLesson: jest.fn().mockResolvedValue(undefined),
+    };
+    aiKnowledgeService = {
+      enqueueMaterial: jest.fn().mockResolvedValue(true),
+      invalidateTranscript: jest.fn().mockResolvedValue(undefined),
+      deleteLessonSources: jest.fn().mockResolvedValue(undefined),
     };
     lessonAudioService = {
       extractAndUpload: jest.fn().mockResolvedValue({
@@ -180,6 +191,10 @@ describe('LessonsService', () => {
         {
           provide: AiSummaryService,
           useValue: aiSummaryService,
+        },
+        {
+          provide: AiKnowledgeService,
+          useValue: aiKnowledgeService,
         },
         {
           provide: LessonAudioService,

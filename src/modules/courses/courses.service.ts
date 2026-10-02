@@ -28,6 +28,7 @@ import { ConfigService as PaymentConfigService } from '../payments/config.servic
 import { CourseAssetCleanupQueuePublisher } from './cleanup/queue/course-asset-cleanup-queue.publisher';
 import { AiSummaryService } from '../ai-summary/ai-summary.service';
 import { LessonSummary } from '../ai-summary/entities/lesson-summary.entity';
+import { AiKnowledgeService } from '../ai-knowledge/ai-knowledge.service';
 import {
   AdminCourseContentListResult,
   CourseApprovalListResult,
@@ -74,6 +75,7 @@ export class CoursesService {
     private readonly paymentConfigService: PaymentConfigService,
     private readonly courseAssetCleanupQueue: CourseAssetCleanupQueuePublisher,
     private readonly aiSummaryService: AiSummaryService,
+    private readonly aiKnowledgeService: AiKnowledgeService,
   ) {}
 
   async create(
@@ -361,6 +363,7 @@ export class CoursesService {
       });
     }
 
+    await this.deleteCourseKnowledgeQuietly(id);
     await this.coursesRepository.delete(id);
   }
 
@@ -500,6 +503,14 @@ export class CoursesService {
           error instanceof Error ? error.stack : String(error),
         );
       }
+      try {
+        await this.aiKnowledgeService.enqueueCourse(course.id);
+      } catch (error) {
+        this.logger.error(
+          'Could not enqueue published course knowledge',
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
     }
 
     return this.toCourseResponse(savedCourse);
@@ -507,6 +518,17 @@ export class CoursesService {
 
   private getNotificationTriggerDate(date = new Date()): string {
     return date.toISOString().slice(0, 10);
+  }
+
+  private async deleteCourseKnowledgeQuietly(courseId: string): Promise<void> {
+    try {
+      await this.aiKnowledgeService.deleteCourseSources(courseId);
+    } catch (error) {
+      this.logger.error(
+        `Could not enqueue knowledge cleanup for course ${courseId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 
   assertCourseStatusTransition(from: CourseStatus, to: CourseStatus): void {
