@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { AiHttpClientService } from '../ai-client/ai-http-client.service';
 import { DEFAULT_AI_KNOWLEDGE_TIMEOUT_MS } from './ai-knowledge.constants';
 import {
   AiKnowledgeIndexRequest,
@@ -7,16 +7,18 @@ import {
 } from './dto/ai-knowledge.dto';
 
 @Injectable()
-export class AiKnowledgeGatewayService {
-  private readonly logger = new Logger(AiKnowledgeGatewayService.name);
+export class AiKnowledgeClient {
+  private readonly logger = new Logger(AiKnowledgeClient.name);
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly aiHttpClient: AiHttpClientService) {}
 
   index(request: AiKnowledgeIndexRequest): Promise<AiKnowledgeIndexResponse> {
     return this.send<AiKnowledgeIndexResponse>(
       '/knowledge/index',
-      'POST',
-      request,
+      () =>
+        this.aiHttpClient.post('/knowledge/index', request, {
+          timeoutMs: DEFAULT_AI_KNOWLEDGE_TIMEOUT_MS,
+        }),
       this.isIndexResponse,
     );
   }
@@ -24,8 +26,11 @@ export class AiKnowledgeGatewayService {
   async deleteSource(sourceId: string): Promise<void> {
     await this.send(
       `/knowledge/sources/${encodeURIComponent(sourceId)}`,
-      'DELETE',
-      undefined,
+      () =>
+        this.aiHttpClient.delete(
+          `/knowledge/sources/${encodeURIComponent(sourceId)}`,
+          { timeoutMs: DEFAULT_AI_KNOWLEDGE_TIMEOUT_MS },
+        ),
       this.isDeleteResponse,
     );
   }
@@ -33,46 +38,22 @@ export class AiKnowledgeGatewayService {
   async deleteCourse(courseId: string): Promise<void> {
     await this.send(
       `/knowledge/courses/${encodeURIComponent(courseId)}`,
-      'DELETE',
-      undefined,
+      () =>
+        this.aiHttpClient.delete(
+          `/knowledge/courses/${encodeURIComponent(courseId)}`,
+          { timeoutMs: DEFAULT_AI_KNOWLEDGE_TIMEOUT_MS },
+        ),
       this.isDeleteResponse,
     );
   }
 
   private async send<T>(
     path: string,
-    method: 'POST' | 'DELETE',
-    body: object | undefined,
+    execute: () => Promise<unknown>,
     isValid: (value: unknown) => value is T,
   ): Promise<T> {
-    const aiUrl = this.configService.get<string>('AI_URL')?.replace(/\/$/, '');
-    if (!aiUrl) throw new Error('AI service is not configured');
-
-    const timeoutMs = this.getPositiveNumber(
-      'AI_KNOWLEDGE_TIMEOUT_MS',
-      DEFAULT_AI_KNOWLEDGE_TIMEOUT_MS,
-    );
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
     try {
-      const token = this.configService.get<string>('AI_TOKEN');
-      const response = await fetch(`${aiUrl}${path}`, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        ...(body ? { body: JSON.stringify(body) } : {}),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        this.logger.warn(
-          `AI knowledge endpoint ${path} returned ${response.status}`,
-        );
-        throw new Error('AI service rejected the knowledge request');
-      }
-      const payload: unknown = await response.json();
+      const payload = await execute();
       if (!isValid(payload)) {
         throw new Error('AI service returned an invalid knowledge response');
       }
@@ -81,14 +62,7 @@ export class AiKnowledgeGatewayService {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(`AI knowledge endpoint ${path} unavailable: ${message}`);
       throw new Error('AI knowledge service is unavailable', { cause: error });
-    } finally {
-      clearTimeout(timeout);
     }
-  }
-
-  private getPositiveNumber(key: string, fallback: number): number {
-    const value = Number(this.configService.get<string | number>(key));
-    return Number.isFinite(value) && value > 0 ? value : fallback;
   }
 
   private isIndexResponse(

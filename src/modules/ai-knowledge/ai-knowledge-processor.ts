@@ -9,7 +9,7 @@ import {
   AI_KNOWLEDGE_CONCURRENCY,
   AI_KNOWLEDGE_QUEUE,
 } from './ai-knowledge.constants';
-import { AiKnowledgeGatewayService } from './ai-knowledge-gateway.service';
+import { AiKnowledgeClient } from './ai-knowledge.client';
 import { AiKnowledgeJobData } from './dto/ai-knowledge.dto';
 import {
   KnowledgeSourceStatus,
@@ -28,7 +28,7 @@ export class AiKnowledgeProcessor extends WorkerHost {
     private readonly lessonsRepository: Repository<Lesson>,
     @InjectRepository(LessonSummary)
     private readonly summariesRepository: Repository<LessonSummary>,
-    private readonly gateway: AiKnowledgeGatewayService,
+    private readonly gateway: AiKnowledgeClient,
   ) {
     super();
   }
