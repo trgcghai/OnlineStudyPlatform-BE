@@ -22,11 +22,23 @@ import { RiskService } from './risk.service';
 
 @Controller('risk')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.INSTRUCTOR)
 export class RiskController {
   constructor(private readonly riskService: RiskService) {}
 
+  @Get('model')
+  @Roles(UserRole.ADMIN)
+  getModel() {
+    return this.riskService.getModel();
+  }
+
+  @Post('model/train')
+  @Roles(UserRole.ADMIN)
+  trainModel() {
+    return this.riskService.trainModel();
+  }
+
   @Get('courses/:courseId/summary')
+  @Roles(UserRole.INSTRUCTOR)
   @Cached({
     namespace: RISK_CACHE_NAMESPACE,
     ttl: RISK_CACHE_TTL_SECONDS,
@@ -40,6 +52,7 @@ export class RiskController {
   }
 
   @Get('courses/:courseId/learners')
+  @Roles(UserRole.INSTRUCTOR)
   @Cached({
     namespace: RISK_CACHE_NAMESPACE,
     ttl: RISK_CACHE_TTL_SECONDS,
@@ -54,6 +67,7 @@ export class RiskController {
   }
 
   @Get('courses/:courseId/learners/:learnerId')
+  @Roles(UserRole.INSTRUCTOR)
   @Cached({
     namespace: RISK_CACHE_NAMESPACE,
     ttl: RISK_CACHE_TTL_SECONDS,
@@ -68,6 +82,7 @@ export class RiskController {
   }
 
   @Post('courses/:courseId/recompute')
+  @Roles(UserRole.INSTRUCTOR)
   @InvalidateCache([RISK_CACHE_NAMESPACE])
   recomputeCourse(
     @Param('courseId', ParseUUIDPipe) courseId: string,

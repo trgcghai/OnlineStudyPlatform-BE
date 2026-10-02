@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import { Course } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { RiskBand, RiskScoreResult } from './dto/risk.dto';
+import { RiskAiGatewayService } from './risk-ai-gateway.service';
 import { RiskFeatureService } from './risk-feature.service';
 import { RiskPersistenceService } from './risk-persistence.service';
 import { RiskScoringService } from './risk-scoring.service';
@@ -17,6 +18,11 @@ describe('RiskService', () => {
     extractForLearnerCourse: jest.Mock;
   };
   let scoringService: { score: jest.Mock };
+  let aiGateway: {
+    predict: jest.Mock;
+    getActiveModel: jest.Mock;
+    trainModel: jest.Mock;
+  };
   let persistenceService: {
     upsertScore: jest.Mock;
     findLatestByCourse: jest.Mock;
@@ -30,6 +36,11 @@ describe('RiskService', () => {
       extractForLearnerCourse: jest.fn(),
     };
     scoringService = { score: jest.fn() };
+    aiGateway = {
+      predict: jest.fn(),
+      getActiveModel: jest.fn(),
+      trainModel: jest.fn(),
+    };
     persistenceService = {
       upsertScore: jest.fn(),
       findLatestByCourse: jest.fn(),
@@ -42,6 +53,7 @@ describe('RiskService', () => {
         { provide: getRepositoryToken(Course), useValue: coursesRepository },
         { provide: RiskFeatureService, useValue: featureService },
         { provide: RiskScoringService, useValue: scoringService },
+        { provide: RiskAiGatewayService, useValue: aiGateway },
         { provide: RiskPersistenceService, useValue: persistenceService },
       ],
     }).compile();
@@ -58,6 +70,40 @@ describe('RiskService', () => {
     await expect(
       service.getSummary('course-1', 'instructor-1'),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('returns active model status from AI gateway', async () => {
+    const status = {
+      model: {
+        modelName: 'dropout-risk-xgboost',
+        modelVersion: 'dropout-xgb-v1',
+        featureVersion: 'dropout_features_v1',
+        trainedAt: '2026-10-01T00:00:00Z',
+        sampleCount: 125,
+        metrics: { mae: 7.8, rmse: 10.4 },
+        artifactPath: 'models/dropout-risk/dropout-xgb-v1/model.json',
+        isActive: true,
+      },
+    };
+    aiGateway.getActiveModel.mockResolvedValue(status);
+
+    await expect(service.getModel()).resolves.toBe(status);
+  });
+
+  it('trains model through AI gateway', async () => {
+    const result = {
+      modelName: 'dropout-risk-xgboost',
+      modelVersion: 'dropout-xgb-v1',
+      featureVersion: 'dropout_features_v1',
+      trainedAt: '2026-10-01T00:00:00Z',
+      sampleCount: 125,
+      metrics: { mae: 7.8, rmse: 10.4 },
+      artifactPath: 'models/dropout-risk/dropout-xgb-v1/model.json',
+      isActive: true,
+    };
+    aiGateway.trainModel.mockResolvedValue(result);
+
+    await expect(service.trainModel()).resolves.toBe(result);
   });
 
   it('recomputes active course enrollments idempotently by learner-course-day', async () => {
@@ -106,6 +152,122 @@ describe('RiskService', () => {
       'risk:course-1:learner-1:2026-09-30',
       expect.objectContaining({ learnerId: 'learner-1', source: 'heuristic' }),
     );
+  });
+
+  it('persists AI score when AI prediction succeeds', async () => {
+    featureService.extractForLearnerCourse.mockResolvedValue({
+      learnerId: 'learner-1',
+      courseId: 'course-1',
+      enrollmentId: 'enrollment-1',
+      features: {
+        lastActivityDays: 1,
+        activityCount7d: 5,
+        expectedProgressGap: 0,
+        courseProgressPercent: 50,
+        quizScoreAvgPercent: 80,
+        quizPassRate: 1,
+        watchRatioAvg: 0.8,
+        abandonedAttemptCount: 0,
+        lateQuizCount: 0,
+        completionVelocity: 1,
+        totalWatchedSeconds: 100,
+        pauseCount: 0,
+      },
+    });
+    aiGateway.predict.mockResolvedValue({
+      score: 82.4,
+      band: RiskBand.HIGH,
+      modelVersion: 'dropout-xgb-v1',
+      factors: [],
+    });
+    persistenceService.upsertScore.mockResolvedValue({});
+
+    await service.recomputeLearnerCourse(
+      'learner-1',
+      'course-1',
+      new Date('2026-09-30T10:00:00Z'),
+    );
+
+    expect(persistenceService.upsertScore).toHaveBeenCalledWith(
+      'risk:course-1:learner-1:2026-09-30',
+      expect.objectContaining({
+        score: 82.4,
+        band: RiskBand.HIGH,
+        source: 'ai',
+        scoringVersion: 'dropout-xgb-v1',
+      }),
+    );
+    expect(scoringService.score).not.toHaveBeenCalled();
+  });
+
+  it('falls back to heuristic when AI prediction is unavailable', async () => {
+    featureService.extractForLearnerCourse.mockResolvedValue({
+      learnerId: 'learner-1',
+      courseId: 'course-1',
+      enrollmentId: 'enrollment-1',
+      features: {},
+    });
+    aiGateway.predict.mockResolvedValue(null);
+    scoringService.score.mockReturnValue({
+      score: 10,
+      band: RiskBand.LOW,
+      factors: [],
+    });
+    persistenceService.upsertScore.mockResolvedValue({});
+
+    await service.recomputeLearnerCourse('learner-1', 'course-1');
+
+    expect(persistenceService.upsertScore).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        source: 'heuristic',
+        scoringVersion: 'heuristic-risk-v1',
+      }),
+    );
+  });
+
+  it('limits course recompute concurrency to five learners', async () => {
+    coursesRepository.findOne.mockResolvedValue({
+      id: 'course-1',
+      instructorId: 'instructor-1',
+    });
+    featureService.getActiveEnrollmentsForCourse.mockResolvedValue(
+      Array.from({ length: 8 }, (_, index) => ({
+        learnerId: `learner-${index + 1}`,
+        courseId: 'course-1',
+      })),
+    );
+    let active = 0;
+    let maxActive = 0;
+    let releaseFirstBatch!: () => void;
+    const firstBatch = new Promise<void>((resolve) => {
+      releaseFirstBatch = resolve;
+    });
+    const recomputeLearnerCourseSpy = jest
+      .spyOn(service, 'recomputeLearnerCourse')
+      .mockImplementation(async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        if (active <= 5) await firstBatch;
+        active -= 1;
+      });
+
+    const recomputePromise = service.recomputeCourse(
+      'course-1',
+      'instructor-1',
+      new Date('2026-09-30T10:00:00Z'),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(recomputeLearnerCourseSpy).toHaveBeenCalledTimes(5);
+    expect(maxActive).toBe(5);
+    releaseFirstBatch();
+
+    await expect(recomputePromise).resolves.toEqual({
+      processed: 8,
+      succeeded: 8,
+      failed: 0,
+    });
   });
 
   it('summarizes latest scores by band', async () => {

@@ -8,6 +8,7 @@ import { LessonProgress } from '../learning/entities/lesson-progress.entity';
 import { LessonWatchEvent } from '../learning/entities/lesson-watch-event.entity';
 import { QuizAttempt } from '../quizzes/entities/quiz-attempt.entity';
 import { RiskController } from './risk.controller';
+import { RiskAiGatewayService } from './risk-ai-gateway.service';
 import { RiskFeatureService } from './risk-feature.service';
 import { RiskPersistenceService } from './risk-persistence.service';
 import { RiskSchedulerService } from './risk-scheduler.service';
@@ -36,6 +37,7 @@ import { RiskScore, RiskScoreSchema } from './schemas/risk-score.schema';
     RiskPersistenceService,
     RiskService,
     RiskSchedulerService,
+    RiskAiGatewayService,
   ],
 })
 export class RiskModule {}

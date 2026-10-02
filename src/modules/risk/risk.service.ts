@@ -10,10 +10,13 @@ import { Course } from '../courses/entities/course.entity';
 import {
   RISK_FEATURE_VERSION,
   RISK_HIGH_THRESHOLD,
+  RISK_RECOMPUTE_CONCURRENCY,
   RISK_SCORING_VERSION,
+  RISK_SOURCE_AI,
   RISK_SOURCE_HEURISTIC,
 } from './constants/risk.constants';
 import {
+  LearnerRiskInput,
   RiskBand,
   RiskLearnerDetailResponse,
   RiskLearnerListResponse,
@@ -22,6 +25,11 @@ import {
   RiskScoreResponse,
   RiskSummaryResponse,
 } from './dto/risk.dto';
+import {
+  RiskAiGatewayService,
+  RiskModelStatusResponse,
+  RiskModelTrainingResult,
+} from './risk-ai-gateway.service';
 import { RiskFeatureService } from './risk-feature.service';
 import { RiskPersistenceService } from './risk-persistence.service';
 import { RiskScoringService } from './risk-scoring.service';
@@ -36,7 +44,16 @@ export class RiskService {
     private readonly featureService: RiskFeatureService,
     private readonly scoringService: RiskScoringService,
     private readonly persistenceService: RiskPersistenceService,
+    private readonly aiGateway: RiskAiGatewayService,
   ) {}
+
+  getModel(): Promise<RiskModelStatusResponse> {
+    return this.aiGateway.getActiveModel();
+  }
+
+  trainModel(): Promise<RiskModelTrainingResult> {
+    return this.aiGateway.trainModel();
+  }
 
   async getSummary(
     courseId: string,
@@ -115,18 +132,27 @@ export class RiskService {
     let succeeded = 0;
     let failed = 0;
 
-    for (const enrollment of enrollments) {
-      try {
-        await this.recomputeLearnerCourse(enrollment.learnerId, courseId, now);
-        succeeded += 1;
-      } catch (error) {
-        failed += 1;
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.warn(
-          `Risk recompute failed for ${courseId}/${enrollment.learnerId}: ${message}`,
-        );
-      }
-    }
+    await this.processWithConcurrency(
+      enrollments,
+      RISK_RECOMPUTE_CONCURRENCY,
+      async (enrollment) => {
+        try {
+          await this.recomputeLearnerCourse(
+            enrollment.learnerId,
+            courseId,
+            now,
+          );
+          succeeded += 1;
+        } catch (error) {
+          failed += 1;
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.logger.warn(
+            `Risk recompute failed for ${courseId}/${enrollment.learnerId}: ${message}`,
+          );
+        }
+      },
+    );
 
     return { processed: enrollments.length, succeeded, failed };
   }
@@ -141,7 +167,8 @@ export class RiskService {
       courseId,
       now,
     );
-    const result = this.scoringService.score(input.features);
+    const jobKey = this.buildJobKey(courseId, learnerId, now);
+    const result = await this.scoreLearnerCourse(input, jobKey);
     const score: RiskScoreResponse = {
       learnerId: input.learnerId,
       courseId: input.courseId,
@@ -150,16 +177,70 @@ export class RiskService {
       score: result.score,
       band: result.band,
       featureVersion: RISK_FEATURE_VERSION,
-      scoringVersion: RISK_SCORING_VERSION,
-      source: RISK_SOURCE_HEURISTIC,
+      scoringVersion: result.scoringVersion,
+      source: result.source,
       features: input.features,
       factors: result.factors,
     };
 
-    return this.persistenceService.upsertScore(
-      this.buildJobKey(courseId, learnerId, now),
-      score,
+    return this.persistenceService.upsertScore(jobKey, score);
+  }
+
+  private async scoreLearnerCourse(
+    input: LearnerRiskInput,
+    jobKey: string,
+  ): Promise<{
+    score: number;
+    band: RiskBand;
+    scoringVersion: string;
+    source: 'heuristic' | 'ai';
+    factors: RiskScoreResponse['factors'];
+  }> {
+    const aiPrediction = await this.aiGateway.predict({
+      learnerId: input.learnerId,
+      courseId: input.courseId,
+      snapshotId: jobKey,
+      features: input.features,
+    });
+
+    if (aiPrediction) {
+      return {
+        score: aiPrediction.score,
+        band: aiPrediction.band,
+        scoringVersion: aiPrediction.modelVersion,
+        source: RISK_SOURCE_AI,
+        factors: aiPrediction.factors,
+      };
+    }
+
+    const heuristic = this.scoringService.score(input.features);
+    return {
+      score: heuristic.score,
+      band: heuristic.band,
+      scoringVersion: RISK_SCORING_VERSION,
+      source: RISK_SOURCE_HEURISTIC,
+      factors: heuristic.factors,
+    };
+  }
+
+  private async processWithConcurrency<T>(
+    items: T[],
+    concurrency: number,
+    worker: (item: T) => Promise<void>,
+  ): Promise<void> {
+    let nextIndex = 0;
+    const workers = Array.from(
+      { length: Math.min(concurrency, items.length) },
+      async () => {
+        while (nextIndex < items.length) {
+          const currentIndex = nextIndex;
+          nextIndex += 1;
+          await worker(items[currentIndex]);
+        }
+      },
     );
+
+    await Promise.all(workers);
   }
 
   private buildJobKey(courseId: string, learnerId: string, date: Date): string {
