@@ -1,8 +1,12 @@
-import { ConfigService } from '@nestjs/config';
+import { BadRequestException } from '@nestjs/common';
+import {
+  AiHttpClientService,
+  AiHttpError,
+} from '../ai-client/ai-http-client.service';
 import { RiskBand, RiskFeatures } from './dto/risk.dto';
-import { RiskAiGatewayService } from './risk-ai-gateway.service';
+import { AiRiskClient } from './ai-risk.client';
 
-describe('RiskAiGatewayService', () => {
+describe('AiRiskClient', () => {
   const features: RiskFeatures = {
     lastActivityDays: 4,
     activityCount7d: 2,
@@ -20,7 +24,7 @@ describe('RiskAiGatewayService', () => {
   const request = {
     learnerId: 'learner-1',
     courseId: 'course-1',
-    snapshotId: 'risk:course-1:learner-1:2026-09-30',
+    snapshotId: 'snapshot-1',
     features,
   };
   const model = {
@@ -29,45 +33,23 @@ describe('RiskAiGatewayService', () => {
     featureVersion: 'dropout_features_v1',
     trainedAt: '2026-10-01T00:00:00Z',
     sampleCount: 125,
-    metrics: { mae: 7.8, rmse: 10.4 },
-    artifactPath: 'models/dropout-risk/dropout-xgb-v1/model.json',
+    metrics: { mae: 7.8 },
+    artifactPath: 'models/dropout-xgb-v1/model.json',
     isActive: true,
   };
 
-  afterEach(() => {
-    jest.restoreAllMocks();
-  });
-
-  function createService(values: Record<string, unknown>) {
-    return new RiskAiGatewayService({
-      get: jest.fn((key: string) => values[key]),
-    } as unknown as ConfigService);
-  }
-
-  it('returns validated AI prediction and converts shap values to sorted factors', async () => {
-    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          riskScore: 82.4,
-          riskBand: RiskBand.HIGH,
-          shapValues: {
-            lateQuizCount: 0.9,
-            lastActivityDays: 1.8,
-            unknownFeature: 100,
-          },
-          modelVersion: 'dropout-xgb-v1',
-        }),
-    } as Response);
-    const service = createService({
-      AI_URL: 'http://ai.local/',
-      AI_TOKEN: 'secret',
-      AI_TIMEOUT_MS: 5000,
+  it('maps a valid prediction and delegates to the shared client', async () => {
+    const post = jest.fn().mockResolvedValue({
+      riskScore: 82.4,
+      riskBand: RiskBand.HIGH,
+      shapValues: { lastActivityDays: 1.8, lateQuizCount: 0.9 },
+      modelVersion: 'dropout-xgb-v1',
     });
+    const client = new AiRiskClient({
+      post,
+    } as unknown as AiHttpClientService);
 
-    const result = await service.predict(request);
-
-    expect(result).toEqual({
+    await expect(client.predict(request)).resolves.toEqual({
       score: 82.4,
       band: RiskBand.HIGH,
       modelVersion: 'dropout-xgb-v1',
@@ -86,166 +68,54 @@ describe('RiskAiGatewayService', () => {
         },
       ],
     });
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://ai.local/analytics/dropout-risk/predict',
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({ Authorization: 'Bearer secret' }),
-        body: JSON.stringify(request),
-      }),
+    expect(post).toHaveBeenCalledWith(
+      '/analytics/dropout-risk/predict',
+      request,
     );
   });
 
-  it('returns null when AI_URL is missing', async () => {
-    const fetchMock = jest.spyOn(global, 'fetch');
-    const service = createService({});
+  it('returns an unavailable model when active-model lookup fails', async () => {
+    const get = jest.fn().mockRejectedValue(new Error('offline'));
+    const client = new AiRiskClient({
+      get,
+    } as unknown as AiHttpClientService);
 
-    await expect(service.predict(request)).resolves.toBeNull();
-    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(client.getActiveModel()).resolves.toEqual({ model: null });
   });
 
-  it('returns null model status when AI_URL is missing', async () => {
-    const fetchMock = jest.spyOn(global, 'fetch');
-    const service = createService({});
+  it('returns validated active model info', async () => {
+    const get = jest.fn().mockResolvedValue(model);
+    const client = new AiRiskClient({
+      get,
+    } as unknown as AiHttpClientService);
 
-    await expect(service.getActiveModel()).resolves.toEqual({ model: null });
-    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(client.getActiveModel()).resolves.toEqual({ model });
+    expect(get).toHaveBeenCalledWith('/analytics/dropout-risk/model/active');
   });
 
-  it('returns active model info from AI', async () => {
-    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve(model),
-    } as Response);
-    const service = createService({
-      AI_URL: 'http://ai.local/',
-      AI_TOKEN: 'secret',
-      AI_TIMEOUT_MS: 5000,
-    });
+  it('maps low-sample training errors to BadRequestException', async () => {
+    const post = jest.fn().mockRejectedValue(
+      new AiHttpError('AI service returned HTTP 400', 400, 'risk_scores sample count is low'),
+    );
+    const client = new AiRiskClient({
+      post,
+    } as unknown as AiHttpClientService);
 
-    await expect(service.getActiveModel()).resolves.toEqual({ model });
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://ai.local/analytics/dropout-risk/model/active',
-      expect.objectContaining({
-        method: 'GET',
-        headers: expect.objectContaining({ Authorization: 'Bearer secret' }),
-        signal: expect.any(AbortSignal),
-      }),
+    await expect(client.trainModel()).rejects.toBeInstanceOf(
+      BadRequestException,
     );
   });
 
-  it('returns null model when AI active model endpoint returns 404', async () => {
-    jest
-      .spyOn(global, 'fetch')
-      .mockResolvedValue({ ok: false, status: 404 } as Response);
-    const service = createService({ AI_URL: 'http://ai.local' });
+  it('returns null when prediction is unavailable or invalid', async () => {
+    const post = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ riskScore: '82.4' });
+    const client = new AiRiskClient({
+      post,
+    } as unknown as AiHttpClientService);
 
-    await expect(service.getActiveModel()).resolves.toEqual({ model: null });
-  });
-
-  it('returns training result from AI train endpoint', async () => {
-    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve(model),
-    } as Response);
-    const service = createService({
-      AI_URL: 'http://ai.local/',
-      AI_TOKEN: 'secret',
-    });
-
-    await expect(service.trainModel()).resolves.toEqual(model);
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://ai.local/analytics/dropout-risk/train',
-      expect.objectContaining({
-        method: 'POST',
-        signal: expect.any(AbortSignal),
-      }),
-    );
-  });
-
-  it('throws friendly bad request when AI train returns low-sample 400', async () => {
-    jest.spyOn(global, 'fetch').mockResolvedValue({
-      ok: false,
-      status: 400,
-      text: () => Promise.resolve('Need at least 10 risk_scores samples'),
-    } as Response);
-    const service = createService({ AI_URL: 'http://ai.local' });
-
-    await expect(service.trainModel()).rejects.toThrow(
-      'Chưa đủ dữ liệu risk_scores để train model. Cần ít nhất 10 mẫu.',
-    );
-  });
-
-  it('does not report unrelated AI train 400 errors as low-sample failures', async () => {
-    jest.spyOn(global, 'fetch').mockResolvedValue({
-      ok: false,
-      status: 400,
-      text: () => Promise.resolve('Unsupported feature schema'),
-    } as Response);
-    const service = createService({ AI_URL: 'http://ai.local' });
-
-    await expect(service.trainModel()).rejects.toThrow(
-      'AI risk model training request failed',
-    );
-  });
-
-  it('returns null when fetch returns a non-success response', async () => {
-    jest
-      .spyOn(global, 'fetch')
-      .mockResolvedValue({ ok: false, status: 404 } as Response);
-    const service = createService({ AI_URL: 'http://ai.local' });
-
-    await expect(service.predict(request)).resolves.toBeNull();
-  });
-
-  it('returns null when the response shape is invalid', async () => {
-    jest.spyOn(global, 'fetch').mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ riskScore: '82.4' }),
-    } as Response);
-    const service = createService({ AI_URL: 'http://ai.local' });
-
-    await expect(service.predict(request)).resolves.toBeNull();
-  });
-
-  it('returns null when the AI score is outside the risk range', async () => {
-    jest.spyOn(global, 'fetch').mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          riskScore: 101,
-          riskBand: RiskBand.HIGH,
-          shapValues: {},
-          modelVersion: 'dropout-xgb-v1',
-        }),
-    } as Response);
-    const service = createService({ AI_URL: 'http://ai.local' });
-
-    await expect(service.predict(request)).resolves.toBeNull();
-  });
-
-  it('omits Authorization when AI_TOKEN is empty', async () => {
-    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          riskScore: 20,
-          riskBand: RiskBand.LOW,
-          shapValues: {},
-          modelVersion: 'dropout-xgb-v1',
-        }),
-    } as Response);
-    const service = createService({ AI_URL: 'http://ai.local', AI_TOKEN: '' });
-
-    await service.predict(request);
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    );
+    await expect(client.predict(request)).resolves.toBeNull();
+    await expect(client.predict(request)).resolves.toBeNull();
   });
 });

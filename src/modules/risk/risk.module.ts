@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AiClientModule } from '../ai-client/ai-client.module';
 import { Course } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { LearningAnalyticsEvent } from '../learning/entities/learning-analytics-event.entity';
@@ -8,7 +9,7 @@ import { LessonProgress } from '../learning/entities/lesson-progress.entity';
 import { LessonWatchEvent } from '../learning/entities/lesson-watch-event.entity';
 import { QuizAttempt } from '../quizzes/entities/quiz-attempt.entity';
 import { RiskController } from './risk.controller';
-import { RiskAiGatewayService } from './risk-ai-gateway.service';
+import { AiRiskClient } from './ai-risk.client';
 import { RiskFeatureService } from './risk-feature.service';
 import { RiskPersistenceService } from './risk-persistence.service';
 import { RiskSchedulerService } from './risk-scheduler.service';
@@ -29,6 +30,7 @@ import { RiskScore, RiskScoreSchema } from './schemas/risk-score.schema';
     MongooseModule.forFeature([
       { name: RiskScore.name, schema: RiskScoreSchema },
     ]),
+    AiClientModule,
   ],
   controllers: [RiskController],
   providers: [
@@ -37,7 +39,7 @@ import { RiskScore, RiskScoreSchema } from './schemas/risk-score.schema';
     RiskPersistenceService,
     RiskService,
     RiskSchedulerService,
-    RiskAiGatewayService,
+    AiRiskClient,
   ],
 })
 export class RiskModule {}

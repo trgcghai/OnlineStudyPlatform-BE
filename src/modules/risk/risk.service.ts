@@ -26,10 +26,10 @@ import {
   RiskSummaryResponse,
 } from './dto/risk.dto';
 import {
-  RiskAiGatewayService,
+  AiRiskClient,
   RiskModelStatusResponse,
   RiskModelTrainingResult,
-} from './risk-ai-gateway.service';
+} from './ai-risk.client';
 import { RiskFeatureService } from './risk-feature.service';
 import { RiskPersistenceService } from './risk-persistence.service';
 import { RiskScoringService } from './risk-scoring.service';
@@ -44,7 +44,7 @@ export class RiskService {
     private readonly featureService: RiskFeatureService,
     private readonly scoringService: RiskScoringService,
     private readonly persistenceService: RiskPersistenceService,
-    private readonly aiGateway: RiskAiGatewayService,
+    private readonly aiGateway: AiRiskClient,
   ) {}
 
   getModel(): Promise<RiskModelStatusResponse> {

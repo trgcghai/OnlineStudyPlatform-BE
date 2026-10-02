@@ -3,8 +3,8 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { Test } from '@nestjs/testing';
 import { Course } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
-import { RiskBand, RiskScoreResult } from './dto/risk.dto';
-import { RiskAiGatewayService } from './risk-ai-gateway.service';
+import { RiskBand, RiskScoreResponse, RiskScoreResult } from './dto/risk.dto';
+import { AiRiskClient } from './ai-risk.client';
 import { RiskFeatureService } from './risk-feature.service';
 import { RiskPersistenceService } from './risk-persistence.service';
 import { RiskScoringService } from './risk-scoring.service';
@@ -53,7 +53,7 @@ describe('RiskService', () => {
         { provide: getRepositoryToken(Course), useValue: coursesRepository },
         { provide: RiskFeatureService, useValue: featureService },
         { provide: RiskScoringService, useValue: scoringService },
-        { provide: RiskAiGatewayService, useValue: aiGateway },
+        { provide: AiRiskClient, useValue: aiGateway },
         { provide: RiskPersistenceService, useValue: persistenceService },
       ],
     }).compile();
@@ -250,6 +250,7 @@ describe('RiskService', () => {
         maxActive = Math.max(maxActive, active);
         if (active <= 5) await firstBatch;
         active -= 1;
+        return {} as RiskScoreResponse;
       });
 
     const recomputePromise = service.recomputeCourse(

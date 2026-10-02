@@ -4,7 +4,10 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import {
+  AiHttpClientService,
+  AiHttpError,
+} from '../ai-client/ai-http-client.service';
 import { RiskBand, RiskFactor, RiskFeatures } from './dto/risk.dto';
 
 export interface RiskAiPrediction {
@@ -61,29 +64,16 @@ const FEATURE_LABELS: Record<keyof RiskFeatures, string> = {
 };
 
 @Injectable()
-export class RiskAiGatewayService {
-  private readonly logger = new Logger(RiskAiGatewayService.name);
+export class AiRiskClient {
+  private readonly logger = new Logger(AiRiskClient.name);
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly aiHttpClient: AiHttpClientService) {}
 
   async getActiveModel(): Promise<RiskModelStatusResponse> {
-    const aiUrl = this.configService.get<string>('AI_URL')?.replace(/\/$/, '');
-
-    if (!aiUrl) {
-      return { model: null };
-    }
-
     try {
-      const response = await this.fetchAi(
-        `${aiUrl}/analytics/dropout-risk/model/active`,
-        {
-          method: 'GET',
-        },
+      const payload = await this.aiHttpClient.get<unknown>(
+        '/analytics/dropout-risk/model/active',
       );
-
-      if (!response.ok) return { model: null };
-
-      const payload: unknown = await response.json();
       if (!this.isRiskModelInfo(payload)) return { model: null };
 
       return { model: payload };
@@ -95,46 +85,25 @@ export class RiskAiGatewayService {
   }
 
   async trainModel(): Promise<RiskModelTrainingResult> {
-    const aiUrl = this.configService.get<string>('AI_URL')?.replace(/\/$/, '');
-
-    if (!aiUrl) {
-      throw new ServiceUnavailableException(
-        'AI risk model service is not configured',
-      );
-    }
-
     try {
-      const response = await this.fetchAi(
-        `${aiUrl}/analytics/dropout-risk/train`,
-        {
-          method: 'POST',
-        },
+      const payload = await this.aiHttpClient.post<unknown>(
+        '/analytics/dropout-risk/train',
       );
-
-      if (response.status === 400) {
-        const errorText = await this.readResponseText(response);
-        if (this.isLowSampleTrainingError(errorText)) {
-          throw new BadRequestException(
-            'Chưa đủ dữ liệu risk_scores để train model. Cần ít nhất 10 mẫu.',
-          );
-        }
-
-        throw new BadRequestException('AI risk model training request failed');
-      }
-
-      if (!response.ok) {
-        throw new ServiceUnavailableException('AI risk model training failed');
-      }
-
-      const payload: unknown = await response.json();
       if (!this.isRiskModelInfo(payload)) {
         throw new ServiceUnavailableException(
           'AI risk model returned invalid training result',
         );
       }
-
       return payload;
     } catch (error) {
+      if (error instanceof AiHttpError && error.status === 400) {
+        if (this.isLowSampleTrainingError(error.responseText ?? '')) {
+          throw new BadRequestException(
+            'Chưa đủ dữ liệu risk_scores để train model. Cần ít nhất 10 mẫu.',
+          );
+        }
+        throw new BadRequestException('AI risk model training request failed');
+      }
       if (
         error instanceof BadRequestException ||
         error instanceof ServiceUnavailableException
@@ -150,30 +119,11 @@ export class RiskAiGatewayService {
   }
 
   async predict(request: AiPredictRequest): Promise<RiskAiPrediction | null> {
-    const aiUrl = this.configService.get<string>('AI_URL')?.replace(/\/$/, '');
-
-    if (!aiUrl) return null;
-
-    const timeoutMs = this.configService.get<number>('AI_TIMEOUT_MS') ?? 4500;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
     try {
-      const response = await this.fetchAi(
-        `${aiUrl}/analytics/dropout-risk/predict`,
-        {
-          method: 'POST',
-          body: JSON.stringify(request),
-          signal: controller.signal,
-        },
+      const payload = await this.aiHttpClient.post<unknown>(
+        '/analytics/dropout-risk/predict',
+        request,
       );
-
-      if (!response.ok) {
-        this.logger.warn(`AI risk returned HTTP ${response.status}`);
-        return null;
-      }
-
-      const payload: unknown = await response.json();
       if (!this.isAiPredictResponse(payload)) return null;
 
       return {
@@ -188,8 +138,6 @@ export class RiskAiGatewayService {
         `AI risk unavailable for ${request.courseId}/${request.learnerId}: ${message}`,
       );
       return null;
-    } finally {
-      clearTimeout(timeout);
     }
   }
 
@@ -208,37 +156,6 @@ export class RiskAiGatewayService {
       typeof response.shapValues === 'object' &&
       !Array.isArray(response.shapValues)
     );
-  }
-
-  private async fetchAi(url: string, init: RequestInit): Promise<Response> {
-    const token = this.configService.get<string>('AI_TOKEN');
-    const timeoutMs = this.configService.get<number>('AI_TIMEOUT_MS') ?? 4500;
-    const controller = init.signal ? null : new AbortController();
-    const timeout = controller
-      ? setTimeout(() => controller.abort(), timeoutMs)
-      : null;
-
-    try {
-      return await fetch(url, {
-        ...init,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...init.headers,
-        },
-        signal: init.signal ?? controller?.signal,
-      });
-    } finally {
-      if (timeout) clearTimeout(timeout);
-    }
-  }
-
-  private async readResponseText(response: Response): Promise<string> {
-    try {
-      return await response.text();
-    } catch {
-      return '';
-    }
   }
 
   private isLowSampleTrainingError(errorText: string): boolean {
