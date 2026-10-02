@@ -1,6 +1,5 @@
 import { Logger } from '@nestjs/common';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Job } from 'bullmq';
 import { Repository } from 'typeorm';
@@ -9,14 +8,9 @@ import { AiKnowledgeService } from '../ai-knowledge/ai-knowledge.service';
 import {
   AI_SUMMARY_CONCURRENCY,
   AI_SUMMARY_QUEUE,
-  DEFAULT_AI_SUMMARIZE_TIMEOUT_MS,
-  DEFAULT_AI_TRANSCRIBE_TIMEOUT_MS,
 } from './ai-summary.constants';
 import {
-  AiSummarizeRequest,
-  AiSummarizeResponse,
   AiSummaryJobData,
-  AiTranscribeRequest,
   AiTranscribeResponse,
 } from './dto/ai-summary.dto';
 import {
@@ -24,6 +18,7 @@ import {
   LessonSummaryStatus,
 } from './entities/lesson-summary.entity';
 import { LessonAudioService } from './lesson-audio.service';
+import { AiSummaryClient } from './ai-summary.client';
 
 @Processor(AI_SUMMARY_QUEUE, {
   concurrency: AI_SUMMARY_CONCURRENCY,
@@ -36,9 +31,9 @@ export class AiSummaryProcessor extends WorkerHost {
     private readonly lessonsRepository: Repository<Lesson>,
     @InjectRepository(LessonSummary)
     private readonly summariesRepository: Repository<LessonSummary>,
-    private readonly configService: ConfigService,
     private readonly lessonAudioService: LessonAudioService,
     private readonly aiKnowledgeService: AiKnowledgeService,
+    private readonly aiSummaryClient: AiSummaryClient,
   ) {
     super();
   }
@@ -70,7 +65,7 @@ export class AiSummaryProcessor extends WorkerHost {
         job.data.videoUrl,
       );
       if (!audioUrl) return;
-      const transcription = await this.transcribe({
+      const transcription = await this.aiSummaryClient.transcribe({
         lessonId: lesson.id,
         audioUrl,
       });
@@ -81,7 +76,7 @@ export class AiSummaryProcessor extends WorkerHost {
       );
       if (!transcriptWasSaved) return;
       await this.enqueueTranscriptQuietly(lesson.id);
-      const generatedSummary = await this.summarize({
+      const generatedSummary = await this.aiSummaryClient.summarize({
         lessonId: lesson.id,
         title: lesson.title,
         transcript: transcription.transcript,
@@ -209,108 +204,4 @@ export class AiSummaryProcessor extends WorkerHost {
     return message.replace(/https?:\/\/\S+/gi, '[redacted-url]').slice(0, 500);
   }
 
-  private transcribe(
-    request: AiTranscribeRequest,
-  ): Promise<AiTranscribeResponse> {
-    return this.post<AiTranscribeResponse>(
-      '/transcribe',
-      request,
-      this.getTimeout(
-        'AI_TRANSCRIBE_TIMEOUT_MS',
-        DEFAULT_AI_TRANSCRIBE_TIMEOUT_MS,
-      ),
-      this.isTranscribeResponse,
-    );
-  }
-
-  private summarize(request: AiSummarizeRequest): Promise<AiSummarizeResponse> {
-    return this.post<AiSummarizeResponse>(
-      '/summarize',
-      request,
-      this.getTimeout(
-        'AI_SUMMARIZE_TIMEOUT_MS',
-        DEFAULT_AI_SUMMARIZE_TIMEOUT_MS,
-      ),
-      this.isSummarizeResponse,
-    );
-  }
-
-  private async post<T>(
-    path: string,
-    body: object,
-    timeoutMs: number,
-    isValid: (value: unknown) => value is T,
-  ): Promise<T> {
-    const aiUrl = this.configService.get<string>('AI_URL')?.replace(/\/$/, '');
-    if (!aiUrl) {
-      throw new Error('AI service is not configured');
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      const token = this.configService.get<string>('AI_TOKEN');
-      const response = await fetch(`${aiUrl}${path}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        this.logger.warn(
-          `AI summary endpoint ${path} returned ${response.status}`,
-        );
-        throw new Error('AI service rejected the summary request');
-      }
-
-      const payload: unknown = await response.json();
-      if (!isValid(payload)) {
-        throw new Error('AI service returned an invalid summary response');
-      }
-      return payload;
-    } catch (error) {
-      const message = this.toSafeErrorMessage(error);
-      this.logger.warn(`AI summary endpoint ${path} unavailable: ${message}`);
-      throw new Error('AI summary service is unavailable', { cause: error });
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  private getTimeout(key: string, fallback: number): number {
-    const parsed = Number(this.configService.get<string | number>(key));
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-  }
-
-  private isTranscribeResponse(
-    this: void,
-    value: unknown,
-  ): value is AiTranscribeResponse {
-    if (!value || typeof value !== 'object') return false;
-    const response = value as Partial<AiTranscribeResponse>;
-    return (
-      typeof response.transcript === 'string' &&
-      response.transcript.trim().length > 0 &&
-      typeof response.language === 'string' &&
-      typeof response.durationSeconds === 'number'
-    );
-  }
-
-  private isSummarizeResponse(
-    this: void,
-    value: unknown,
-  ): value is AiSummarizeResponse {
-    if (!value || typeof value !== 'object') return false;
-    const response = value as Partial<AiSummarizeResponse>;
-    return (
-      typeof response.summary === 'string' &&
-      response.summary.trim().length > 0 &&
-      response.provider === 'gemini'
-    );
-  }
 }
