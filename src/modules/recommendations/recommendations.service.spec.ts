@@ -8,7 +8,7 @@ import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { LearningAnalyticsEvent } from '../learning/entities/learning-analytics-event.entity';
 import { LessonProgress } from '../learning/entities/lesson-progress.entity';
 import { QuizAttempt } from '../quizzes/entities/quiz-attempt.entity';
-import { RecommendationsAiGateway } from './recommendations-ai.gateway';
+import { AiRecommendationsClient } from './ai-recommendations.client';
 import { RecommendationsService } from './recommendations.service';
 
 type MockRepository<T> = Partial<Record<keyof Repository<T>, jest.Mock>>;
@@ -98,7 +98,7 @@ describe('RecommendationsService', () => {
       analyticsRepository as Repository<LearningAnalyticsEvent>,
       lessonProgressRepository as Repository<LessonProgress>,
       quizAttemptsRepository as Repository<QuizAttempt>,
-      aiGateway as unknown as RecommendationsAiGateway,
+      aiGateway as unknown as AiRecommendationsClient,
     );
   });
 

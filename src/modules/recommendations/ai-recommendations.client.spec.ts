@@ -1,6 +1,6 @@
-import { ConfigService } from '@nestjs/config';
+import { AiHttpClientService } from '../ai-client/ai-http-client.service';
 import { RecommendationAiRequest } from './dto/recommendation.dto';
-import { RecommendationsAiGateway } from './recommendations-ai.gateway';
+import { AiRecommendationsClient } from './ai-recommendations.client';
 
 const request: RecommendationAiRequest = {
   learnerId: 'learner-1',
@@ -22,85 +22,29 @@ const request: RecommendationAiRequest = {
   ],
 };
 
-describe('RecommendationsAiGateway', () => {
-  const originalFetch = global.fetch;
+describe('AiRecommendationsClient', () => {
+  it('delegates valid recommendation requests to the shared client', async () => {
+    const post = jest.fn().mockResolvedValue({ courseIds: ['course-2'] });
+    const client = new AiRecommendationsClient({
+      post,
+    } as unknown as AiHttpClientService);
 
-  afterEach(() => {
-    global.fetch = originalFetch;
-    jest.restoreAllMocks();
-  });
-
-  it('returns null when AI_URL is not configured', async () => {
-    const config = { get: jest.fn().mockReturnValue(undefined) };
-    const gateway = new RecommendationsAiGateway(
-      config as unknown as ConfigService,
-    );
-
-    await expect(gateway.recommend(request)).resolves.toBeNull();
-    expect(config.get).toHaveBeenCalledWith('AI_URL');
-  });
-
-  it('posts to /recommend and returns ordered course ids', async () => {
-    const config = {
-      get: jest.fn((key: string) => {
-        if (key === 'AI_URL') return 'http://ai.local/';
-        if (key === 'AI_TOKEN') return 'secret';
-        if (key === 'AI_TIMEOUT_MS') return 2500;
-        return undefined;
-      }),
-    };
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: jest.fn().mockResolvedValue({ courseIds: ['course-2'] }),
-    });
-    const gateway = new RecommendationsAiGateway(
-      config as unknown as ConfigService,
-    );
-
-    await expect(gateway.recommend(request)).resolves.toEqual({
+    await expect(client.recommend(request)).resolves.toEqual({
       courseIds: ['course-2'],
     });
-    expect(global.fetch).toHaveBeenCalledWith(
-      'http://ai.local/recommend',
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer secret',
-        }),
-        body: JSON.stringify(request),
-      }),
-    );
+    expect(post).toHaveBeenCalledWith('/recommend', request);
   });
 
-  it('returns null when AI responds with invalid body', async () => {
-    const config = {
-      get: jest.fn((key: string) =>
-        key === 'AI_URL' ? 'http://ai.local' : undefined,
-      ),
-    };
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: jest.fn().mockResolvedValue({ ids: ['course-2'] }),
-    });
-    const gateway = new RecommendationsAiGateway(
-      config as unknown as ConfigService,
-    );
+  it('returns null for invalid responses and transport failures', async () => {
+    const post = jest
+      .fn()
+      .mockResolvedValueOnce({ ids: ['course-2'] })
+      .mockRejectedValueOnce(new Error('offline'));
+    const client = new AiRecommendationsClient({
+      post,
+    } as unknown as AiHttpClientService);
 
-    await expect(gateway.recommend(request)).resolves.toBeNull();
-  });
-
-  it('returns null when AI request fails', async () => {
-    const config = {
-      get: jest.fn((key: string) =>
-        key === 'AI_URL' ? 'http://ai.local' : undefined,
-      ),
-    };
-    global.fetch = jest.fn().mockRejectedValue(new Error('offline'));
-    const gateway = new RecommendationsAiGateway(
-      config as unknown as ConfigService,
-    );
-
-    await expect(gateway.recommend(request)).resolves.toBeNull();
+    await expect(client.recommend(request)).resolves.toBeNull();
+    await expect(client.recommend(request)).resolves.toBeNull();
   });
 });

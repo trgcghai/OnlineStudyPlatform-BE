@@ -12,7 +12,7 @@ import {
   RecommendationCandidate,
   RecommendationLearnerSignals,
 } from './dto/recommendation.dto';
-import { RecommendationsAiGateway } from './recommendations-ai.gateway';
+import { AiRecommendationsClient } from './ai-recommendations.client';
 
 const AI_RECOMMENDATION_CANDIDATE_LIMIT = 20;
 
@@ -31,7 +31,7 @@ export class RecommendationsService {
     private readonly lessonProgressRepository: Repository<LessonProgress>,
     @InjectRepository(QuizAttempt)
     private readonly quizAttemptsRepository: Repository<QuizAttempt>,
-    private readonly aiGateway: RecommendationsAiGateway,
+    private readonly aiGateway: AiRecommendationsClient,
   ) {}
 
   async getRecommendations(
