@@ -6,6 +6,7 @@ import { ChatSession } from '../modules/ai-chat/entities/chat-session.entity';
 import { LessonKnowledgeSource } from '../modules/ai-knowledge/entities/lesson-knowledge-source.entity';
 import { LessonSummary } from '../modules/ai-summary/entities/lesson-summary.entity';
 import { CartItem } from '../modules/cart/entities/cart-item.entity';
+import { Certificate } from '../modules/certificates/entities/certificate.entity';
 import { Course } from '../modules/courses/entities/course.entity';
 import { Enrollment } from '../modules/enrollments/entities/enrollment.entity';
 import { LearningAnalyticsEvent } from '../modules/learning/entities/learning-analytics-event.entity';
@@ -37,6 +38,7 @@ const dataSource = new DataSource({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   entities: [
+    Certificate,
     ChatMessage,
     ChatSession,
     LessonKnowledgeSource,

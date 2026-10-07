@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { CourseLearningOrder } from '../courses/entities/course.entity';
-import { Lesson } from './entities/lesson.entity';
+import { Lesson } from '../lessons/entities/lesson.entity';
 
 export interface LessonAccessDecision {
   allowed: boolean;
@@ -20,7 +20,7 @@ export class LearningAccessService {
    *   lower `position` before opening `targetLesson`.
    *
    * This is the API-level gating rule. It is independent of how completed
-   * lessons are recorded (the progress module records them in T1-11), so the
+   * lessons are recorded, so the
    * completed set is passed in explicitly and the rule stays unit-testable.
    */
   determineLessonAccess(

@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Course } from '../courses/entities/course.entity';
-import { CourseProgressModule } from '../learning/course-progress.module';
+import { LearningModule } from '../learning/learning.module';
 import {
   LessonDetailController,
   LessonsController,
@@ -13,29 +13,29 @@ import { LessonImportCleanupService } from './import/lesson-import-cleanup.servi
 import { LessonImportProcessorService } from './import/lesson-import-processor.service';
 import { LessonImportQueueConsumer } from './import/queue/lesson-import-queue.consumer';
 import { LessonImportQueuePublisher } from './import/queue/lesson-import-queue.publisher';
-import { LearningAccessService } from './learning-access.service';
 import { LessonsService } from './lessons.service';
 import { AiSummaryModule } from '../ai-summary/ai-summary.module';
 import { LessonSummary } from '../ai-summary/entities/lesson-summary.entity';
 import { AiKnowledgeModule } from '../ai-knowledge/ai-knowledge.module';
+import { LessonVideoMetadataService } from './lesson-video-metadata.service';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Lesson, LessonImport, Course, LessonSummary]),
-    CourseProgressModule,
+    LearningModule,
     AiSummaryModule,
     AiKnowledgeModule,
   ],
   controllers: [LessonsController, LessonDetailController],
   providers: [
     LessonsService,
-    LearningAccessService,
     LessonImportService,
     LessonImportCleanupService,
     LessonImportProcessorService,
     LessonImportQueueConsumer,
     LessonImportQueuePublisher,
+    LessonVideoMetadataService,
   ],
-  exports: [LessonsService, LearningAccessService],
+  exports: [LessonsService],
 })
 export class LessonsModule {}

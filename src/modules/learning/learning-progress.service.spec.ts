@@ -7,7 +7,7 @@ import {
 } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { Lesson } from '../lessons/entities/lesson.entity';
-import { LearningAccessService } from '../lessons/learning-access.service';
+import { LearningAccessService } from './learning-access.service';
 import { QuizAttemptStatus } from '../quizzes/dto/quiz-attempt.dto';
 import { QuizAttempt } from '../quizzes/entities/quiz-attempt.entity';
 import { Quiz } from '../quizzes/entities/quiz.entity';
