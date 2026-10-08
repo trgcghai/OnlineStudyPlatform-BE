@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Post,
@@ -17,6 +19,7 @@ import { UserRole } from '../users/entities/user.entity';
 import { CreateWatchEventDto } from './dto/watch-event.dto';
 import { LearningProgressService } from './learning-progress.service';
 import { LearningService } from './learning.service';
+import { LessonCompletionService } from './lesson-completion.service';
 
 @Controller('learning/courses')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -25,6 +28,7 @@ export class LearningController {
   constructor(
     private readonly learningService: LearningService,
     private readonly learningProgressService: LearningProgressService,
+    private readonly lessonCompletionService: LessonCompletionService,
   ) {}
 
   @Get(':courseId')
@@ -73,6 +77,21 @@ export class LearningController {
       courseId,
       lessonId,
       dto,
+    );
+  }
+
+  @Post(':courseId/lessons/:lessonId/complete')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  completeLesson(
+    @Param('courseId', ParseUUIDPipe) courseId: string,
+    @Param('lessonId', ParseUUIDPipe) lessonId: string,
+    @CurrentUser('id') learnerId: string,
+  ) {
+    return this.lessonCompletionService.completeLesson(
+      learnerId,
+      courseId,
+      lessonId,
     );
   }
 }

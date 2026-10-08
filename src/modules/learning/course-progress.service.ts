@@ -1,12 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Not, Repository } from 'typeorm';
+import { EntityManager, IsNull, Not, Repository } from 'typeorm';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { Lesson } from '../lessons/entities/lesson.entity';
 import { QuizAttemptStatus } from '../quizzes/dto/quiz-attempt.dto';
 import { QuizAttempt } from '../quizzes/entities/quiz-attempt.entity';
 import { Quiz } from '../quizzes/entities/quiz.entity';
 import { LessonProgress } from './entities/lesson-progress.entity';
+import { CertificateQueueService } from '../certificates/certificate-queue.service';
 
 @Injectable()
 export class CourseProgressService {
@@ -21,13 +22,21 @@ export class CourseProgressService {
     private readonly quizzesRepository: Repository<Quiz>,
     @InjectRepository(QuizAttempt)
     private readonly quizAttemptsRepository: Repository<QuizAttempt>,
+    private readonly certificateQueue: CertificateQueueService,
   ) {}
 
   async recomputeEnrollmentProgress(
     learnerId: string,
     courseId: string,
+    manager?: EntityManager,
   ): Promise<Enrollment> {
-    const enrollment = await this.enrollmentsRepository.findOne({
+    const enrollmentsRepository =
+      manager?.getRepository(Enrollment) ?? this.enrollmentsRepository;
+    const lessonsRepository =
+      manager?.getRepository(Lesson) ?? this.lessonsRepository;
+    const progressRepository =
+      manager?.getRepository(LessonProgress) ?? this.progressRepository;
+    const enrollment = await enrollmentsRepository.findOne({
       where: { learnerId, courseId },
     });
 
@@ -36,8 +45,8 @@ export class CourseProgressService {
     }
 
     const [totalLessons, completedLessons] = await Promise.all([
-      this.lessonsRepository.count({ where: { courseId } }),
-      this.progressRepository.count({
+      lessonsRepository.count({ where: { courseId } }),
+      progressRepository.count({
         where: { learnerId, courseId, lessonCompletedAt: Not(IsNull()) },
       }),
     ]);
@@ -48,7 +57,20 @@ export class CourseProgressService {
     enrollment.completedAt =
       progress >= 100 ? (enrollment.completedAt ?? new Date()) : null;
 
-    return this.enrollmentsRepository.save(enrollment);
+    const saved = await enrollmentsRepository.save(enrollment);
+    if (!manager) this.queueCertificateIfComplete(saved);
+    return saved;
+  }
+
+  queueCertificateIfComplete(enrollment: Enrollment): void {
+    if (enrollment.completedAt && Number(enrollment.progress) === 100) {
+      // Issuance must not hold up learning when Redis is reconnecting.
+      // The publisher handles errors; persisted completion is reconciled later.
+      void this.certificateQueue.enqueueCompletion(
+        enrollment.learnerId,
+        enrollment.courseId,
+      );
+    }
   }
 
   async recomputeCourseEnrollmentsProgress(courseId: string): Promise<void> {

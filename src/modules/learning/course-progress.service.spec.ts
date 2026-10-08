@@ -8,6 +8,7 @@ import { QuizAttemptStatus } from '../quizzes/dto/quiz-attempt.dto';
 import { QuizAttempt } from '../quizzes/entities/quiz-attempt.entity';
 import { Quiz } from '../quizzes/entities/quiz.entity';
 import { CourseProgressService } from './course-progress.service';
+import { CertificateQueueService } from '../certificates/certificate-queue.service';
 import { LessonProgress } from './entities/lesson-progress.entity';
 
 const learnerId = '11111111-1111-4111-8111-111111111111';
@@ -87,8 +88,10 @@ describe('CourseProgressService', () => {
   let progressRepository: ReturnType<typeof mockRepository>;
   let quizzesRepository: ReturnType<typeof mockRepository>;
   let quizAttemptsRepository: ReturnType<typeof mockRepository>;
+  const certificateQueue = { enqueueCompletion: jest.fn() };
 
   beforeEach(async () => {
+    certificateQueue.enqueueCompletion.mockReset();
     enrollmentsRepository = mockRepository();
     lessonsRepository = mockRepository();
     progressRepository = mockRepository();
@@ -98,6 +101,7 @@ describe('CourseProgressService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CourseProgressService,
+        { provide: CertificateQueueService, useValue: certificateQueue },
         {
           provide: getRepositoryToken(Enrollment),
           useValue: enrollmentsRepository,
@@ -137,6 +141,7 @@ describe('CourseProgressService', () => {
       where: { learnerId, courseId, lessonCompletedAt: Not(IsNull()) },
     });
     expect(result.progress).toBe('75.00');
+    expect(certificateQueue.enqueueCompletion).not.toHaveBeenCalled();
     expect(result.completedAt).toBeNull();
     expect(enrollmentsRepository.save).toHaveBeenCalledWith(
       expect.objectContaining({ progress: '75.00', completedAt: null }),
@@ -160,6 +165,10 @@ describe('CourseProgressService', () => {
     );
     expect(completed.progress).toBe('100.00');
     expect(completed.completedAt).toBe(previousCompletedAt);
+    expect(certificateQueue.enqueueCompletion).toHaveBeenCalledWith(
+      learnerId,
+      courseId,
+    );
 
     const downgraded = await service.recomputeEnrollmentProgress(
       learnerId,
@@ -167,6 +176,7 @@ describe('CourseProgressService', () => {
     );
     expect(downgraded.progress).toBe('50.00');
     expect(downgraded.completedAt).toBeNull();
+    expect(certificateQueue.enqueueCompletion).toHaveBeenCalledTimes(1);
   });
 
   it('throws when recomputing a missing enrollment', async () => {

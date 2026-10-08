@@ -1,14 +1,10 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Course } from '../courses/entities/course.entity';
-import { CourseProgressModule } from '../learning/course-progress.module';
+import { LearningModule } from '../learning/learning.module';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { LearningAnalyticsEvent } from '../learning/entities/learning-analytics-event.entity';
-import { LessonProgress } from '../learning/entities/lesson-progress.entity';
-import { LessonWatchEvent } from '../learning/entities/lesson-watch-event.entity';
-import { LearningProgressService } from '../learning/learning-progress.service';
 import { Lesson } from '../lessons/entities/lesson.entity';
-import { LessonsModule } from '../lessons/lessons.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { User } from '../users/entities/user.entity';
 import {
@@ -27,6 +23,8 @@ import { QuizAttemptCleanupService } from './quiz-attempt-cleanup.service';
 import { QuizAttempt } from './entities/quiz-attempt.entity';
 import { Quiz } from './entities/quiz.entity';
 import { QuizzesService } from './quizzes.service';
+import { LearnerQuizzesController } from './learner-quizzes.controller';
+import { QuizAttemptsService } from './quiz-attempts.service';
 
 @Module({
   imports: [
@@ -37,16 +35,14 @@ import { QuizzesService } from './quizzes.service';
       Lesson,
       Course,
       Enrollment,
-      LessonProgress,
-      LessonWatchEvent,
       LearningAnalyticsEvent,
       User,
     ]),
-    LessonsModule,
-    CourseProgressModule,
+    LearningModule,
     NotificationsModule,
   ],
   controllers: [
+    LearnerQuizzesController,
     QuizzesController,
     QuizQuestionsController,
     QuizManageController,
@@ -58,7 +54,7 @@ import { QuizzesService } from './quizzes.service';
     QuizzesService,
     QuizAttemptCleanupService,
     EssayGradingService,
-    LearningProgressService,
+    QuizAttemptsService,
   ],
   exports: [QuizzesService],
 })

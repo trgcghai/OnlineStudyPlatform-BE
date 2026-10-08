@@ -13,7 +13,7 @@ import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { LearningAnalyticsEvent } from '../learning/entities/learning-analytics-event.entity';
 import { LearningProgressService } from '../learning/learning-progress.service';
 import { Lesson } from '../lessons/entities/lesson.entity';
-import { LearningAccessService } from '../lessons/learning-access.service';
+import { LearningAccessService } from '../learning/learning-access.service';
 import { NotificationsQueueService } from '../notifications/notifications-queue.service';
 import {
   LearnerQuizLoadResponse,

@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { randomUUID } from 'crypto';
 import { CourseLearningOrder } from '../courses/entities/course.entity';
-import { Lesson } from './entities/lesson.entity';
+import { Lesson } from '../lessons/entities/lesson.entity';
 import {
   LearningAccessService,
   SEQUENTIAL_BLOCK_MESSAGE,
