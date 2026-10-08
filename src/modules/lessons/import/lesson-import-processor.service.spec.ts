@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { Readable } from 'node:stream';
 import { Course, CourseStatus } from '../../courses/entities/course.entity';
 import {
   LessonImport,
@@ -44,6 +45,9 @@ describe('LessonImportProcessorService', () => {
   const aiKnowledgeService = {
     enqueueMaterial: jest.fn(),
   };
+  const videoMetadataService = {
+    getDuration: jest.fn(),
+  };
   let service: LessonImportProcessorService;
 
   beforeEach(() => {
@@ -63,6 +67,7 @@ describe('LessonImportProcessorService', () => {
       lessonAudioService as never,
       aiSummaryService as never,
       aiKnowledgeService as never,
+      videoMetadataService as never,
     );
   });
 
@@ -93,6 +98,7 @@ describe('LessonImportProcessorService', () => {
         {
           id: 'lesson-1',
           row: { title: 'First', description: '' },
+          duration: 0,
           videoUrl: null,
           summaryAudioUrl: null,
           materialUrl: null,
@@ -100,6 +106,7 @@ describe('LessonImportProcessorService', () => {
         {
           id: 'lesson-2',
           row: { title: 'Second', description: '' },
+          duration: 0,
           videoUrl: null,
           summaryAudioUrl: null,
           materialUrl: null,
@@ -150,6 +157,7 @@ describe('LessonImportProcessorService', () => {
         {
           id: 'video-lesson',
           row: { title: 'Video', description: '' },
+          duration: 2165,
           videoUrl: 'http://localhost/video.mp4',
           summaryAudioUrl: 'http://localhost/audio.ogg',
           materialUrl: null,
@@ -157,6 +165,7 @@ describe('LessonImportProcessorService', () => {
         {
           id: 'material-lesson',
           row: { title: 'Material', description: '' },
+          duration: 0,
           videoUrl: null,
           summaryAudioUrl: null,
           materialUrl: 'http://localhost/material.pdf',
@@ -165,6 +174,9 @@ describe('LessonImportProcessorService', () => {
     );
 
     expect(aiSummaryService.enqueueLesson).toHaveBeenCalledTimes(1);
+    const savedLessons = manager.save.mock.calls[0][1] as Lesson[];
+    expect(savedLessons[0].duration).toBe(2165);
+    expect(savedLessons[1].duration).toBe(0);
     expect(aiSummaryService.enqueueLesson).toHaveBeenCalledWith('video-lesson');
     expect(aiKnowledgeService.enqueueMaterial).toHaveBeenCalledWith(
       'material-lesson',
@@ -208,6 +220,7 @@ describe('LessonImportProcessorService', () => {
           {
             id: 'video-lesson',
             row: { title: 'Video', description: '' },
+            duration: 120,
             videoUrl: 'http://localhost/video.mp4',
             summaryAudioUrl: null,
             materialUrl: null,
@@ -220,6 +233,83 @@ describe('LessonImportProcessorService', () => {
       importId,
       expect.objectContaining({ status: LessonImportStatus.COMPLETED }),
     );
+  });
+
+  function arrangeVideoArchive() {
+    const asset = { path: 'videos/lecture.mp4', uncompressedSize: 5 };
+    const source = Readable.from(['video']);
+    const archive = {
+      rows: [
+        {
+          title: 'Imported video',
+          description: '',
+          videoFilename: 'lecture.mp4',
+          materialFilename: null,
+        },
+      ],
+      referencedFileCount: 1,
+      getAsset: jest.fn().mockReturnValue(asset),
+      openStream: jest.fn().mockResolvedValue(source),
+      close: jest.fn(),
+    };
+    zipService.openLessonImport.mockResolvedValue(archive);
+    manager.findOne.mockImplementation((entity: object) =>
+      Promise.resolve(
+        entity === Course
+          ? { instructorId: 'instructor-id', status: CourseStatus.DRAFT }
+          : null,
+      ),
+    );
+    const internals = service as unknown as {
+      importArchive(value: LessonImport, path: string): Promise<void>;
+      removeAssetPrefixQuietly(value: string): Promise<void>;
+      uploadReferencedEntry(): Promise<string>;
+      createSummaryAudioQuietly(): Promise<string | null>;
+    };
+    jest.spyOn(internals, 'removeAssetPrefixQuietly').mockResolvedValue();
+    const upload = jest
+      .spyOn(internals, 'uploadReferencedEntry')
+      .mockResolvedValue('http://localhost/video.mp4');
+    jest.spyOn(internals, 'createSummaryAudioQuietly').mockResolvedValue(null);
+    const lessonImport = Object.assign(new LessonImport(), {
+      id: importId,
+      courseId: 'course-id',
+      instructorId: 'instructor-id',
+    });
+    return { internals, lessonImport, archive, source, upload };
+  }
+
+  it('probes an imported video before persisting its measured duration', async () => {
+    const { internals, lessonImport, archive, source } = arrangeVideoArchive();
+    videoMetadataService.getDuration.mockResolvedValue(2164);
+
+    await internals.importArchive(lessonImport, 'source.zip');
+
+    expect(videoMetadataService.getDuration).toHaveBeenCalledWith(
+      source,
+      'videos/lecture.mp4',
+    );
+    const saved = manager.save.mock.calls[0][1] as Lesson[];
+    expect(saved[0]).toMatchObject({
+      title: 'Imported video',
+      duration: 2164,
+      videoUrl: 'http://localhost/video.mp4',
+    });
+    expect(archive.close).toHaveBeenCalled();
+  });
+
+  it('does not upload or persist a lesson when video metadata cannot be read', async () => {
+    const { internals, lessonImport, archive, upload } = arrangeVideoArchive();
+    videoMetadataService.getDuration.mockRejectedValue(
+      new Error('Video must have a finite, positive duration'),
+    );
+
+    await expect(
+      internals.importArchive(lessonImport, 'source.zip'),
+    ).rejects.toThrow('Video must have a finite, positive duration');
+    expect(upload).not.toHaveBeenCalled();
+    expect(manager.save).not.toHaveBeenCalled();
+    expect(archive.close).toHaveBeenCalled();
   });
 
   it('marks validation failures terminal and removes uploaded objects', async () => {

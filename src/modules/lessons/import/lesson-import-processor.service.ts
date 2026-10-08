@@ -31,12 +31,14 @@ import {
   LessonImportStatus,
 } from '../entities/lesson-import.entity';
 import { Lesson } from '../entities/lesson.entity';
+import { LessonVideoMetadataService } from '../lesson-video-metadata.service';
 
 export { ZipValidationError as LessonImportValidationError } from '../../file/zip.service';
 
 interface PreparedLesson {
   id: string;
   row: LessonImportRow;
+  duration: number;
   videoUrl: string | null;
   summaryAudioUrl: string | null;
   materialUrl: string | null;
@@ -67,6 +69,7 @@ export class LessonImportProcessorService {
     private readonly lessonAudioService: LessonAudioService,
     private readonly aiSummaryService: AiSummaryService,
     private readonly aiKnowledgeService: AiKnowledgeService,
+    private readonly videoMetadataService: LessonVideoMetadataService,
   ) {}
 
   async process(importId: string): Promise<void> {
@@ -160,6 +163,7 @@ export class LessonImportProcessorService {
       const prepared: PreparedLesson[] = archive.rows.map((row) => ({
         id: randomUUID(),
         row,
+        duration: 0,
         videoUrl: null,
         summaryAudioUrl: null,
         materialUrl: null,
@@ -171,6 +175,10 @@ export class LessonImportProcessorService {
           const videoAsset = archive.getAsset(
             'videos',
             lesson.row.videoFilename,
+          );
+          lesson.duration = await this.videoMetadataService.getDuration(
+            await archive.openStream(videoAsset),
+            videoAsset.path,
           );
           lesson.videoUrl = await this.uploadReferencedEntry(
             archive,
@@ -234,7 +242,7 @@ export class LessonImportProcessorService {
             courseId: lessonImport.courseId,
             title: item.row.title,
             description: item.row.description,
-            duration: 0,
+            duration: item.duration,
             position: firstPosition + index,
             videoUrl: item.videoUrl,
             materialUrl: item.materialUrl,

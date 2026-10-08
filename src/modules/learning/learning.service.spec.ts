@@ -14,7 +14,7 @@ import { Lesson } from '../lessons/entities/lesson.entity';
 import {
   LearningAccessService,
   SEQUENTIAL_BLOCK_MESSAGE,
-} from '../lessons/learning-access.service';
+} from './learning-access.service';
 import { LearningProgressService } from './learning-progress.service';
 import { LearningService } from './learning.service';
 

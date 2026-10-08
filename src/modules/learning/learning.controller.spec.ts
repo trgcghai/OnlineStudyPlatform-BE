@@ -1,6 +1,7 @@
 import { LearningController } from './learning.controller';
 import { LearningProgressService } from './learning-progress.service';
 import { LearningService } from './learning.service';
+import { LessonCompletionService } from './lesson-completion.service';
 import { LessonWatchEventType } from './entities/lesson-watch-event.entity';
 import {
   CACHE_INVALIDATE_METADATA,
@@ -17,13 +18,14 @@ describe('LearningController', () => {
   let progressService: {
     recordWatchEvent: jest.Mock;
   };
+  let completionService: { completeLesson: jest.Mock };
 
   const learnerId = '11111111-1111-4111-8111-111111111111';
   const courseId = '22222222-2222-4222-8222-222222222222';
   const lessonId = '33333333-3333-4333-8333-333333333333';
-  const handlerOf = (methodName: keyof LearningController) =>
+  const handlerOf = (methodName: keyof LearningController): object =>
     Object.getOwnPropertyDescriptor(LearningController.prototype, methodName)!
-      .value;
+      .value as object;
 
   beforeEach(() => {
     learningService = {
@@ -34,9 +36,11 @@ describe('LearningController', () => {
     progressService = {
       recordWatchEvent: jest.fn(),
     };
+    completionService = { completeLesson: jest.fn() };
     controller = new LearningController(
       learningService as unknown as LearningService,
       progressService as unknown as LearningProgressService,
+      completionService as unknown as LessonCompletionService,
     );
   });
 
@@ -103,6 +107,19 @@ describe('LearningController', () => {
       courseId,
       lessonId,
       dto,
+    );
+  });
+
+  it('delegates completion using the authenticated learner, course and lesson', async () => {
+    const response = { lessonProgress: { lessonId, isLessonComplete: true } };
+    completionService.completeLesson.mockResolvedValue(response);
+    await expect(
+      controller.completeLesson(courseId, lessonId, learnerId),
+    ).resolves.toBe(response);
+    expect(completionService.completeLesson).toHaveBeenCalledWith(
+      learnerId,
+      courseId,
+      lessonId,
     );
   });
 

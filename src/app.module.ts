@@ -31,6 +31,7 @@ import { RedisInterceptor } from './modules/redis/redis.interceptor';
 import { RecommendationsModule } from './modules/recommendations/recommendations.module';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { RiskModule } from './modules/risk/risk.module';
+import { CertificatesModule } from './modules/certificates/certificates.module';
 
 @Module({
   imports: [
@@ -96,6 +97,7 @@ import { RiskModule } from './modules/risk/risk.module';
     SeedsModule,
     RecommendationsModule,
     RiskModule,
+    CertificatesModule,
   ],
   controllers: [AppController],
   providers: [
