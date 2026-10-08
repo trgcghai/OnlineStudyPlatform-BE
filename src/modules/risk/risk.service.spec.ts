@@ -1,13 +1,15 @@
-import { ForbiddenException } from '@nestjs/common';
+import {
+  ServiceUnavailableException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Test } from '@nestjs/testing';
 import { Course } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
-import { RiskBand, RiskScoreResponse, RiskScoreResult } from './dto/risk.dto';
+import { RiskBand, RiskScoreResponse } from './dto/risk.dto';
 import { AiRiskClient } from './ai-risk.client';
 import { RiskFeatureService } from './risk-feature.service';
 import { RiskPersistenceService } from './risk-persistence.service';
-import { RiskScoringService } from './risk-scoring.service';
 import { RiskService } from './risk.service';
 
 describe('RiskService', () => {
@@ -17,11 +19,9 @@ describe('RiskService', () => {
     getActiveEnrollmentsForCourse: jest.Mock;
     extractForLearnerCourse: jest.Mock;
   };
-  let scoringService: { score: jest.Mock };
   let aiGateway: {
     predict: jest.Mock;
     getActiveModel: jest.Mock;
-    trainModel: jest.Mock;
   };
   let persistenceService: {
     upsertScore: jest.Mock;
@@ -35,11 +35,9 @@ describe('RiskService', () => {
       getActiveEnrollmentsForCourse: jest.fn(),
       extractForLearnerCourse: jest.fn(),
     };
-    scoringService = { score: jest.fn() };
     aiGateway = {
       predict: jest.fn(),
       getActiveModel: jest.fn(),
-      trainModel: jest.fn(),
     };
     persistenceService = {
       upsertScore: jest.fn(),
@@ -52,7 +50,6 @@ describe('RiskService', () => {
         RiskService,
         { provide: getRepositoryToken(Course), useValue: coursesRepository },
         { provide: RiskFeatureService, useValue: featureService },
-        { provide: RiskScoringService, useValue: scoringService },
         { provide: AiRiskClient, useValue: aiGateway },
         { provide: RiskPersistenceService, useValue: persistenceService },
       ],
@@ -90,22 +87,6 @@ describe('RiskService', () => {
     await expect(service.getModel()).resolves.toBe(status);
   });
 
-  it('trains model through AI gateway', async () => {
-    const result = {
-      modelName: 'dropout-risk-xgboost',
-      modelVersion: 'dropout-xgb-v1',
-      featureVersion: 'dropout_features_v1',
-      trainedAt: '2026-10-01T00:00:00Z',
-      sampleCount: 125,
-      metrics: { mae: 7.8, rmse: 10.4 },
-      artifactPath: 'models/dropout-risk/dropout-xgb-v1/model.json',
-      isActive: true,
-    };
-    aiGateway.trainModel.mockResolvedValue(result);
-
-    await expect(service.trainModel()).resolves.toBe(result);
-  });
-
   it('recomputes active course enrollments idempotently by learner-course-day', async () => {
     coursesRepository.findOne.mockResolvedValue({
       id: 'course-1',
@@ -133,12 +114,12 @@ describe('RiskService', () => {
         pauseCount: 0,
       },
     });
-    const score: RiskScoreResult = {
+    aiGateway.predict.mockResolvedValue({
       score: 10,
       band: RiskBand.LOW,
+      modelVersion: 'dropout-xgb-v1',
       factors: [],
-    };
-    scoringService.score.mockReturnValue(score);
+    });
     persistenceService.upsertScore.mockResolvedValue({});
 
     const result = await service.recomputeCourse(
@@ -150,7 +131,11 @@ describe('RiskService', () => {
     expect(result).toEqual({ processed: 1, succeeded: 1, failed: 0 });
     expect(persistenceService.upsertScore).toHaveBeenCalledWith(
       'risk:course-1:learner-1:2026-09-30',
-      expect.objectContaining({ learnerId: 'learner-1', source: 'heuristic' }),
+      expect.objectContaining({
+        learnerId: 'learner-1',
+        source: 'ai',
+        scoringVersion: 'dropout-xgb-v1',
+      }),
     );
   });
 
@@ -197,33 +182,36 @@ describe('RiskService', () => {
         scoringVersion: 'dropout-xgb-v1',
       }),
     );
-    expect(scoringService.score).not.toHaveBeenCalled();
   });
 
-  it('falls back to heuristic when AI prediction is unavailable', async () => {
+  it('fails learner recompute when AI prediction is unavailable', async () => {
     featureService.extractForLearnerCourse.mockResolvedValue({
       learnerId: 'learner-1',
       courseId: 'course-1',
       enrollmentId: 'enrollment-1',
-      features: {},
+      features: {
+        lastActivityDays: 1,
+        activityCount7d: 5,
+        expectedProgressGap: 0,
+        courseProgressPercent: 50,
+        quizScoreAvgPercent: 80,
+        quizPassRate: 1,
+        watchRatioAvg: 0.8,
+        abandonedAttemptCount: 0,
+        lateQuizCount: 0,
+        completionVelocity: 1,
+        totalWatchedSeconds: 100,
+        pauseCount: 0,
+      },
     });
-    aiGateway.predict.mockResolvedValue(null);
-    scoringService.score.mockReturnValue({
-      score: 10,
-      band: RiskBand.LOW,
-      factors: [],
-    });
-    persistenceService.upsertScore.mockResolvedValue({});
-
-    await service.recomputeLearnerCourse('learner-1', 'course-1');
-
-    expect(persistenceService.upsertScore).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        source: 'heuristic',
-        scoringVersion: 'heuristic-risk-v1',
-      }),
+    aiGateway.predict.mockRejectedValue(
+      new ServiceUnavailableException('Risk AI model is unavailable'),
     );
+
+    await expect(
+      service.recomputeLearnerCourse('learner-1', 'course-1'),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(persistenceService.upsertScore).not.toHaveBeenCalled();
   });
 
   it('limits course recompute concurrency to five learners', async () => {

@@ -1,8 +1,5 @@
-import { BadRequestException } from '@nestjs/common';
-import {
-  AiHttpClientService,
-  AiHttpError,
-} from '../ai-client/ai-http-client.service';
+import { ServiceUnavailableException } from '@nestjs/common';
+import { AiHttpClientService } from '../ai-client/ai-http-client.service';
 import { RiskBand, RiskFeatures } from './dto/risk.dto';
 import { AiRiskClient } from './ai-risk.client';
 
@@ -93,29 +90,25 @@ describe('AiRiskClient', () => {
     expect(get).toHaveBeenCalledWith('/analytics/dropout-risk/model/active');
   });
 
-  it('maps low-sample training errors to BadRequestException', async () => {
-    const post = jest.fn().mockRejectedValue(
-      new AiHttpError('AI service returned HTTP 400', 400, 'risk_scores sample count is low'),
-    );
+  it('throws ServiceUnavailableException when prediction service fails', async () => {
+    const post = jest.fn().mockRejectedValue(new Error('offline'));
     const client = new AiRiskClient({
       post,
     } as unknown as AiHttpClientService);
 
-    await expect(client.trainModel()).rejects.toBeInstanceOf(
-      BadRequestException,
+    await expect(client.predict(request)).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
     );
   });
 
-  it('returns null when prediction is unavailable or invalid', async () => {
-    const post = jest
-      .fn()
-      .mockRejectedValueOnce(new Error('offline'))
-      .mockResolvedValueOnce({ riskScore: '82.4' });
+  it('throws ServiceUnavailableException when prediction payload is invalid', async () => {
+    const post = jest.fn().mockResolvedValue({ riskScore: '82.4' });
     const client = new AiRiskClient({
       post,
     } as unknown as AiHttpClientService);
 
-    await expect(client.predict(request)).resolves.toBeNull();
-    await expect(client.predict(request)).resolves.toBeNull();
+    await expect(client.predict(request)).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
   });
 });

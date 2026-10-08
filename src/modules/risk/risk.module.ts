@@ -13,7 +13,6 @@ import { AiRiskClient } from './ai-risk.client';
 import { RiskFeatureService } from './risk-feature.service';
 import { RiskPersistenceService } from './risk-persistence.service';
 import { RiskSchedulerService } from './risk-scheduler.service';
-import { RiskScoringService } from './risk-scoring.service';
 import { RiskService } from './risk.service';
 import { RiskScore, RiskScoreSchema } from './schemas/risk-score.schema';
 
@@ -35,7 +34,6 @@ import { RiskScore, RiskScoreSchema } from './schemas/risk-score.schema';
   controllers: [RiskController],
   providers: [
     RiskFeatureService,
-    RiskScoringService,
     RiskPersistenceService,
     RiskService,
     RiskSchedulerService,

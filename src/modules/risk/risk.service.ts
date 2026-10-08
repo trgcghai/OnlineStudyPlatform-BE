@@ -11,9 +11,7 @@ import {
   RISK_FEATURE_VERSION,
   RISK_HIGH_THRESHOLD,
   RISK_RECOMPUTE_CONCURRENCY,
-  RISK_SCORING_VERSION,
   RISK_SOURCE_AI,
-  RISK_SOURCE_HEURISTIC,
 } from './constants/risk.constants';
 import {
   LearnerRiskInput,
@@ -25,14 +23,9 @@ import {
   RiskScoreResponse,
   RiskSummaryResponse,
 } from './dto/risk.dto';
-import {
-  AiRiskClient,
-  RiskModelStatusResponse,
-  RiskModelTrainingResult,
-} from './ai-risk.client';
+import { AiRiskClient, RiskModelStatusResponse } from './ai-risk.client';
 import { RiskFeatureService } from './risk-feature.service';
 import { RiskPersistenceService } from './risk-persistence.service';
-import { RiskScoringService } from './risk-scoring.service';
 
 @Injectable()
 export class RiskService {
@@ -42,17 +35,12 @@ export class RiskService {
     @InjectRepository(Course)
     private readonly coursesRepository: Repository<Course>,
     private readonly featureService: RiskFeatureService,
-    private readonly scoringService: RiskScoringService,
     private readonly persistenceService: RiskPersistenceService,
     private readonly aiGateway: AiRiskClient,
   ) {}
 
   getModel(): Promise<RiskModelStatusResponse> {
     return this.aiGateway.getActiveModel();
-  }
-
-  trainModel(): Promise<RiskModelTrainingResult> {
-    return this.aiGateway.trainModel();
   }
 
   async getSummary(
@@ -193,7 +181,7 @@ export class RiskService {
     score: number;
     band: RiskBand;
     scoringVersion: string;
-    source: 'heuristic' | 'ai';
+    source: 'ai';
     factors: RiskScoreResponse['factors'];
   }> {
     const aiPrediction = await this.aiGateway.predict({
@@ -203,23 +191,12 @@ export class RiskService {
       features: input.features,
     });
 
-    if (aiPrediction) {
-      return {
-        score: aiPrediction.score,
-        band: aiPrediction.band,
-        scoringVersion: aiPrediction.modelVersion,
-        source: RISK_SOURCE_AI,
-        factors: aiPrediction.factors,
-      };
-    }
-
-    const heuristic = this.scoringService.score(input.features);
     return {
-      score: heuristic.score,
-      band: heuristic.band,
-      scoringVersion: RISK_SCORING_VERSION,
-      source: RISK_SOURCE_HEURISTIC,
-      factors: heuristic.factors,
+      score: aiPrediction.score,
+      band: aiPrediction.band,
+      scoringVersion: aiPrediction.modelVersion,
+      source: RISK_SOURCE_AI,
+      factors: aiPrediction.factors,
     };
   }
 

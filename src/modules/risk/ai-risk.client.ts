@@ -1,13 +1,9 @@
 import {
-  BadRequestException,
   Injectable,
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import {
-  AiHttpClientService,
-  AiHttpError,
-} from '../ai-client/ai-http-client.service';
+import { AiHttpClientService } from '../ai-client/ai-http-client.service';
 import { RiskBand, RiskFactor, RiskFeatures } from './dto/risk.dto';
 
 export interface RiskAiPrediction {
@@ -31,8 +27,6 @@ export interface RiskModelInfo {
 export interface RiskModelStatusResponse {
   model: RiskModelInfo | null;
 }
-
-export type RiskModelTrainingResult = RiskModelInfo;
 
 interface AiPredictResponse {
   riskScore: number;
@@ -84,47 +78,17 @@ export class AiRiskClient {
     }
   }
 
-  async trainModel(): Promise<RiskModelTrainingResult> {
-    try {
-      const payload = await this.aiHttpClient.post<unknown>(
-        '/analytics/dropout-risk/train',
-      );
-      if (!this.isRiskModelInfo(payload)) {
-        throw new ServiceUnavailableException(
-          'AI risk model returned invalid training result',
-        );
-      }
-      return payload;
-    } catch (error) {
-      if (error instanceof AiHttpError && error.status === 400) {
-        if (this.isLowSampleTrainingError(error.responseText ?? '')) {
-          throw new BadRequestException(
-            'Chưa đủ dữ liệu risk_scores để train model. Cần ít nhất 10 mẫu.',
-          );
-        }
-        throw new BadRequestException('AI risk model training request failed');
-      }
-      if (
-        error instanceof BadRequestException ||
-        error instanceof ServiceUnavailableException
-      ) {
-        throw error;
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`AI risk training failed: ${message}`);
-      throw new ServiceUnavailableException(
-        'AI risk model service is unavailable',
-      );
-    }
-  }
-
-  async predict(request: AiPredictRequest): Promise<RiskAiPrediction | null> {
+  async predict(request: AiPredictRequest): Promise<RiskAiPrediction> {
     try {
       const payload = await this.aiHttpClient.post<unknown>(
         '/analytics/dropout-risk/predict',
         request,
       );
-      if (!this.isAiPredictResponse(payload)) return null;
+      if (!this.isAiPredictResponse(payload)) {
+        throw new ServiceUnavailableException(
+          'AI risk model returned invalid prediction result',
+        );
+      }
 
       return {
         score: payload.riskScore,
@@ -137,7 +101,9 @@ export class AiRiskClient {
       this.logger.warn(
         `AI risk unavailable for ${request.courseId}/${request.learnerId}: ${message}`,
       );
-      return null;
+      throw new ServiceUnavailableException(
+        'Risk AI model is unavailable. Train and activate a model before recomputing risk.',
+      );
     }
   }
 
@@ -156,12 +122,6 @@ export class AiRiskClient {
       typeof response.shapValues === 'object' &&
       !Array.isArray(response.shapValues)
     );
-  }
-
-  private isLowSampleTrainingError(errorText: string): boolean {
-    const normalized = errorText.toLowerCase();
-
-    return normalized.includes('risk_scores') || normalized.includes('sample');
   }
 
   private isRiskModelInfo(value: unknown): value is RiskModelInfo {

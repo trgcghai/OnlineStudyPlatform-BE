@@ -9,7 +9,6 @@ describe('RiskController', () => {
   let controller: RiskController;
   let service: {
     getModel: jest.Mock;
-    trainModel: jest.Mock;
     getSummary: jest.Mock;
     getLearners: jest.Mock;
     getLearnerDetail: jest.Mock;
@@ -19,7 +18,6 @@ describe('RiskController', () => {
   beforeEach(async () => {
     service = {
       getModel: jest.fn(),
-      trainModel: jest.fn(),
       getSummary: jest.fn(),
       getLearners: jest.fn(),
       getLearnerDetail: jest.fn(),
@@ -49,36 +47,12 @@ describe('RiskController', () => {
     await expect(controller.getModel()).resolves.toBe(status);
   });
 
-  it('trains risk model through service', async () => {
-    const result = {
-      modelName: 'dropout-risk-xgboost',
-      modelVersion: 'dropout-xgb-v1',
-      featureVersion: 'dropout_features_v1',
-      trainedAt: '2026-10-01T00:00:00Z',
-      sampleCount: 125,
-      metrics: { mae: 7.8, rmse: 10.4 },
-      artifactPath: 'models/dropout-risk/dropout-xgb-v1/model.json',
-      isActive: true,
-    };
-    service.trainModel.mockResolvedValue(result);
-
-    await expect(controller.trainModel()).resolves.toBe(result);
-  });
-
-  it('requires admin role for model endpoints', () => {
+  it('requires admin role for model endpoint', () => {
     const getModelHandler = Object.getOwnPropertyDescriptor(
       RiskController.prototype,
       'getModel',
     )?.value as unknown;
-    const trainModelHandler = Object.getOwnPropertyDescriptor(
-      RiskController.prototype,
-      'trainModel',
-    )?.value as unknown;
-
     expect(Reflect.getMetadata(ROLES_KEY, getModelHandler)).toEqual([
-      UserRole.ADMIN,
-    ]);
-    expect(Reflect.getMetadata(ROLES_KEY, trainModelHandler)).toEqual([
       UserRole.ADMIN,
     ]);
   });

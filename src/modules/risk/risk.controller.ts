@@ -31,12 +31,6 @@ export class RiskController {
     return this.riskService.getModel();
   }
 
-  @Post('model/train')
-  @Roles(UserRole.ADMIN)
-  trainModel() {
-    return this.riskService.trainModel();
-  }
-
   @Get('courses/:courseId/summary')
   @Roles(UserRole.INSTRUCTOR)
   @Cached({
