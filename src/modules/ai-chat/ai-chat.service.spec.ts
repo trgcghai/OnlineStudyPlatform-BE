@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { Course, CourseStatus } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { Lesson } from '../lessons/entities/lesson.entity';
-import { AiChatGatewayService } from './ai-chat-gateway.service';
+import { AiChatClient } from './ai-chat.client';
 import { AiChatService } from './ai-chat.service';
 import { ChatMessage, ChatMessageRole } from './entities/chat-message.entity';
 import { ChatSession } from './entities/chat-session.entity';
@@ -102,7 +102,7 @@ describe('AiChatService', () => {
       enrollmentsRepository as unknown as Repository<Enrollment>,
       sessionsRepository as unknown as Repository<ChatSession>,
       messagesRepository as unknown as Repository<ChatMessage>,
-      gateway as unknown as AiChatGatewayService,
+      gateway as unknown as AiChatClient,
       configService as unknown as ConfigService,
     );
   });

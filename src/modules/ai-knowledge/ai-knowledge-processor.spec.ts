@@ -2,7 +2,7 @@ import { Job } from 'bullmq';
 import { Repository } from 'typeorm';
 import { LessonSummary } from '../ai-summary/entities/lesson-summary.entity';
 import { Lesson } from '../lessons/entities/lesson.entity';
-import { AiKnowledgeGatewayService } from './ai-knowledge-gateway.service';
+import { AiKnowledgeClient } from './ai-knowledge.client';
 import { AiKnowledgeProcessor } from './ai-knowledge-processor';
 import { AiKnowledgeJobData } from './dto/ai-knowledge.dto';
 import {
@@ -63,7 +63,7 @@ describe('AiKnowledgeProcessor', () => {
       sourcesRepository as unknown as Repository<LessonKnowledgeSource>,
       lessonsRepository as unknown as Repository<Lesson>,
       summariesRepository as unknown as Repository<LessonSummary>,
-      gateway as unknown as AiKnowledgeGatewayService,
+      gateway as unknown as AiKnowledgeClient,
     );
   });
 

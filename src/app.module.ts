@@ -30,6 +30,7 @@ import { AiKnowledgeModule } from './modules/ai-knowledge/ai-knowledge.module';
 import { RedisInterceptor } from './modules/redis/redis.interceptor';
 import { RecommendationsModule } from './modules/recommendations/recommendations.module';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { RiskModule } from './modules/risk/risk.module';
 import { CertificatesModule } from './modules/certificates/certificates.module';
 
 @Module({
@@ -95,6 +96,7 @@ import { CertificatesModule } from './modules/certificates/certificates.module';
     OrdersModule,
     SeedsModule,
     RecommendationsModule,
+    RiskModule,
     CertificatesModule,
   ],
   controllers: [AppController],

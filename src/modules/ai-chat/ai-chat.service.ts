@@ -10,8 +10,8 @@ import { Course, CourseStatus } from '../courses/entities/course.entity';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import {
   AI_UNAVAILABLE_MESSAGE,
-  AiChatGatewayService,
-} from './ai-chat-gateway.service';
+  AiChatClient,
+} from './ai-chat.client';
 import {
   AiChatHistoryMessage,
   ChatMessageResponse,
@@ -39,7 +39,7 @@ export class AiChatService {
     private readonly sessionsRepository: Repository<ChatSession>,
     @InjectRepository(ChatMessage)
     private readonly messagesRepository: Repository<ChatMessage>,
-    private readonly gateway: AiChatGatewayService,
+    private readonly gateway: AiChatClient,
     private readonly configService: ConfigService,
   ) {}
 
