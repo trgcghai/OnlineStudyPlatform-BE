@@ -82,6 +82,10 @@ export interface RiskRecomputeResponse {
   failed: number;
 }
 
+export interface RiskReminderResponse {
+  enqueued: true;
+}
+
 export class RiskLearnerQueryDto {
   @IsOptional()
   @Transform(({ value }) => (value === undefined ? undefined : Number(value)))

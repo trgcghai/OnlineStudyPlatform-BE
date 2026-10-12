@@ -1,6 +1,8 @@
 import {
-  ServiceUnavailableException,
+  BadRequestException,
   ForbiddenException,
+  NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Test } from '@nestjs/testing';
@@ -10,6 +12,7 @@ import { RiskBand, RiskScoreResponse } from './dto/risk.dto';
 import { AiRiskClient } from './ai-risk.client';
 import { RiskFeatureService } from './risk-feature.service';
 import { RiskPersistenceService } from './risk-persistence.service';
+import { RiskReminderService } from './risk-reminder.service';
 import { RiskService } from './risk.service';
 
 describe('RiskService', () => {
@@ -28,6 +31,10 @@ describe('RiskService', () => {
     findLatestByCourse: jest.Mock;
     findHistory: jest.Mock;
   };
+  let reminderService: {
+    enqueueAutoReminderIfNeeded: jest.Mock;
+    enqueueManualReminder: jest.Mock;
+  };
 
   beforeEach(async () => {
     coursesRepository = { findOne: jest.fn() };
@@ -44,6 +51,10 @@ describe('RiskService', () => {
       findLatestByCourse: jest.fn(),
       findHistory: jest.fn(),
     };
+    reminderService = {
+      enqueueAutoReminderIfNeeded: jest.fn(),
+      enqueueManualReminder: jest.fn(),
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -52,6 +63,7 @@ describe('RiskService', () => {
         { provide: RiskFeatureService, useValue: featureService },
         { provide: AiRiskClient, useValue: aiGateway },
         { provide: RiskPersistenceService, useValue: persistenceService },
+        { provide: RiskReminderService, useValue: reminderService },
       ],
     }).compile();
 
@@ -279,5 +291,230 @@ describe('RiskService', () => {
       highRiskPercentage: 50,
       latestCalculatedAt: new Date('2026-09-30T00:00:00Z'),
     });
+  });
+
+  it('invokes auto reminder after persisting a high-risk score', async () => {
+    const savedScore: RiskScoreResponse = {
+      learnerId: 'learner-1',
+      courseId: 'course-1',
+      enrollmentId: 'enrollment-1',
+      calculatedAt: new Date('2026-10-12T02:00:00Z'),
+      score: 82.4,
+      band: RiskBand.HIGH,
+      featureVersion: 'dropout_features_v1',
+      scoringVersion: 'dropout-xgb-v1',
+      source: 'ai',
+      features: {
+        lastActivityDays: 1,
+        activityCount7d: 5,
+        expectedProgressGap: 25,
+        courseProgressPercent: 40,
+        quizScoreAvgPercent: 70,
+        quizPassRate: 0.5,
+        watchRatioAvg: 0.5,
+        abandonedAttemptCount: 1,
+        lateQuizCount: 0,
+        completionVelocity: 0.1,
+        totalWatchedSeconds: 100,
+        pauseCount: 0,
+      },
+      factors: [],
+    };
+    featureService.extractForLearnerCourse.mockResolvedValue({
+      learnerId: 'learner-1',
+      courseId: 'course-1',
+      enrollmentId: 'enrollment-1',
+      features: savedScore.features,
+    });
+    aiGateway.predict.mockResolvedValue({
+      score: savedScore.score,
+      band: RiskBand.HIGH,
+      modelVersion: 'dropout-xgb-v1',
+      factors: [],
+    });
+    persistenceService.upsertScore.mockResolvedValue(savedScore);
+
+    await service.recomputeLearnerCourse(
+      'learner-1',
+      'course-1',
+      new Date('2026-10-12T02:00:00Z'),
+    );
+
+    expect(reminderService.enqueueAutoReminderIfNeeded).toHaveBeenCalledWith(
+      savedScore,
+    );
+  });
+
+  it('keeps risk recompute successful when auto reminder enqueue fails', async () => {
+    const savedScore: RiskScoreResponse = {
+      learnerId: 'learner-1',
+      courseId: 'course-1',
+      enrollmentId: 'enrollment-1',
+      calculatedAt: new Date('2026-10-12T02:00:00Z'),
+      score: 82.4,
+      band: RiskBand.HIGH,
+      featureVersion: 'dropout_features_v1',
+      scoringVersion: 'dropout-xgb-v1',
+      source: 'ai',
+      features: {
+        lastActivityDays: 1,
+        activityCount7d: 5,
+        expectedProgressGap: 25,
+        courseProgressPercent: 40,
+        quizScoreAvgPercent: 70,
+        quizPassRate: 0.5,
+        watchRatioAvg: 0.5,
+        abandonedAttemptCount: 1,
+        lateQuizCount: 0,
+        completionVelocity: 0.1,
+        totalWatchedSeconds: 100,
+        pauseCount: 0,
+      },
+      factors: [],
+    };
+    featureService.extractForLearnerCourse.mockResolvedValue({
+      learnerId: 'learner-1',
+      courseId: 'course-1',
+      enrollmentId: 'enrollment-1',
+      features: savedScore.features,
+    });
+    aiGateway.predict.mockResolvedValue({
+      score: savedScore.score,
+      band: RiskBand.HIGH,
+      modelVersion: 'dropout-xgb-v1',
+      factors: [],
+    });
+    persistenceService.upsertScore.mockResolvedValue(savedScore);
+    reminderService.enqueueAutoReminderIfNeeded.mockImplementation(() => {
+      throw new Error('queue unavailable');
+    });
+
+    await expect(
+      service.recomputeLearnerCourse('learner-1', 'course-1'),
+    ).resolves.toBe(savedScore);
+  });
+
+  it('sends manual reminder for latest high-risk score on owned course', async () => {
+    const latest: RiskScoreResponse = {
+      learnerId: 'learner-1',
+      courseId: 'course-1',
+      enrollmentId: 'enrollment-1',
+      calculatedAt: new Date('2026-10-12T02:00:00Z'),
+      score: 82.4,
+      band: RiskBand.HIGH,
+      featureVersion: 'dropout_features_v1',
+      scoringVersion: 'dropout-xgb-v1',
+      source: 'ai',
+      features: {
+        lastActivityDays: 1,
+        activityCount7d: 5,
+        expectedProgressGap: 25,
+        courseProgressPercent: 40,
+        quizScoreAvgPercent: 70,
+        quizPassRate: 0.5,
+        watchRatioAvg: 0.5,
+        abandonedAttemptCount: 1,
+        lateQuizCount: 0,
+        completionVelocity: 0.1,
+        totalWatchedSeconds: 100,
+        pauseCount: 0,
+      },
+      factors: [],
+    };
+    coursesRepository.findOne.mockResolvedValue({
+      id: 'course-1',
+      instructorId: 'instructor-1',
+    });
+    persistenceService.findHistory.mockResolvedValue([latest]);
+
+    await expect(
+      service.sendManualReminder('course-1', 'learner-1', 'instructor-1'),
+    ).resolves.toEqual({ enqueued: true });
+    expect(reminderService.enqueueManualReminder).toHaveBeenCalledWith(latest);
+  });
+
+  it('surfaces manual reminder enqueue failures', async () => {
+    const latest: RiskScoreResponse = {
+      learnerId: 'learner-1',
+      courseId: 'course-1',
+      enrollmentId: 'enrollment-1',
+      calculatedAt: new Date('2026-10-12T02:00:00Z'),
+      score: 82.4,
+      band: RiskBand.HIGH,
+      featureVersion: 'dropout_features_v1',
+      scoringVersion: 'dropout-xgb-v1',
+      source: 'ai',
+      features: {
+        lastActivityDays: 1,
+        activityCount7d: 5,
+        expectedProgressGap: 25,
+        courseProgressPercent: 40,
+        quizScoreAvgPercent: 70,
+        quizPassRate: 0.5,
+        watchRatioAvg: 0.5,
+        abandonedAttemptCount: 1,
+        lateQuizCount: 0,
+        completionVelocity: 0.1,
+        totalWatchedSeconds: 100,
+        pauseCount: 0,
+      },
+      factors: [],
+    };
+    coursesRepository.findOne.mockResolvedValue({
+      id: 'course-1',
+      instructorId: 'instructor-1',
+    });
+    persistenceService.findHistory.mockResolvedValue([latest]);
+    reminderService.enqueueManualReminder.mockImplementation(() => {
+      throw new Error('queue unavailable');
+    });
+
+    await expect(
+      service.sendManualReminder('course-1', 'learner-1', 'instructor-1'),
+    ).rejects.toThrow('queue unavailable');
+  });
+
+  it('rejects manual reminder for courses not owned by instructor', async () => {
+    coursesRepository.findOne.mockResolvedValue({
+      id: 'course-1',
+      instructorId: 'other-instructor',
+    });
+
+    await expect(
+      service.sendManualReminder('course-1', 'learner-1', 'instructor-1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(persistenceService.findHistory).not.toHaveBeenCalled();
+    expect(reminderService.enqueueManualReminder).not.toHaveBeenCalled();
+  });
+
+  it('rejects manual reminder when no latest risk score exists', async () => {
+    coursesRepository.findOne.mockResolvedValue({
+      id: 'course-1',
+      instructorId: 'instructor-1',
+    });
+    persistenceService.findHistory.mockResolvedValue([]);
+
+    await expect(
+      service.sendManualReminder('course-1', 'learner-1', 'instructor-1'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('rejects manual reminder when latest score is not high risk', async () => {
+    coursesRepository.findOne.mockResolvedValue({
+      id: 'course-1',
+      instructorId: 'instructor-1',
+    });
+    persistenceService.findHistory.mockResolvedValue([
+      {
+        learnerId: 'learner-1',
+        courseId: 'course-1',
+        band: RiskBand.MEDIUM,
+        score: 45,
+      },
+    ]);
+
+    await expect(
+      service.sendManualReminder('course-1', 'learner-1', 'instructor-1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -20,12 +21,14 @@ import {
   RiskLearnerListResponse,
   RiskLearnerQueryDto,
   RiskRecomputeResponse,
+  RiskReminderResponse,
   RiskScoreResponse,
   RiskSummaryResponse,
 } from './dto/risk.dto';
 import { AiRiskClient, RiskModelStatusResponse } from './ai-risk.client';
 import { RiskFeatureService } from './risk-feature.service';
 import { RiskPersistenceService } from './risk-persistence.service';
+import { RiskReminderService } from './risk-reminder.service';
 
 @Injectable()
 export class RiskService {
@@ -37,6 +40,7 @@ export class RiskService {
     private readonly featureService: RiskFeatureService,
     private readonly persistenceService: RiskPersistenceService,
     private readonly aiGateway: AiRiskClient,
+    private readonly reminderService: RiskReminderService,
   ) {}
 
   getModel(): Promise<RiskModelStatusResponse> {
@@ -171,7 +175,37 @@ export class RiskService {
       factors: result.factors,
     };
 
-    return this.persistenceService.upsertScore(jobKey, score);
+    const savedScore = await this.persistenceService.upsertScore(jobKey, score);
+    this.enqueueAutoReminderSafely(savedScore);
+
+    return savedScore;
+  }
+
+  async sendManualReminder(
+    courseId: string,
+    learnerId: string,
+    instructorId: string,
+  ): Promise<RiskReminderResponse> {
+    await this.assertInstructorOwnsCourse(courseId, instructorId);
+    const history = await this.persistenceService.findHistory(
+      learnerId,
+      courseId,
+    );
+    const latest = history[0];
+
+    if (!latest) {
+      throw new NotFoundException('Latest risk score not found');
+    }
+
+    if (latest.band !== RiskBand.HIGH) {
+      throw new BadRequestException(
+        'Smart Reminder can only be sent to high-risk learners',
+      );
+    }
+
+    this.reminderService.enqueueManualReminder(latest);
+
+    return { enqueued: true };
   }
 
   private async scoreLearnerCourse(
@@ -218,6 +252,17 @@ export class RiskService {
     );
 
     await Promise.all(workers);
+  }
+
+  private enqueueAutoReminderSafely(score: RiskScoreResponse): void {
+    try {
+      this.reminderService.enqueueAutoReminderIfNeeded(score);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Smart reminder enqueue failed for ${score.courseId}/${score.learnerId}: ${message}`,
+      );
+    }
   }
 
   private buildJobKey(courseId: string, learnerId: string, date: Date): string {

@@ -7,3 +7,7 @@ export const RISK_RECOMPUTE_CONCURRENCY = 5;
 export const RISK_HIGH_THRESHOLD = 70;
 
 export const RISK_DAILY_CRON = '0 2 * * *';
+
+export const SMART_REMINDER_TRIGGER_AUTO = 'smart-reminder:auto-risk';
+export const SMART_REMINDER_TRIGGER_MANUAL = 'smart-reminder:manual';
+export const SMART_REMINDER_ACTION_URL_PREFIX = '/learner/courses';

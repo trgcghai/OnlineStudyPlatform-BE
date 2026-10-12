@@ -75,6 +75,20 @@ export class RiskController {
     return this.riskService.getLearnerDetail(courseId, learnerId, instructorId);
   }
 
+  @Post('courses/:courseId/learners/:learnerId/reminder')
+  @Roles(UserRole.INSTRUCTOR)
+  sendManualReminder(
+    @Param('courseId', ParseUUIDPipe) courseId: string,
+    @Param('learnerId', ParseUUIDPipe) learnerId: string,
+    @CurrentUser('id') instructorId: string,
+  ) {
+    return this.riskService.sendManualReminder(
+      courseId,
+      learnerId,
+      instructorId,
+    );
+  }
+
   @Post('courses/:courseId/recompute')
   @Roles(UserRole.INSTRUCTOR)
   @InvalidateCache([RISK_CACHE_NAMESPACE])
