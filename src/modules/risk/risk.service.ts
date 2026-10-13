@@ -1,12 +1,14 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Course } from '../courses/entities/course.entity';
+import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import {
   RISK_FEATURE_VERSION,
   RISK_HIGH_THRESHOLD,
@@ -19,13 +21,31 @@ import {
   RiskLearnerDetailResponse,
   RiskLearnerListResponse,
   RiskLearnerQueryDto,
+  RiskFeatures,
   RiskRecomputeResponse,
+  RiskReminderResponse,
   RiskScoreResponse,
   RiskSummaryResponse,
 } from './dto/risk.dto';
 import { AiRiskClient, RiskModelStatusResponse } from './ai-risk.client';
 import { RiskFeatureService } from './risk-feature.service';
 import { RiskPersistenceService } from './risk-persistence.service';
+import { RiskReminderService } from './risk-reminder.service';
+
+const DEFAULT_RISK_FEATURES: RiskFeatures = {
+  lastActivityDays: 0,
+  activityCount7d: 0,
+  expectedProgressGap: 0,
+  courseProgressPercent: 0,
+  quizScoreAvgPercent: 0,
+  quizPassRate: 0,
+  watchRatioAvg: 0,
+  abandonedAttemptCount: 0,
+  lateQuizCount: 0,
+  completionVelocity: 0,
+  totalWatchedSeconds: 0,
+  pauseCount: 0,
+};
 
 @Injectable()
 export class RiskService {
@@ -34,9 +54,12 @@ export class RiskService {
   constructor(
     @InjectRepository(Course)
     private readonly coursesRepository: Repository<Course>,
+    @InjectRepository(Enrollment)
+    private readonly enrollmentsRepository: Repository<Enrollment>,
     private readonly featureService: RiskFeatureService,
     private readonly persistenceService: RiskPersistenceService,
     private readonly aiGateway: AiRiskClient,
+    private readonly reminderService: RiskReminderService,
   ) {}
 
   getModel(): Promise<RiskModelStatusResponse> {
@@ -89,7 +112,7 @@ export class RiskService {
       },
     );
 
-    return { learners };
+    return { learners: await this.enrichScores(learners) };
   }
 
   async getLearnerDetail(
@@ -103,9 +126,11 @@ export class RiskService {
       courseId,
     );
 
+    const enrichedHistory = await this.enrichScores(history);
+
     return {
-      latest: history[0] ?? null,
-      history,
+      latest: enrichedHistory[0] ?? null,
+      history: enrichedHistory,
     };
   }
 
@@ -171,7 +196,37 @@ export class RiskService {
       factors: result.factors,
     };
 
-    return this.persistenceService.upsertScore(jobKey, score);
+    const savedScore = await this.persistenceService.upsertScore(jobKey, score);
+    this.enqueueAutoReminderSafely(savedScore);
+
+    return savedScore;
+  }
+
+  async sendManualReminder(
+    courseId: string,
+    learnerId: string,
+    instructorId: string,
+  ): Promise<RiskReminderResponse> {
+    await this.assertInstructorOwnsCourse(courseId, instructorId);
+    const history = await this.persistenceService.findHistory(
+      learnerId,
+      courseId,
+    );
+    const latest = history[0];
+
+    if (!latest) {
+      throw new NotFoundException('Latest risk score not found');
+    }
+
+    if (latest.band !== RiskBand.HIGH) {
+      throw new BadRequestException(
+        'Smart Reminder can only be sent to high-risk learners',
+      );
+    }
+
+    this.reminderService.enqueueManualReminder(latest);
+
+    return { enqueued: true };
   }
 
   private async scoreLearnerCourse(
@@ -218,6 +273,129 @@ export class RiskService {
     );
 
     await Promise.all(workers);
+  }
+
+  private enqueueAutoReminderSafely(score: RiskScoreResponse): void {
+    try {
+      this.reminderService.enqueueAutoReminderIfNeeded(score);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Smart reminder enqueue failed for ${score.courseId}/${score.learnerId}: ${message}`,
+      );
+    }
+  }
+
+  private normalizeNumber(value: unknown): number {
+    return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  }
+
+  private normalizeFeatures(features: unknown): RiskFeatures {
+    const source =
+      features && typeof features === 'object'
+        ? (features as Partial<RiskFeatures>)
+        : {};
+
+    return {
+      lastActivityDays: this.normalizeNumber(
+        source.lastActivityDays ?? DEFAULT_RISK_FEATURES.lastActivityDays,
+      ),
+      activityCount7d: this.normalizeNumber(
+        source.activityCount7d ?? DEFAULT_RISK_FEATURES.activityCount7d,
+      ),
+      expectedProgressGap: this.normalizeNumber(
+        source.expectedProgressGap ?? DEFAULT_RISK_FEATURES.expectedProgressGap,
+      ),
+      courseProgressPercent: this.normalizeNumber(
+        source.courseProgressPercent ??
+          DEFAULT_RISK_FEATURES.courseProgressPercent,
+      ),
+      quizScoreAvgPercent: this.normalizeNumber(
+        source.quizScoreAvgPercent ?? DEFAULT_RISK_FEATURES.quizScoreAvgPercent,
+      ),
+      quizPassRate: this.normalizeNumber(
+        source.quizPassRate ?? DEFAULT_RISK_FEATURES.quizPassRate,
+      ),
+      watchRatioAvg: this.normalizeNumber(
+        source.watchRatioAvg ?? DEFAULT_RISK_FEATURES.watchRatioAvg,
+      ),
+      abandonedAttemptCount: this.normalizeNumber(
+        source.abandonedAttemptCount ??
+          DEFAULT_RISK_FEATURES.abandonedAttemptCount,
+      ),
+      lateQuizCount: this.normalizeNumber(
+        source.lateQuizCount ?? DEFAULT_RISK_FEATURES.lateQuizCount,
+      ),
+      completionVelocity: this.normalizeNumber(
+        source.completionVelocity ?? DEFAULT_RISK_FEATURES.completionVelocity,
+      ),
+      totalWatchedSeconds: this.normalizeNumber(
+        source.totalWatchedSeconds ?? DEFAULT_RISK_FEATURES.totalWatchedSeconds,
+      ),
+      pauseCount: this.normalizeNumber(
+        source.pauseCount ?? DEFAULT_RISK_FEATURES.pauseCount,
+      ),
+    };
+  }
+
+  private normalizeFactors(factors: unknown): RiskScoreResponse['factors'] {
+    if (!Array.isArray(factors)) return [];
+
+    return factors
+      .filter(
+        (factor): factor is Partial<RiskScoreResponse['factors'][number]> =>
+          Boolean(factor) && typeof factor === 'object',
+      )
+      .map((factor) => ({
+        key: typeof factor.key === 'string' ? factor.key : '',
+        label: typeof factor.label === 'string' ? factor.label : '',
+        contribution: this.normalizeNumber(factor.contribution),
+        value: this.normalizeNumber(factor.value),
+      }));
+  }
+
+  private normalizeScore(score: RiskScoreResponse): RiskScoreResponse {
+    return {
+      ...score,
+      features: this.normalizeFeatures(score.features),
+      factors: this.normalizeFactors(score.factors),
+    };
+  }
+
+  private async enrichScores(
+    scores: RiskScoreResponse[],
+  ): Promise<RiskScoreResponse[]> {
+    const normalizedScores = scores.map((score) => this.normalizeScore(score));
+    if (normalizedScores.length === 0) return normalizedScores;
+
+    const enrollmentIds = [
+      ...new Set(normalizedScores.map((score) => score.enrollmentId)),
+    ];
+    const enrollments = await this.enrollmentsRepository.find({
+      where: { id: In(enrollmentIds) },
+      relations: { learner: true, course: true },
+    });
+    const enrollmentsById = new Map(
+      enrollments.map((enrollment) => [enrollment.id, enrollment]),
+    );
+
+    return normalizedScores.map((score) => {
+      const enrollment = enrollmentsById.get(score.enrollmentId);
+      if (!enrollment) return score;
+
+      return {
+        ...score,
+        learner: {
+          id: enrollment.learner.id,
+          name: enrollment.learner.name,
+          email: enrollment.learner.email,
+        },
+        course: {
+          id: enrollment.course.id,
+          title: enrollment.course.title,
+        },
+      };
+    });
   }
 
   private buildJobKey(courseId: string, learnerId: string, date: Date): string {

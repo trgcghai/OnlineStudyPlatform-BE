@@ -11,6 +11,9 @@ describe('RiskPersistenceService', () => {
     aggregate: jest.Mock;
     find: jest.Mock;
   };
+  let findSort: jest.Mock;
+  let findLean: jest.Mock;
+  let findExec: jest.Mock;
 
   const score: RiskScoreResponse = {
     learnerId: 'learner-1',
@@ -40,6 +43,9 @@ describe('RiskPersistenceService', () => {
   };
 
   beforeEach(async () => {
+    findExec = jest.fn().mockResolvedValue([score]);
+    findLean = jest.fn().mockReturnValue({ exec: findExec });
+    findSort = jest.fn().mockReturnValue({ lean: findLean });
     model = {
       findOneAndUpdate: jest.fn().mockReturnValue({
         exec: jest.fn().mockResolvedValue(score),
@@ -48,9 +54,7 @@ describe('RiskPersistenceService', () => {
         exec: jest.fn().mockResolvedValue([score]),
       }),
       find: jest.fn().mockReturnValue({
-        sort: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue([score]),
-        }),
+        sort: findSort,
       }),
     };
 
@@ -88,5 +92,18 @@ describe('RiskPersistenceService', () => {
         { $match: { score: { $gte: 70 }, band: RiskBand.HIGH } },
       ]),
     );
+  });
+
+  it('loads learner history as lean objects', async () => {
+    const result = await service.findHistory('learner-1', 'course-1');
+
+    expect(model.find).toHaveBeenCalledWith({
+      learnerId: 'learner-1',
+      courseId: 'course-1',
+    });
+    expect(findSort).toHaveBeenCalledWith({ calculatedAt: -1 });
+    expect(findLean).toHaveBeenCalled();
+    expect(findExec).toHaveBeenCalled();
+    expect(result).toEqual([score]);
   });
 });

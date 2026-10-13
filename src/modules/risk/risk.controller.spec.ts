@@ -12,6 +12,7 @@ describe('RiskController', () => {
     getSummary: jest.Mock;
     getLearners: jest.Mock;
     getLearnerDetail: jest.Mock;
+    sendManualReminder: jest.Mock;
     recomputeCourse: jest.Mock;
   };
 
@@ -21,6 +22,7 @@ describe('RiskController', () => {
       getSummary: jest.fn(),
       getLearners: jest.fn(),
       getLearnerDetail: jest.fn(),
+      sendManualReminder: jest.fn(),
       recomputeCourse: jest.fn(),
     };
 
@@ -72,6 +74,24 @@ describe('RiskController', () => {
         threshold: 80,
         band: RiskBand.HIGH,
       },
+    );
+  });
+
+  it('sends manual smart reminder through service', async () => {
+    service.sendManualReminder.mockResolvedValue({ enqueued: true });
+
+    await expect(
+      controller.sendManualReminder(
+        '33333333-3333-4333-8333-333333333333',
+        '44444444-4444-4444-8444-444444444444',
+        '11111111-1111-4111-8111-111111111111',
+      ),
+    ).resolves.toEqual({ enqueued: true });
+
+    expect(service.sendManualReminder).toHaveBeenCalledWith(
+      '33333333-3333-4333-8333-333333333333',
+      '44444444-4444-4444-8444-444444444444',
+      '11111111-1111-4111-8111-111111111111',
     );
   });
 });
