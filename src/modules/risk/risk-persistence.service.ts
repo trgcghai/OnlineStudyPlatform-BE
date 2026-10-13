@@ -61,6 +61,7 @@ export class RiskPersistenceService {
     return this.riskScoreModel
       .find({ learnerId, courseId })
       .sort({ calculatedAt: -1 })
+      .lean<RiskScoreResponse[]>()
       .exec();
   }
 }
