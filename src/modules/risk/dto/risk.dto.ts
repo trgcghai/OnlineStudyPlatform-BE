@@ -31,6 +31,17 @@ export interface RiskFactor {
   value: number;
 }
 
+export interface RiskLearnerSummary {
+  id: string;
+  name: string;
+  email: string;
+}
+
+export interface RiskCourseSummary {
+  id: string;
+  title: string;
+}
+
 export interface LearnerRiskInput {
   learnerId: string;
   courseId: string;
@@ -48,6 +59,8 @@ export interface RiskScoreResponse {
   learnerId: string;
   courseId: string;
   enrollmentId: string;
+  learner?: RiskLearnerSummary;
+  course?: RiskCourseSummary;
   calculatedAt: Date;
   score: number;
   band: RiskBand;

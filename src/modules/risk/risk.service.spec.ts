@@ -18,6 +18,7 @@ import { RiskService } from './risk.service';
 describe('RiskService', () => {
   let service: RiskService;
   let coursesRepository: { findOne: jest.Mock };
+  let enrollmentsRepository: { find: jest.Mock };
   let featureService: {
     getActiveEnrollmentsForCourse: jest.Mock;
     extractForLearnerCourse: jest.Mock;
@@ -38,6 +39,7 @@ describe('RiskService', () => {
 
   beforeEach(async () => {
     coursesRepository = { findOne: jest.fn() };
+    enrollmentsRepository = { find: jest.fn() };
     featureService = {
       getActiveEnrollmentsForCourse: jest.fn(),
       extractForLearnerCourse: jest.fn(),
@@ -60,6 +62,10 @@ describe('RiskService', () => {
       providers: [
         RiskService,
         { provide: getRepositoryToken(Course), useValue: coursesRepository },
+        {
+          provide: getRepositoryToken(Enrollment),
+          useValue: enrollmentsRepository,
+        },
         { provide: RiskFeatureService, useValue: featureService },
         { provide: AiRiskClient, useValue: aiGateway },
         { provide: RiskPersistenceService, useValue: persistenceService },
@@ -291,6 +297,163 @@ describe('RiskService', () => {
       highRiskPercentage: 50,
       latestCalculatedAt: new Date('2026-09-30T00:00:00Z'),
     });
+  });
+
+  it('enriches latest learner risk list with learner and course display data', async () => {
+    coursesRepository.findOne.mockResolvedValue({
+      id: 'course-1',
+      instructorId: 'instructor-1',
+    });
+    persistenceService.findLatestByCourse.mockResolvedValue([
+      {
+        learnerId: 'learner-1',
+        courseId: 'course-1',
+        enrollmentId: 'enrollment-1',
+        band: RiskBand.HIGH,
+        score: 91,
+      },
+    ]);
+    enrollmentsRepository.find.mockResolvedValue([
+      {
+        id: 'enrollment-1',
+        learner: {
+          id: 'learner-1',
+          name: 'Nguyen Van A',
+          email: 'a@example.com',
+        },
+        course: { id: 'course-1', title: 'React Advanced' },
+      },
+    ]);
+
+    const result = await service.getLearners('course-1', 'instructor-1', {});
+
+    expect(result.learners[0]).toEqual(
+      expect.objectContaining({
+        learner: {
+          id: 'learner-1',
+          name: 'Nguyen Van A',
+          email: 'a@example.com',
+        },
+        course: { id: 'course-1', title: 'React Advanced' },
+      }),
+    );
+    expect(enrollmentsRepository.find).toHaveBeenCalledWith(
+      expect.objectContaining({ relations: { learner: true, course: true } }),
+    );
+  });
+
+  it('normalizes partial persisted risk scores before returning learners', async () => {
+    coursesRepository.findOne.mockResolvedValue({
+      id: 'course-1',
+      instructorId: 'instructor-1',
+    });
+    persistenceService.findLatestByCourse.mockResolvedValue([
+      {
+        learnerId: 'learner-1',
+        courseId: 'course-1',
+        enrollmentId: 'enrollment-1',
+        band: RiskBand.HIGH,
+        score: 91,
+        features: { courseProgressPercent: 40 },
+      },
+    ]);
+    enrollmentsRepository.find.mockResolvedValue([]);
+
+    const result = await service.getLearners('course-1', 'instructor-1', {});
+
+    expect(result.learners[0]).toEqual(
+      expect.objectContaining({
+        factors: [],
+        features: {
+          lastActivityDays: 0,
+          activityCount7d: 0,
+          expectedProgressGap: 0,
+          courseProgressPercent: 40,
+          quizScoreAvgPercent: 0,
+          quizPassRate: 0,
+          watchRatioAvg: 0,
+          abandonedAttemptCount: 0,
+          lateQuizCount: 0,
+          completionVelocity: 0,
+          totalWatchedSeconds: 0,
+          pauseCount: 0,
+        },
+      }),
+    );
+  });
+
+  it('normalizes factor numeric values before returning learners', async () => {
+    coursesRepository.findOne.mockResolvedValue({
+      id: 'course-1',
+      instructorId: 'instructor-1',
+    });
+    persistenceService.findLatestByCourse.mockResolvedValue([
+      {
+        learnerId: 'learner-1',
+        courseId: 'course-1',
+        enrollmentId: 'enrollment-1',
+        calculatedAt: new Date('2026-10-12T02:00:00Z'),
+        score: 82.4,
+        band: RiskBand.HIGH,
+        featureVersion: 'dropout_features_v1',
+        scoringVersion: 'dropout-xgb-v1',
+        source: 'ai',
+        features: { courseProgressPercent: 40 },
+        factors: [
+          {
+            key: 'courseProgressPercent',
+            label: 'Course progress percent',
+            contribution: undefined,
+            value: 40,
+          },
+        ],
+      },
+    ]);
+    enrollmentsRepository.find.mockResolvedValue([]);
+
+    const result = await service.getLearners('course-1', 'instructor-1', {});
+
+    expect(result.learners[0].factors).toEqual([
+      {
+        key: 'courseProgressPercent',
+        label: 'Course progress percent',
+        contribution: 0,
+        value: 40,
+      },
+    ]);
+  });
+
+  it('normalizes learner detail latest and history scores', async () => {
+    coursesRepository.findOne.mockResolvedValue({
+      id: 'course-1',
+      instructorId: 'instructor-1',
+    });
+    persistenceService.findHistory.mockResolvedValue([
+      {
+        learnerId: 'learner-1',
+        courseId: 'course-1',
+        enrollmentId: 'enrollment-1',
+        calculatedAt: new Date('2026-10-12T02:00:00Z'),
+        score: 82.4,
+        band: RiskBand.HIGH,
+        featureVersion: 'dropout_features_v1',
+        scoringVersion: 'dropout-xgb-v1',
+        source: 'ai',
+        features: undefined,
+        factors: undefined,
+      },
+    ]);
+    enrollmentsRepository.find.mockResolvedValue([]);
+
+    const result = await service.getLearnerDetail(
+      'course-1',
+      'learner-1',
+      'instructor-1',
+    );
+
+    expect(result.latest?.factors).toEqual([]);
+    expect(result.latest?.features.courseProgressPercent).toBe(0);
+    expect(result.history[0].factors).toEqual([]);
   });
 
   it('invokes auto reminder after persisting a high-risk score', async () => {
