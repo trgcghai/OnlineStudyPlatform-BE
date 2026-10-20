@@ -2,6 +2,8 @@ import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
   ListPartsCommand,
   S3Client,
   UploadPartCommand,
@@ -16,14 +18,12 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import type { Client as MinioClient } from 'minio';
 import { randomUUID } from 'node:crypto';
 import { Repository } from 'typeorm';
 import {
   LESSON_IMPORT_PART_SIZE_BYTES,
   LESSON_IMPORT_PRESIGNED_TTL_SECONDS,
   LESSON_IMPORT_SESSION_TTL_MS,
-  MINIO_CLIENT,
   MINIO_PUBLIC_S3_CLIENT,
   MINIO_S3_CLIENT,
 } from '../../../common/constants/file.constant';
@@ -49,7 +49,6 @@ export class LessonImportService {
     @Inject(MINIO_S3_CLIENT) private readonly s3Client: S3Client,
     @Inject(MINIO_PUBLIC_S3_CLIENT)
     private readonly publicS3Client: S3Client,
-    @Inject(MINIO_CLIENT) private readonly minioClient: MinioClient,
     private readonly configService: ConfigService,
     private readonly queuePublisher: LessonImportQueuePublisher,
   ) {}
@@ -183,12 +182,19 @@ export class LessonImportService {
         },
       }),
     );
-    const stat = await this.minioClient.statObject(
-      bucket,
-      lessonImport.sourceObjectKey,
+    const stat = await this.s3Client.send(
+      new HeadObjectCommand({
+        Bucket: bucket,
+        Key: lessonImport.sourceObjectKey,
+      }),
     );
-    if (stat.size !== lessonImport.declaredSize) {
-      await this.minioClient.removeObject(bucket, lessonImport.sourceObjectKey);
+    if (stat.ContentLength !== lessonImport.declaredSize) {
+      await this.s3Client.send(
+        new DeleteObjectCommand({
+          Bucket: bucket,
+          Key: lessonImport.sourceObjectKey,
+        }),
+      );
       lessonImport.status = LessonImportStatus.FAILED;
       lessonImport.errorDetails = ['Uploaded ZIP size does not match fileSize'];
       await this.importsRepository.save(lessonImport);
@@ -204,8 +210,13 @@ export class LessonImportService {
       lessonImport.status = LessonImportStatus.FAILED;
       lessonImport.errorDetails = ['Could not queue the lesson import'];
       await this.importsRepository.save(lessonImport);
-      await this.minioClient
-        .removeObject(bucket, lessonImport.sourceObjectKey)
+      await this.s3Client
+        .send(
+          new DeleteObjectCommand({
+            Bucket: bucket,
+            Key: lessonImport.sourceObjectKey,
+          }),
+        )
         .catch(() => undefined);
       throw error;
     }

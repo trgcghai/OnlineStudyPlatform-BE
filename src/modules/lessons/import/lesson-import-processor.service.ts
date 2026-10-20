@@ -1,7 +1,14 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { Client as MinioClient } from 'minio';
+import {
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+  GetObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { mkdir, unlink } from 'node:fs/promises';
@@ -9,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { DataSource, Repository } from 'typeorm';
-import { MINIO_CLIENT } from '../../../common/constants/file.constant';
+import { MINIO_S3_CLIENT } from '../../../common/constants/file.constant';
 import { AiSummaryService } from '../../ai-summary/ai-summary.service';
 import { AiKnowledgeService } from '../../ai-knowledge/ai-knowledge.service';
 import {
@@ -61,7 +68,7 @@ export class LessonImportProcessorService {
   constructor(
     @InjectRepository(LessonImport)
     private readonly importsRepository: Repository<LessonImport>,
-    @Inject(MINIO_CLIENT) private readonly minioClient: MinioClient,
+    @Inject(MINIO_S3_CLIENT) private readonly s3Client: S3Client,
     private readonly configService: ConfigService,
     private readonly dataSource: DataSource,
     private readonly progressService: CourseProgressService,
@@ -145,10 +152,15 @@ export class LessonImportProcessorService {
     lessonImport: LessonImport,
     destination: string,
   ): Promise<void> {
-    const stream = await this.minioClient.getObject(
-      this.bucket,
-      lessonImport.sourceObjectKey,
+    const { Body } = await this.s3Client.send(
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: lessonImport.sourceObjectKey,
+      }),
     );
+    if (!Body)
+      throw new Error('Lesson import source object has no response body');
+    const stream = Body as NodeJS.ReadableStream;
     await pipeline(stream, createWriteStream(destination, { flags: 'w' }));
     await this.importsRepository.update(lessonImport.id, { progress: 45 });
   }
@@ -338,12 +350,14 @@ export class LessonImportProcessorService {
     const extension = extname(asset.path).toLowerCase();
     const key = `lesson-imports/${importId}/assets/${lessonId}/${folder}/${randomUUID()}${extension}`;
     const stream = await archive.openStream(asset);
-    await this.minioClient.putObject(
-      this.bucket,
-      key,
-      stream,
-      asset.uncompressedSize,
-      { 'Content-Type': MIME_TYPES[extension] },
+    await this.s3Client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: stream,
+        ContentLength: asset.uncompressedSize,
+        ContentType: MIME_TYPES[extension],
+      }),
     );
     return `${this.publicEndpoint.replace(/\/+$/, '')}/${this.bucket}/${key}`;
   }
@@ -371,29 +385,49 @@ export class LessonImportProcessorService {
   }
 
   private async removeSourceQuietly(lessonImport: LessonImport): Promise<void> {
-    await this.minioClient
-      .removeObject(this.bucket, lessonImport.sourceObjectKey)
+    await this.s3Client
+      .send(
+        new DeleteObjectCommand({
+          Bucket: this.bucket,
+          Key: lessonImport.sourceObjectKey,
+        }),
+      )
       .catch(() => undefined);
   }
 
   private async removeAssetPrefixQuietly(importId: string): Promise<void> {
-    const stream = this.minioClient.listObjectsV2(
-      this.bucket,
-      `lesson-imports/${importId}/assets/`,
-      true,
-    );
     const keys: string[] = [];
-    await new Promise<void>((resolve, reject) => {
-      stream.on('data', (item) => {
-        if (item.name) keys.push(item.name);
-      });
-      stream.on('error', reject);
-      stream.on('end', resolve);
-    }).catch(() => undefined);
-    if (keys.length)
-      await this.minioClient
-        .removeObjects(this.bucket, keys)
+    let continuationToken: string | undefined;
+    try {
+      do {
+        const page = await this.s3Client.send(
+          new ListObjectsV2Command({
+            Bucket: this.bucket,
+            Prefix: `lesson-imports/${importId}/assets/`,
+            ContinuationToken: continuationToken,
+          }),
+        );
+        keys.push(...(page.Contents ?? []).flatMap((item) => item.Key ?? []));
+        continuationToken = page.IsTruncated
+          ? page.NextContinuationToken
+          : undefined;
+      } while (continuationToken);
+    } catch {
+      return;
+    }
+    for (let index = 0; index < keys.length; index += 1_000) {
+      await this.s3Client
+        .send(
+          new DeleteObjectsCommand({
+            Bucket: this.bucket,
+            Delete: {
+              Objects: keys.slice(index, index + 1_000).map((Key) => ({ Key })),
+              Quiet: true,
+            },
+          }),
+        )
         .catch(() => undefined);
+    }
   }
 
   private get bucket(): string {

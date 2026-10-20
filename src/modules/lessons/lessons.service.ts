@@ -7,11 +7,15 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  DeleteObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
-import type { Client as MinioClient } from 'minio';
 import { DataSource, Repository } from 'typeorm';
-import { MINIO_CLIENT } from '../../common/constants/file.constant';
+import { MINIO_S3_CLIENT } from '../../common/constants/file.constant';
 import { AiSummaryService } from '../ai-summary/ai-summary.service';
 import { AiKnowledgeService } from '../ai-knowledge/ai-knowledge.service';
 import {
@@ -43,7 +47,7 @@ export class LessonsService {
     @InjectRepository(Course)
     private readonly coursesRepository: Repository<Course>,
     private readonly configService: ConfigService,
-    @Inject(MINIO_CLIENT) private readonly minioClient: MinioClient,
+    @Inject(MINIO_S3_CLIENT) private readonly s3Client: S3Client,
     private readonly dataSource: DataSource,
     private readonly courseProgressService: CourseProgressService,
     private readonly aiSummaryService: AiSummaryService,
@@ -455,14 +459,14 @@ export class LessonsService {
     const extension = this.extractExtension(file.originalname, file.mimetype);
     const objectKey = `courses/${courseId}/lessons/${lessonId}/${subfolder}/${randomUUID()}${extension}`;
 
-    await this.minioClient.putObject(
-      bucket,
-      objectKey,
-      file.buffer,
-      file.size,
-      {
-        'Content-Type': file.mimetype,
-      },
+    await this.s3Client.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: objectKey,
+        Body: file.buffer,
+        ContentLength: file.size,
+        ContentType: file.mimetype,
+      }),
     );
 
     return objectKey;
@@ -518,7 +522,9 @@ export class LessonsService {
   ): Promise<void> {
     for (const { bucket, key } of keys) {
       try {
-        await this.minioClient.removeObject(bucket, key);
+        await this.s3Client.send(
+          new DeleteObjectCommand({ Bucket: bucket, Key: key }),
+        );
       } catch {
         // Best-effort cleanup; stale objects must not fail the request.
       }

@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { DeleteObjectsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { Readable } from 'node:stream';
 import { Course, CourseStatus } from '../../courses/entities/course.entity';
 import {
@@ -18,7 +19,7 @@ describe('LessonImportProcessorService', () => {
     update: jest.fn(),
     findOneByOrFail: jest.fn(),
   };
-  const minio = { removeObject: jest.fn(), listObjectsV2: jest.fn() };
+  const s3Client = { send: jest.fn().mockResolvedValue({}) };
   const manager = {
     findOne: jest.fn(),
     create: jest.fn((_entity: object, value: object) => value),
@@ -54,7 +55,7 @@ describe('LessonImportProcessorService', () => {
     jest.clearAllMocks();
     service = new LessonImportProcessorService(
       importsRepository as never,
-      minio as never,
+      s3Client as never,
       {
         get: jest.fn(),
         getOrThrow: jest.fn((key: string) =>
@@ -374,5 +375,38 @@ describe('LessonImportProcessorService', () => {
       status: LessonImportStatus.QUEUED,
       progress: 35,
     });
+  });
+
+  it('paginates prefix cleanup and deletes objects in batches of 1,000', async () => {
+    const keys = Array.from({ length: 1_003 }, (_, index) => ({
+      Key: `lesson-imports/${importId}/assets/${index}`,
+    }));
+    s3Client.send
+      .mockResolvedValueOnce({
+        Contents: keys.slice(0, 1_000),
+        IsTruncated: true,
+        NextContinuationToken: 'next-page',
+      })
+      .mockResolvedValueOnce({
+        Contents: keys.slice(1_000),
+        IsTruncated: false,
+      })
+      .mockResolvedValue({});
+    const internals = service as unknown as {
+      removeAssetPrefixQuietly(value: string): Promise<void>;
+    };
+
+    await internals.removeAssetPrefixQuietly(importId);
+
+    expect(s3Client.send.mock.calls[0][0]).toBeInstanceOf(ListObjectsV2Command);
+    expect(s3Client.send.mock.calls[1][0].input.ContinuationToken).toBe(
+      'next-page',
+    );
+    const deletions = s3Client.send.mock.calls
+      .map(([command]) => command)
+      .filter((command) => command instanceof DeleteObjectsCommand);
+    expect(deletions).toHaveLength(2);
+    expect(deletions[0].input.Delete?.Objects).toHaveLength(1_000);
+    expect(deletions[1].input.Delete?.Objects).toHaveLength(3);
   });
 });

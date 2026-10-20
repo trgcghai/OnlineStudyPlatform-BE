@@ -23,8 +23,8 @@ import { ReorderLessonsDto } from './dto/lesson.dto';
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
 import { CourseProgressService } from '../learning/course-progress.service';
-
-const MINIO_CLIENT = 'MINIO_CLIENT';
+import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { MINIO_S3_CLIENT } from '../../common/constants/file.constant';
 
 function makeCourse(overrides: Partial<Course> = {}): Course {
   const course = new Course();
@@ -77,7 +77,7 @@ describe('LessonsService', () => {
   let lessonsRepo: ReturnType<typeof createMockRepository<Lesson>>;
   let summariesRepo: ReturnType<typeof createMockRepository<LessonSummary>>;
   let coursesRepo: ReturnType<typeof createMockRepository<Course>>;
-  let minioClient: Record<string, jest.Mock>;
+  let s3Client: Record<string, jest.Mock>;
   let courseProgressService: {
     recomputeCourseEnrollmentsProgress: jest.Mock;
   };
@@ -109,9 +109,25 @@ describe('LessonsService', () => {
     lessonsRepo = createMockRepository();
     summariesRepo = createMockRepository();
     coursesRepo = createMockRepository();
-    minioClient = {
+    s3Client = {
       putObject: jest.fn().mockResolvedValue(undefined),
       removeObject: jest.fn().mockResolvedValue(undefined),
+      send: jest.fn((command: PutObjectCommand | DeleteObjectCommand) => {
+        if (command instanceof PutObjectCommand) {
+          const input = command.input;
+          return s3Client.putObject(
+            input.Bucket,
+            input.Key,
+            input.Body,
+            input.ContentLength,
+            { 'Content-Type': input.ContentType },
+          );
+        }
+        if (command instanceof DeleteObjectCommand) {
+          return s3Client.removeObject(command.input.Bucket, command.input.Key);
+        }
+        return Promise.resolve({});
+      }),
     };
     courseProgressService = {
       recomputeCourseEnrollmentsProgress: jest
@@ -175,8 +191,8 @@ describe('LessonsService', () => {
           },
         },
         {
-          provide: MINIO_CLIENT,
-          useValue: minioClient,
+          provide: MINIO_S3_CLIENT,
+          useValue: s3Client,
         },
         {
           provide: DataSource,
@@ -314,7 +330,13 @@ describe('LessonsService', () => {
         videoFile,
       );
 
-      expect(minioClient.putObject).toHaveBeenCalledWith(
+      expect(s3Client.send.mock.calls[0][0]).toBeInstanceOf(PutObjectCommand);
+      expect(s3Client.send.mock.calls[0][0].input).toMatchObject({
+        Bucket: bucket,
+        Key: expect.stringContaining(`courses/${courseId}/lessons/`),
+        ContentType: 'video/mp4',
+      });
+      expect(s3Client.putObject).toHaveBeenCalledWith(
         bucket,
         expect.stringContaining(`courses/${courseId}/lessons/`),
         videoFile.buffer,
@@ -388,7 +410,7 @@ describe('LessonsService', () => {
         materialFile,
       );
 
-      expect(minioClient.putObject).toHaveBeenCalled();
+      expect(s3Client.putObject).toHaveBeenCalled();
       expect(result.materialUrl).toContain('.pdf');
     });
 
@@ -444,11 +466,11 @@ describe('LessonsService', () => {
 
       await service.update('lesson-1', instructorId, {}, videoFile);
 
-      expect(minioClient.removeObject).toHaveBeenCalledWith(
+      expect(s3Client.removeObject).toHaveBeenCalledWith(
         bucket,
         expect.stringContaining('old-video'),
       );
-      expect(minioClient.putObject).toHaveBeenCalled();
+      expect(s3Client.putObject).toHaveBeenCalled();
     });
 
     it('queues a replacement video summary without failing the update', async () => {
@@ -511,7 +533,7 @@ describe('LessonsService', () => {
 
       // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(lessonsRepo.remove).toHaveBeenCalledWith(lesson);
-      expect(minioClient.removeObject).toHaveBeenCalledTimes(2);
+      expect(s3Client.removeObject).toHaveBeenCalledTimes(2);
       expect(
         courseProgressService.recomputeCourseEnrollmentsProgress,
       ).toHaveBeenCalledWith(lesson.courseId);
@@ -566,7 +588,7 @@ describe('LessonsService', () => {
 
       // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(lessonsRepo.remove).toHaveBeenCalledWith(lesson);
-      expect(minioClient.removeObject).not.toHaveBeenCalled();
+      expect(s3Client.removeObject).not.toHaveBeenCalled();
     });
 
     it('should reindex to sequential positions with no gaps', async () => {
@@ -742,7 +764,7 @@ describe('LessonsService', () => {
         pdfFile,
       );
 
-      expect(minioClient.putObject).toHaveBeenCalledWith(
+      expect(s3Client.putObject).toHaveBeenCalledWith(
         bucket,
         expect.stringContaining('/materials/'),
         pdfFile.buffer,
@@ -848,7 +870,7 @@ describe('LessonsService', () => {
         );
 
         expect(result.videoUrl).toBeDefined();
-        expect(minioClient.putObject).toHaveBeenCalled();
+        expect(s3Client.putObject).toHaveBeenCalled();
       },
     );
 
@@ -973,7 +995,7 @@ describe('LessonsService', () => {
         mimetype: 'application/pdf',
       } as Express.Multer.File;
 
-      minioClient.putObject
+      s3Client.putObject
         .mockResolvedValueOnce(undefined)
         .mockRejectedValueOnce(new Error('MinIO write failed'));
 
@@ -987,7 +1009,7 @@ describe('LessonsService', () => {
         ),
       ).rejects.toThrow();
 
-      expect(minioClient.removeObject).toHaveBeenCalled();
+      expect(s3Client.removeObject).toHaveBeenCalled();
     });
 
     it('should clean up video upload when video upload fails', async () => {
@@ -1002,9 +1024,7 @@ describe('LessonsService', () => {
         mimetype: 'video/mp4',
       } as Express.Multer.File;
 
-      minioClient.putObject.mockRejectedValueOnce(
-        new Error('MinIO write failed'),
-      );
+      s3Client.putObject.mockRejectedValueOnce(new Error('MinIO write failed'));
 
       await expect(
         service.create(
@@ -1015,7 +1035,7 @@ describe('LessonsService', () => {
         ),
       ).rejects.toThrow();
 
-      expect(minioClient.putObject).toHaveBeenCalledTimes(1);
+      expect(s3Client.putObject).toHaveBeenCalledTimes(1);
     });
 
     it('should delete old files when replacing video on update fails', async () => {
@@ -1034,9 +1054,7 @@ describe('LessonsService', () => {
         mimetype: 'video/mp4',
       } as Express.Multer.File;
 
-      minioClient.putObject.mockRejectedValueOnce(
-        new Error('MinIO write failed'),
-      );
+      s3Client.putObject.mockRejectedValueOnce(new Error('MinIO write failed'));
 
       await expect(
         service.update('lesson-1', instructorId, {}, newVideoFile),

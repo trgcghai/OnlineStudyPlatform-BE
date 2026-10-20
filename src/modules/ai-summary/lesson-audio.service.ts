@@ -1,5 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -9,8 +15,7 @@ import { extname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
-import type { Client as MinioClient } from 'minio';
-import { MINIO_CLIENT } from '../../common/constants/file.constant';
+import { MINIO_S3_CLIENT } from '../../common/constants/file.constant';
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_AUDIO_EXTRACTION_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -24,7 +29,7 @@ export interface DerivedLessonAudio {
 @Injectable()
 export class LessonAudioService {
   constructor(
-    @Inject(MINIO_CLIENT) private readonly minioClient: MinioClient,
+    @Inject(MINIO_S3_CLIENT) private readonly s3Client: S3Client,
     private readonly configService: ConfigService,
   ) {}
 
@@ -53,12 +58,14 @@ export class LessonAudioService {
         throw new Error('FFmpeg produced an empty lesson audio file');
       }
 
-      await this.minioClient.putObject(
-        this.bucket,
-        objectKey,
-        createReadStream(outputPath),
-        output.size,
-        { 'Content-Type': 'audio/ogg' },
+      await this.s3Client.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: objectKey,
+          Body: createReadStream(outputPath),
+          ContentLength: output.size,
+          ContentType: 'audio/ogg',
+        }),
       );
 
       return {
@@ -76,7 +83,11 @@ export class LessonAudioService {
     lessonId: string,
   ): Promise<DerivedLessonAudio> {
     const sourceKey = this.getObjectKey(videoUrl);
-    const source = await this.minioClient.getObject(this.bucket, sourceKey);
+    const { Body } = await this.s3Client.send(
+      new GetObjectCommand({ Bucket: this.bucket, Key: sourceKey }),
+    );
+    if (!Body) throw new Error('Lesson video object has no response body');
+    const source = Body as Readable;
     return this.extractAndUpload(
       source,
       sourceKey,
@@ -87,9 +98,11 @@ export class LessonAudioService {
   async removeAudioQuietly(audioUrl: string | null | undefined): Promise<void> {
     if (!audioUrl) return;
     try {
-      await this.minioClient.removeObject(
-        this.bucket,
-        this.getObjectKey(audioUrl),
+      await this.s3Client.send(
+        new DeleteObjectCommand({
+          Bucket: this.bucket,
+          Key: this.getObjectKey(audioUrl),
+        }),
       );
     } catch {
       // Derived audio cleanup must not break video writes or lesson deletion.

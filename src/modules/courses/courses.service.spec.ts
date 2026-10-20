@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { AiSummaryService } from '../ai-summary/ai-summary.service';
 import { AiKnowledgeService } from '../ai-knowledge/ai-knowledge.service';
 import { LessonSummary } from '../ai-summary/entities/lesson-summary.entity';
@@ -33,7 +34,7 @@ describe('CoursesService', () => {
     createQueryBuilder: jest.Mock;
   };
   let configService: { get: jest.Mock; getOrThrow: jest.Mock };
-  let minioClient: { putObject: jest.Mock; removeObject: jest.Mock };
+  let s3Client: { send: jest.Mock };
   let enrollmentRepo: { exists: jest.Mock };
   let lessonsRepo: { find: jest.Mock };
   let summariesRepo: { find: jest.Mock };
@@ -104,19 +105,18 @@ describe('CoursesService', () => {
     ...overrides,
   });
 
-  const makeSummary = (
-    overrides: Partial<LessonSummary> = {},
-  ): LessonSummary => ({
-    lessonId: '55555555-5555-4555-8555-555555555555',
-    lesson: undefined as never,
-    summaryText: null,
-    status: 'pending' as never,
-    error: null,
-    sourceVideoUrl: null,
-    audioUrl: null,
-    updatedAt: null,
-    ...overrides,
-  });
+  const makeSummary = (overrides: Partial<LessonSummary> = {}): LessonSummary =>
+    ({
+      lessonId: '55555555-5555-4555-8555-555555555555',
+      lesson: undefined as never,
+      summaryText: null,
+      status: 'pending' as never,
+      error: null,
+      sourceVideoUrl: null,
+      audioUrl: null,
+      updatedAt: null,
+      ...overrides,
+    }) as LessonSummary;
 
   const makeQuiz = (overrides: Partial<Quiz> = {}): Quiz =>
     ({
@@ -170,10 +170,7 @@ describe('CoursesService', () => {
         return undefined;
       }),
     };
-    minioClient = {
-      putObject: jest.fn().mockResolvedValue({ etag: 'etag' }),
-      removeObject: jest.fn().mockResolvedValue(undefined),
-    };
+    s3Client = { send: jest.fn().mockResolvedValue({}) };
     enrollmentRepo = { exists: jest.fn() };
     lessonsRepo = { find: jest.fn().mockResolvedValue([]) };
     summariesRepo = { find: jest.fn().mockResolvedValue([]) };
@@ -214,7 +211,7 @@ describe('CoursesService', () => {
     service = new CoursesService(
       repo as unknown as Repository<Course>,
       configService as never,
-      minioClient as never,
+      s3Client as never,
       notificationsQueueService as unknown as NotificationsQueueService,
       dataSource as unknown as DataSource,
       enrollmentRepo as never,
@@ -1334,13 +1331,18 @@ describe('CoursesService', () => {
         pngFile,
       );
 
-      expect(minioClient.putObject).toHaveBeenCalledWith(
-        'lms-bucket',
-        expect.stringMatching(/^courses\/33333333-.+\/thumbnails\/.+\.png$/),
-        pngFile.buffer,
-        pngFile.size,
-        { contentType: 'image/png' },
-      );
+      const put = s3Client.send.mock.calls
+        .map(([command]) => command)
+        .find((command) => command instanceof PutObjectCommand);
+      expect(put?.input).toMatchObject({
+        Bucket: 'lms-bucket',
+        Key: expect.stringMatching(
+          /^courses\/33333333-.+\/thumbnails\/.+\.png$/,
+        ),
+        Body: pngFile.buffer,
+        ContentLength: pngFile.size,
+        ContentType: 'image/png',
+      });
       expect(result.thumbnail).toMatch(
         /^http:\/\/localhost:9000\/lms-bucket\/courses\//,
       );
@@ -1354,7 +1356,7 @@ describe('CoursesService', () => {
       await expect(
         service.uploadThumbnail(courseId, instructorId, pngFile),
       ).rejects.toEqual(new ForbiddenException('You do not own this course'));
-      expect(minioClient.putObject).not.toHaveBeenCalled();
+      expect(s3Client.send).not.toHaveBeenCalled();
     });
 
     it('removes previous thumbnail object best-effort after replacement', async () => {
@@ -1368,15 +1370,21 @@ describe('CoursesService', () => {
 
       await service.uploadThumbnail(courseId, instructorId, pngFile);
 
-      expect(minioClient.removeObject).toHaveBeenCalledWith(
-        'lms-bucket',
-        'courses/33333333-3333-4333-8333-333333333333/thumbnails/old.png',
+      expect(
+        s3Client.send.mock.calls.map(([command]) => command),
+      ).toContainEqual(
+        expect.objectContaining({
+          input: {
+            Bucket: 'lms-bucket',
+            Key: 'courses/33333333-3333-4333-8333-333333333333/thumbnails/old.png',
+          },
+        }),
       );
     });
 
     it('wraps MinIO upload failures and keeps metadata unchanged', async () => {
       repo.findOne.mockResolvedValue(makeCourse());
-      minioClient.putObject.mockRejectedValue(new Error('minio down'));
+      s3Client.send.mockRejectedValue(new Error('minio down'));
 
       await expect(
         service.uploadThumbnail(courseId, instructorId, pngFile),

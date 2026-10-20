@@ -4,7 +4,6 @@ import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 import {
-  MINIO_CLIENT,
   MINIO_PUBLIC_S3_CLIENT,
   MINIO_S3_CLIENT,
 } from '../../common/constants/file.constant';
@@ -52,7 +51,6 @@ import { LearningModule } from './learning.module';
       useValue: new ConfigService({ MINIO_BUCKET: 'module-test-assets' }),
     },
     { provide: RedisService, useValue: {} },
-    { provide: MINIO_CLIENT, useValue: {} },
     { provide: MINIO_S3_CLIENT, useValue: {} },
     { provide: MINIO_PUBLIC_S3_CLIENT, useValue: {} },
     ZipService,
@@ -62,7 +60,6 @@ import { LearningModule } from './learning.module';
     DataSource,
     ConfigService,
     RedisService,
-    MINIO_CLIENT,
     MINIO_S3_CLIENT,
     MINIO_PUBLIC_S3_CLIENT,
     ZipService,

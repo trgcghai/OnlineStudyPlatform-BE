@@ -10,16 +10,20 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  DeleteObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { InjectModel } from '@nestjs/mongoose';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
 import type Redis from 'ioredis';
-import type { Client as MinioClient } from 'minio';
 import { Model } from 'mongoose';
 import { Repository } from 'typeorm';
 import { REFRESH_SESSION_KEY_PREFIX } from '../../common/constants/auth.constant';
-import { MINIO_CLIENT } from '../../common/constants/file.constant';
+import { MINIO_S3_CLIENT } from '../../common/constants/file.constant';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import {
   ADMIN_ASSIGNABLE_ROLES,
@@ -65,7 +69,7 @@ export class UsersService {
     @InjectRepository(InstructorAccount)
     private readonly instructorAccountsRepository: Repository<InstructorAccount>,
     private readonly configService: ConfigService,
-    @Inject(MINIO_CLIENT) private readonly minioClient: MinioClient,
+    @Inject(MINIO_S3_CLIENT) private readonly s3Client: S3Client,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
     @InjectModel(BankCatalog.name)
     private readonly bankCatalogModel: Model<BankCatalogDocument>,
@@ -448,14 +452,14 @@ export class UsersService {
     const objectKey = this.buildAvatarObjectKey(userId, file);
 
     try {
-      await this.minioClient.putObject(
-        bucket,
-        objectKey,
-        file.buffer,
-        file.size,
-        {
-          contentType: file.mimetype,
-        },
+      await this.s3Client.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: objectKey,
+          Body: file.buffer,
+          ContentLength: file.size,
+          ContentType: file.mimetype,
+        }),
       );
     } catch {
       throw new InternalServerErrorException('Could not upload avatar');
@@ -540,7 +544,9 @@ export class UsersService {
     }
 
     try {
-      await this.minioClient.removeObject(bucket, objectKey);
+      await this.s3Client.send(
+        new DeleteObjectCommand({ Bucket: bucket, Key: objectKey }),
+      );
     } catch {
       // Best-effort cleanup; a stale avatar object must not fail the request.
     }

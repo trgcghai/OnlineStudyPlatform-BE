@@ -8,11 +8,15 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  DeleteObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
-import type { Client as MinioClient } from 'minio';
 import { DataSource, In, Not, Repository } from 'typeorm';
-import { MINIO_CLIENT } from '../../common/constants/file.constant';
+import { MINIO_S3_CLIENT } from '../../common/constants/file.constant';
 import { FREE_COURSE_PRICE } from '../../common/constants/course.constant';
 import { AuthenticatedUser } from '../auth/dto/auth.dto';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
@@ -59,7 +63,7 @@ export class CoursesService {
     @InjectRepository(Course)
     private readonly coursesRepository: Repository<Course>,
     private readonly configService: ConfigService,
-    @Inject(MINIO_CLIENT) private readonly minioClient: MinioClient,
+    @Inject(MINIO_S3_CLIENT) private readonly s3Client: S3Client,
     private readonly notificationsQueueService: NotificationsQueueService,
     private readonly dataSource: DataSource,
     @InjectRepository(Enrollment)
@@ -587,12 +591,14 @@ export class CoursesService {
     const objectKey = this.buildThumbnailObjectKey(course.id, file);
 
     try {
-      await this.minioClient.putObject(
-        bucket,
-        objectKey,
-        file.buffer,
-        file.size,
-        { contentType: file.mimetype },
+      await this.s3Client.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: objectKey,
+          Body: file.buffer,
+          ContentLength: file.size,
+          ContentType: file.mimetype,
+        }),
       );
     } catch {
       throw new InternalServerErrorException(
@@ -737,7 +743,9 @@ export class CoursesService {
     }
 
     try {
-      await this.minioClient.removeObject(bucket, objectKey);
+      await this.s3Client.send(
+        new DeleteObjectCommand({ Bucket: bucket, Key: objectKey }),
+      );
     } catch {
       // Best-effort cleanup; stale thumbnail objects must not fail the request.
     }
