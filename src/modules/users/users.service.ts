@@ -448,7 +448,9 @@ export class UsersService {
     }
 
     const bucket = this.configService.getOrThrow<string>('MINIO_BUCKET');
-    const endpoint = this.configService.getOrThrow<string>('MINIO_ENDPOINT');
+    const endpoint = this.configService.getOrThrow<string>(
+      'MINIO_PUBLIC_ENDPOINT',
+    );
     const objectKey = this.buildAvatarObjectKey(userId, file);
 
     try {
@@ -470,7 +472,7 @@ export class UsersService {
     const savedUser = await this.usersRepository.save(user);
 
     if (previousAvatar) {
-      await this.deleteAvatarObjectQuietly(endpoint, bucket, previousAvatar);
+      await this.deleteAvatarObjectQuietly(bucket, previousAvatar);
     }
 
     return this.toUserResponse(savedUser);
@@ -529,15 +531,18 @@ export class UsersService {
   }
 
   private async deleteAvatarObjectQuietly(
-    endpoint: string,
     bucket: string,
     publicUrl: string,
   ): Promise<void> {
-    const objectKey = this.getObjectKeyFromPublicUrl(
-      endpoint,
-      bucket,
-      publicUrl,
-    );
+    const endpoints = [
+      this.configService.get<string>('MINIO_PUBLIC_ENDPOINT'),
+      this.configService.getOrThrow<string>('MINIO_ENDPOINT'),
+    ].filter((endpoint): endpoint is string => Boolean(endpoint));
+    const objectKey = endpoints
+      .map((endpoint) =>
+        this.getObjectKeyFromPublicUrl(endpoint, bucket, publicUrl),
+      )
+      .find((key): key is string => key !== null);
 
     if (!objectKey) {
       return;

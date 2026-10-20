@@ -587,7 +587,9 @@ export class CoursesService {
 
     const course = await this.getOwnedCourseEntity(id, instructorId);
     const bucket = this.configService.getOrThrow<string>('MINIO_BUCKET');
-    const endpoint = this.configService.getOrThrow<string>('MINIO_ENDPOINT');
+    const endpoint = this.configService.getOrThrow<string>(
+      'MINIO_PUBLIC_ENDPOINT',
+    );
     const objectKey = this.buildThumbnailObjectKey(course.id, file);
 
     try {
@@ -611,11 +613,7 @@ export class CoursesService {
     const savedCourse = await this.coursesRepository.save(course);
 
     if (previousThumbnail) {
-      await this.deleteThumbnailObjectQuietly(
-        endpoint,
-        bucket,
-        previousThumbnail,
-      );
+      await this.deleteThumbnailObjectQuietly(bucket, previousThumbnail);
     }
 
     return this.toCourseResponse(savedCourse);
@@ -729,15 +727,18 @@ export class CoursesService {
   }
 
   private async deleteThumbnailObjectQuietly(
-    endpoint: string,
     bucket: string,
     publicUrl: string,
   ): Promise<void> {
-    const objectKey = this.getObjectKeyFromPublicUrl(
-      endpoint,
-      bucket,
-      publicUrl,
-    );
+    const endpoints = [
+      this.configService.get<string>('MINIO_PUBLIC_ENDPOINT'),
+      this.configService.getOrThrow<string>('MINIO_ENDPOINT'),
+    ].filter((endpoint): endpoint is string => Boolean(endpoint));
+    const objectKey = endpoints
+      .map((endpoint) =>
+        this.getObjectKeyFromPublicUrl(endpoint, bucket, publicUrl),
+      )
+      .find((key): key is string => key !== null);
     if (!objectKey) {
       return;
     }

@@ -166,7 +166,8 @@ describe('CoursesService', () => {
       }),
       getOrThrow: jest.fn((key: string) => {
         if (key === 'MINIO_BUCKET') return 'lms-bucket';
-        if (key === 'MINIO_ENDPOINT') return 'http://localhost:9000';
+        if (key === 'MINIO_ENDPOINT') return 'http://minio:9000';
+        if (key === 'MINIO_PUBLIC_ENDPOINT') return 'http://localhost:9000';
         return undefined;
       }),
     };
@@ -1243,6 +1244,7 @@ describe('CoursesService', () => {
       configService.getOrThrow.mockImplementation((key: string) => {
         if (key === 'MINIO_BUCKET') return 'lms-bucket';
         if (key === 'MINIO_ENDPOINT') return 'http://minio:9000';
+        if (key === 'MINIO_PUBLIC_ENDPOINT') return 'http://localhost:9000';
         return undefined;
       });
       repo.findOne.mockResolvedValue(
@@ -1363,7 +1365,7 @@ describe('CoursesService', () => {
       repo.findOne.mockResolvedValue(
         makeCourse({
           thumbnail:
-            'http://localhost:9000/lms-bucket/courses/33333333-3333-4333-8333-333333333333/thumbnails/old.png',
+            'http://minio:9000/lms-bucket/courses/33333333-3333-4333-8333-333333333333/thumbnails/old.png',
         }),
       );
       repo.save.mockImplementation((input: Course) => input);

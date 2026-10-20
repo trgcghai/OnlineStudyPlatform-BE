@@ -112,9 +112,14 @@ describe('UsersService', () => {
     };
     s3Client = { send: jest.fn().mockResolvedValue({}) };
     configService = {
+      get: jest.fn((key: string) => {
+        if (key === 'MINIO_PUBLIC_ENDPOINT') return 'http://localhost:9000';
+        return undefined;
+      }),
       getOrThrow: jest.fn((key: string) => {
         if (key === 'MINIO_BUCKET') return 'lms-bucket';
-        if (key === 'MINIO_ENDPOINT') return 'http://localhost:9000';
+        if (key === 'MINIO_ENDPOINT') return 'http://minio:9000';
+        if (key === 'MINIO_PUBLIC_ENDPOINT') return 'http://localhost:9000';
         return undefined;
       }),
     };
@@ -615,7 +620,7 @@ describe('UsersService', () => {
     it('removes the previous avatar object best-effort when replacing one', async () => {
       repo.findOneBy.mockResolvedValue({
         ...makeUser(),
-        avatar: 'http://localhost:9000/lms-bucket/avatars/old.jpg',
+        avatar: 'http://minio:9000/lms-bucket/avatars/old.jpg',
       });
 
       await service.uploadAvatar(userId, pngFile);
@@ -632,7 +637,7 @@ describe('UsersService', () => {
     it('still succeeds when removing the old object fails', async () => {
       repo.findOneBy.mockResolvedValue({
         ...makeUser(),
-        avatar: 'http://localhost:9000/lms-bucket/avatars/old.jpg',
+        avatar: 'http://minio:9000/lms-bucket/avatars/old.jpg',
       });
       s3Client.send
         .mockResolvedValueOnce({})
