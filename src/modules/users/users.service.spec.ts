@@ -8,6 +8,7 @@ import {
 import type { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcryptjs';
 import { Repository } from 'typeorm';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { UsersService } from './users.service';
 import {
   ADMIN_ASSIGNABLE_ROLES,
@@ -37,7 +38,7 @@ describe('UsersService', () => {
     findOne: jest.Mock;
     save: jest.Mock;
   };
-  let minioClient: { putObject: jest.Mock; removeObject: jest.Mock };
+  let s3Client: { send: jest.Mock };
   let configService: { getOrThrow: jest.Mock };
   let redis: { keys: jest.Mock; del: jest.Mock };
   let bankCatalogModel: {
@@ -109,14 +110,16 @@ describe('UsersService', () => {
         ...input,
       })),
     };
-    minioClient = {
-      putObject: jest.fn().mockResolvedValue({ etag: '"etag"' }),
-      removeObject: jest.fn().mockResolvedValue(undefined),
-    };
+    s3Client = { send: jest.fn().mockResolvedValue({}) };
     configService = {
+      get: jest.fn((key: string) => {
+        if (key === 'MINIO_PUBLIC_ENDPOINT') return 'http://localhost:9000';
+        return undefined;
+      }),
       getOrThrow: jest.fn((key: string) => {
         if (key === 'MINIO_BUCKET') return 'lms-bucket';
-        if (key === 'MINIO_ENDPOINT') return 'http://localhost:9000';
+        if (key === 'MINIO_ENDPOINT') return 'http://minio:9000';
+        if (key === 'MINIO_PUBLIC_ENDPOINT') return 'http://localhost:9000';
         return undefined;
       }),
     };
@@ -132,7 +135,7 @@ describe('UsersService', () => {
       repo as unknown as Repository<User>,
       accountRepo as unknown as Repository<InstructorAccount>,
       configService as unknown as ConfigService,
-      minioClient as never,
+      s3Client as never,
       redis as never,
       bankCatalogModel as never,
     );
@@ -597,13 +600,16 @@ describe('UsersService', () => {
 
       const result = await service.uploadAvatar(userId, pngFile);
 
-      expect(minioClient.putObject).toHaveBeenCalledWith(
-        'lms-bucket',
-        expect.stringMatching(/^avatars\/b7f8c2a0-.+\.png$/),
-        pngFile.buffer,
-        pngFile.size,
-        { contentType: 'image/png' },
-      );
+      const put = s3Client.send.mock.calls
+        .map(([command]) => command)
+        .find((command) => command instanceof PutObjectCommand);
+      expect(put?.input).toMatchObject({
+        Bucket: 'lms-bucket',
+        Key: expect.stringMatching(/^avatars\/b7f8c2a0-.+\.png$/),
+        Body: pngFile.buffer,
+        ContentLength: pngFile.size,
+        ContentType: 'image/png',
+      });
       const publicUrl = result.avatar as string;
       expect(publicUrl).toMatch(
         /^http:\/\/localhost:9000\/lms-bucket\/avatars\//,
@@ -614,23 +620,28 @@ describe('UsersService', () => {
     it('removes the previous avatar object best-effort when replacing one', async () => {
       repo.findOneBy.mockResolvedValue({
         ...makeUser(),
-        avatar: 'http://localhost:9000/lms-bucket/avatars/old.jpg',
+        avatar: 'http://minio:9000/lms-bucket/avatars/old.jpg',
       });
 
       await service.uploadAvatar(userId, pngFile);
 
-      expect(minioClient.removeObject).toHaveBeenCalledWith(
-        'lms-bucket',
-        'avatars/old.jpg',
+      expect(
+        s3Client.send.mock.calls.map(([command]) => command),
+      ).toContainEqual(
+        expect.objectContaining({
+          input: { Bucket: 'lms-bucket', Key: 'avatars/old.jpg' },
+        }),
       );
     });
 
     it('still succeeds when removing the old object fails', async () => {
       repo.findOneBy.mockResolvedValue({
         ...makeUser(),
-        avatar: 'http://localhost:9000/lms-bucket/avatars/old.jpg',
+        avatar: 'http://minio:9000/lms-bucket/avatars/old.jpg',
       });
-      minioClient.removeObject.mockRejectedValue(new Error('minio down'));
+      s3Client.send
+        .mockResolvedValueOnce({})
+        .mockRejectedValueOnce(new Error('minio down'));
 
       const result = await service.uploadAvatar(userId, pngFile);
 
@@ -639,7 +650,7 @@ describe('UsersService', () => {
 
     it('wraps MinIO upload failures in InternalServerErrorException', async () => {
       repo.findOneBy.mockResolvedValue(makeUser());
-      minioClient.putObject.mockRejectedValue(new Error('boom'));
+      s3Client.send.mockRejectedValueOnce(new Error('boom'));
 
       await expect(service.uploadAvatar(userId, pngFile)).rejects.toEqual(
         new InternalServerErrorException('Could not upload avatar'),
@@ -655,7 +666,8 @@ describe('UsersService', () => {
         originalname: 'no-extension',
       });
 
-      const [, objectKey] = minioClient.putObject.mock.calls[0];
+      const command = s3Client.send.mock.calls[0][0] as PutObjectCommand;
+      const objectKey = command.input.Key;
       expect(String(objectKey)).toMatch(/\.png$/);
     });
 
@@ -663,7 +675,7 @@ describe('UsersService', () => {
       await expect(service.uploadAvatar('missing-id', pngFile)).rejects.toEqual(
         new NotFoundException('User not found'),
       );
-      expect(minioClient.putObject).not.toHaveBeenCalled();
+      expect(s3Client.send).not.toHaveBeenCalled();
     });
   });
 

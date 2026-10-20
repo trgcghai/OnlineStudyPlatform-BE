@@ -5,11 +5,12 @@ import {
 } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { InjectDataSource } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
-import * as Minio from 'minio';
+import { HeadBucketCommand, S3Client } from '@aws-sdk/client-s3';
 import { Connection, ConnectionStates } from 'mongoose';
 import { DataSource } from 'typeorm';
-import { MINIO_CLIENT } from './common/constants/file.constant';
+import { MINIO_S3_CLIENT } from './common/constants/file.constant';
 import { REDIS_CLIENT } from './modules/redis/redis.module';
 
 export interface ComponentHealth {
@@ -23,7 +24,8 @@ export class AppService {
     @InjectDataSource() private readonly dataSource: DataSource,
     @Inject(REDIS_CLIENT) private readonly redisClient: Redis,
     @InjectConnection() private readonly mongooseConnection: Connection,
-    @Inject(MINIO_CLIENT) private readonly minioClient: Minio.Client,
+    @Inject(MINIO_S3_CLIENT) private readonly s3Client: S3Client,
+    private readonly configService: ConfigService,
   ) {}
 
   async getHealth() {
@@ -117,6 +119,12 @@ export class AppService {
   }
 
   private checkMinio(): Promise<ComponentHealth> {
-    return this.check('minio', () => this.minioClient.listBuckets());
+    return this.check('minio', () =>
+      this.s3Client.send(
+        new HeadBucketCommand({
+          Bucket: this.configService.getOrThrow<string>('MINIO_BUCKET'),
+        }),
+      ),
+    );
   }
 }

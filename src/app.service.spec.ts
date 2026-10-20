@@ -2,14 +2,15 @@ import { ServiceUnavailableException } from '@nestjs/common';
 import type { Connection } from 'mongoose';
 import type Redis from 'ioredis';
 import type { DataSource } from 'typeorm';
-import type * as Minio from 'minio';
+import { HeadBucketCommand, S3Client } from '@aws-sdk/client-s3';
+import { ConfigService } from '@nestjs/config';
 import { AppService, ComponentHealth } from './app.service';
 
 describe('AppService', () => {
   let dataSource: { query: jest.Mock };
   let redisClient: { ping: jest.Mock; status: string };
   let mongooseConnection: { db: { admin: jest.Mock }; readyState: number };
-  let minioClient: { listBuckets: jest.Mock };
+  let s3Client: { send: jest.Mock };
   let service: AppService;
 
   beforeEach(() => {
@@ -26,13 +27,14 @@ describe('AppService', () => {
       },
       readyState: 1,
     };
-    minioClient = { listBuckets: jest.fn().mockResolvedValue([]) };
+    s3Client = { send: jest.fn().mockResolvedValue({}) };
 
     service = new AppService(
       dataSource as unknown as DataSource,
       redisClient as unknown as Redis,
       mongooseConnection as unknown as Connection,
-      minioClient as unknown as Minio.Client,
+      s3Client as unknown as S3Client,
+      new ConfigService({ MINIO_BUCKET: 'assets' }),
     );
   });
 
@@ -47,7 +49,7 @@ describe('AppService', () => {
   });
 
   it('throws ServiceUnavailableException carrying the payload when minio is down', async () => {
-    minioClient.listBuckets.mockRejectedValue(new Error('connection refused'));
+    s3Client.send.mockRejectedValue(new Error('connection refused'));
 
     await expect(service.getHealth()).rejects.toBeInstanceOf(
       ServiceUnavailableException,
@@ -60,6 +62,8 @@ describe('AppService', () => {
     expect(payload.components.application.status).toBe('UP');
     expect(payload.components.minio.status).toBe('DOWN');
     expect(payload.components.minio.details?.error).toBe('connection refused');
+    expect(s3Client.send.mock.calls[0][0]).toBeInstanceOf(HeadBucketCommand);
+    expect(s3Client.send.mock.calls[0][0].input).toEqual({ Bucket: 'assets' });
   });
 
   it('reports redis DOWN immediately when the client is not ready', async () => {
@@ -98,7 +102,7 @@ describe('AppService', () => {
   it('reports DOWN with a timed-out error when a check never settles', async () => {
     jest.useFakeTimers();
     try {
-      minioClient.listBuckets.mockReturnValue(new Promise(() => {}));
+      s3Client.send.mockReturnValue(new Promise(() => {}));
 
       const errorPromise = service.getHealth().catch((e: unknown) => e);
       jest.advanceTimersByTime(3001);

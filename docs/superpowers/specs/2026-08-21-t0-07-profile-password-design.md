@@ -53,7 +53,7 @@ uploadAvatar(userId, file)          -> UserResponse        (MinIO putObject, bes
 
 ## Module wiring
 
-No new modules. `FileModule` is global and exports `MINIO_CLIENT`;
+No new modules. `FileModule` is global and exports `MINIO_S3_CLIENT`;
 `ConfigModule` is global. `UsersService` injects both for the avatar upload.
 `UsersController` guards each `/users/me` route with `JwtAuthGuard`
 (`RolesGuard` not needed — any authenticated role may manage its own profile).

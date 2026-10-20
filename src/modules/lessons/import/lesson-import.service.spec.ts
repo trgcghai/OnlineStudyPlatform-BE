@@ -1,6 +1,7 @@
 import {
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
+  HeadObjectCommand,
   ListPartsCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -9,7 +10,6 @@ import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import {
-  MINIO_CLIENT,
   MINIO_PUBLIC_S3_CLIENT,
   MINIO_S3_CLIENT,
 } from '../../../common/constants/file.constant';
@@ -39,7 +39,6 @@ describe('LessonImportService', () => {
     forcePathStyle: true,
     credentials: { accessKeyId: 'test', secretAccessKey: 'test-secret' },
   });
-  const minio = { statObject: jest.fn(), removeObject: jest.fn() };
   const publisher = { enqueue: jest.fn() };
   let service: LessonImportService;
 
@@ -59,7 +58,6 @@ describe('LessonImportService', () => {
         { provide: getRepositoryToken(Course), useValue: coursesRepository },
         { provide: MINIO_S3_CLIENT, useValue: internalS3 },
         { provide: MINIO_PUBLIC_S3_CLIENT, useValue: publicS3 },
-        { provide: MINIO_CLIENT, useValue: minio },
         {
           provide: ConfigService,
           useValue: { getOrThrow: jest.fn(() => 'course-assets') },
@@ -133,9 +131,10 @@ describe('LessonImportService', () => {
       }
       if (command instanceof CompleteMultipartUploadCommand)
         return Promise.resolve({});
+      if (command instanceof HeadObjectCommand)
+        return Promise.resolve({ ContentLength: 1024 });
       return Promise.reject(new Error('Unexpected command'));
     });
-    minio.statObject.mockResolvedValue({ size: 1024 });
     const result = await service.complete(courseId, importId, instructorId);
     expect(result.status).toBe(LessonImportStatus.QUEUED);
     expect(publisher.enqueue).toHaveBeenCalledWith({ importId });
