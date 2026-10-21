@@ -61,9 +61,15 @@ describe('AnalyticsService', () => {
     });
     expect(eventQuery.andWhere).toHaveBeenCalledWith('event.createdAt >= :from', { from });
     expect(eventQuery.andWhere).toHaveBeenCalledWith('event.createdAt < :to', { to });
+    expect(eventQuery.select).toHaveBeenCalledWith('COUNT(DISTINCT event.learnerId)', 'activeLearnerCount');
+    expect(eventQuery.addSelect).toHaveBeenCalledWith('COUNT(event.id)', 'eventCount');
     expect(attemptQuery.andWhere).toHaveBeenCalledWith('attempt.submittedAt >= :from', { from });
     expect(attemptQuery.andWhere).toHaveBeenCalledWith('attempt.submittedAt < :to', { to });
     expect(attemptQuery.andWhere).toHaveBeenCalledWith('attempt.pendingEssayCount = 0');
+    expect(attemptQuery.andWhere).toHaveBeenCalledWith('attempt.status IN (:...statuses)', {
+      statuses: ['passed', 'not_passed'],
+    });
+    expect(attemptQuery.andWhere).toHaveBeenCalledWith('attempt.totalPoints > 0');
     expect(enrollmentQuery.andWhere).not.toHaveBeenCalled();
   });
 
