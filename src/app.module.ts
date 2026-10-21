@@ -32,6 +32,7 @@ import { RecommendationsModule } from './modules/recommendations/recommendations
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { RiskModule } from './modules/risk/risk.module';
 import { CertificatesModule } from './modules/certificates/certificates.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
 
 @Module({
   imports: [
@@ -98,6 +99,7 @@ import { CertificatesModule } from './modules/certificates/certificates.module';
     RecommendationsModule,
     RiskModule,
     CertificatesModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [
