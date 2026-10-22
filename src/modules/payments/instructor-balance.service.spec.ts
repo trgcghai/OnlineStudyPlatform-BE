@@ -5,6 +5,10 @@ import {
   InstructorBalanceLedger,
   InstructorBalanceLedgerType,
 } from './entities/instructor-balance-ledger.entity';
+import {
+  PaymentStatus,
+  PaymentTransaction,
+} from './entities/payment-transaction.entity';
 import { InstructorBalanceService } from './instructor-balance.service';
 
 describe('InstructorBalanceService', () => {
@@ -15,6 +19,7 @@ describe('InstructorBalanceService', () => {
     findOne: jest.Mock;
     createQueryBuilder: jest.Mock;
   };
+  let paymentRepo: { createQueryBuilder: jest.Mock };
 
   const instructorId = '44444444-4444-4444-8444-444444444444';
   const otherInstructorId = '55555555-5555-4555-8555-555555555555';
@@ -92,9 +97,13 @@ describe('InstructorBalanceService', () => {
       findOne: jest.fn(),
       createQueryBuilder: jest.fn(),
     };
+    paymentRepo = {
+      createQueryBuilder: jest.fn(),
+    };
 
     service = new InstructorBalanceService(
       ledgerRepo as unknown as Repository<InstructorBalanceLedger>,
+      paymentRepo as unknown as Repository<PaymentTransaction>,
     );
   });
 
@@ -165,6 +174,115 @@ describe('InstructorBalanceService', () => {
     await expect(
       service.listHistory(learner, { page: 1, limit: 10 }),
     ).rejects.toEqual(new BadRequestException('User is not an instructor'));
+  });
+
+  it('builds a revenue report by course and payment status', async () => {
+    const courseQb = {
+      innerJoin: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      setParameter: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
+      addGroupBy: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockResolvedValue([
+        {
+          courseId,
+          courseTitle: 'Lap trinh NestJS',
+          purchaseCount: '2',
+          grossRevenue: '398000',
+          platformFee: '79600',
+          netRevenue: '318400',
+          currency: 'VND',
+        },
+      ]),
+    };
+    const paymentQb = {
+      innerJoin: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      setParameter: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockResolvedValue([
+        {
+          status: PaymentStatus.PAID,
+          transactionCount: '2',
+          amount: '398000',
+          currency: 'VND',
+        },
+      ]),
+    };
+    ledgerRepo.createQueryBuilder.mockReturnValue(courseQb);
+    paymentRepo.createQueryBuilder.mockReturnValue(paymentQb);
+
+    const result = await service.getRevenueReport(makeUser(), {
+      dateFrom: '2026-09-01',
+      dateTo: '2026-09-30',
+    });
+
+    expect(courseQb.where).toHaveBeenCalledWith(
+      'ledger.instructorId = :instructorId',
+      { instructorId },
+    );
+    expect(courseQb.andWhere).toHaveBeenCalledWith(
+      'ledger.createdAt >= :dateFrom',
+      expect.objectContaining({ dateFrom: expect.any(Date) }),
+    );
+    expect(paymentQb.innerJoin).toHaveBeenCalledWith(
+      'order.items',
+      'orderItem',
+      'orderItem.instructorId = :instructorId',
+      { instructorId },
+    );
+    expect(result.summary).toEqual({
+      purchaseCount: 2,
+      grossRevenue: 398000,
+      platformFee: 79600,
+      netRevenue: 318400,
+      currency: 'VND',
+    });
+    expect(result.courses).toEqual([
+      {
+        courseId,
+        courseTitle: 'Lap trinh NestJS',
+        purchaseCount: 2,
+        grossRevenue: 398000,
+        platformFee: 79600,
+        netRevenue: 318400,
+        currency: 'VND',
+      },
+    ]);
+    expect(result.paymentStats).toEqual(
+      expect.arrayContaining([
+        {
+          status: PaymentStatus.PAID,
+          transactionCount: 2,
+          amount: 398000,
+          currency: 'VND',
+        },
+        {
+          status: PaymentStatus.PENDING,
+          transactionCount: 0,
+          amount: 0,
+          currency: 'VND',
+        },
+      ]),
+    );
+  });
+
+  it('rejects an inverted revenue report date range', async () => {
+    await expect(
+      service.getRevenueReport(makeUser(), {
+        dateFrom: '2026-10-01',
+        dateTo: '2026-09-01',
+      }),
+    ).rejects.toEqual(
+      new BadRequestException('dateFrom must be before or equal to dateTo'),
+    );
   });
 
   it('records an earning credit once for a paid payment', async () => {

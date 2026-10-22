@@ -18,7 +18,10 @@ import {
   ListPaymentConfigAuditsQueryDto,
   UpdatePaymentConfigDto,
 } from './dto/config.dto';
-import { ListInstructorBalanceHistoryQueryDto } from './dto/instructor-balance.dto';
+import {
+  ListInstructorBalanceHistoryQueryDto,
+  ListInstructorRevenueReportQueryDto,
+} from './dto/instructor-balance.dto';
 import {
   ListAdminPaymentProviderEventsQueryDto,
   ListAdminPaymentTransactionsQueryDto,
@@ -89,6 +92,15 @@ export class PaymentsController {
     @Query() query: ListInstructorBalanceHistoryQueryDto,
   ) {
     return this.instructorBalanceService.listHistory(currentUser, query);
+  }
+
+  @Get('instructor/revenue-report')
+  @Roles(UserRole.INSTRUCTOR)
+  getInstructorRevenueReport(
+    @CurrentUser() currentUser: { id: string; role: UserRole },
+    @Query() query: ListInstructorRevenueReportQueryDto,
+  ) {
+    return this.instructorBalanceService.getRevenueReport(currentUser, query);
   }
 
   @Get('config')

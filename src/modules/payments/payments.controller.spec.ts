@@ -47,6 +47,7 @@ describe('PaymentsController', () => {
     instructorBalanceService = {
       getSummary: jest.fn(),
       listHistory: jest.fn(),
+      getRevenueReport: jest.fn(),
     } as unknown as jest.Mocked<InstructorBalanceService>;
 
     const moduleRef = await Test.createTestingModule({
@@ -91,6 +92,9 @@ describe('PaymentsController', () => {
 
   it('requires Instructor role for course pricing', () => {
     expect(getMethodRoles('getCoursePricing')).toEqual([UserRole.INSTRUCTOR]);
+    expect(getMethodRoles('getInstructorRevenueReport')).toEqual([
+      UserRole.INSTRUCTOR,
+    ]);
   });
 
   it('requires Learner role for payment transaction endpoints', () => {

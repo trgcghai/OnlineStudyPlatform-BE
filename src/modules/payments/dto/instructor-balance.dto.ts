@@ -1,6 +1,17 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsDateString, IsInt, IsOptional, Max, Min } from 'class-validator';
 import { InstructorBalanceLedgerType } from '../entities/instructor-balance-ledger.entity';
+import { PaymentStatus } from '../entities/payment-transaction.entity';
+
+export class ListInstructorRevenueReportQueryDto {
+  @IsOptional()
+  @IsDateString()
+  dateFrom?: string;
+
+  @IsOptional()
+  @IsDateString()
+  dateTo?: string;
+}
 
 export class ListInstructorBalanceHistoryQueryDto {
   @IsOptional()
@@ -49,4 +60,35 @@ export interface InstructorBalanceHistoryResponse {
   page: number;
   limit: number;
   totalPages: number;
+}
+
+export interface InstructorRevenueCourseReport {
+  courseId: string;
+  courseTitle: string;
+  purchaseCount: number;
+  grossRevenue: number;
+  platformFee: number;
+  netRevenue: number;
+  currency: string;
+}
+
+export interface InstructorRevenuePaymentStat {
+  status: PaymentStatus;
+  transactionCount: number;
+  amount: number;
+  currency: string;
+}
+
+export interface InstructorRevenueReportResponse {
+  dateFrom: string | null;
+  dateTo: string | null;
+  summary: {
+    purchaseCount: number;
+    grossRevenue: number;
+    platformFee: number;
+    netRevenue: number;
+    currency: string;
+  };
+  courses: InstructorRevenueCourseReport[];
+  paymentStats: InstructorRevenuePaymentStat[];
 }

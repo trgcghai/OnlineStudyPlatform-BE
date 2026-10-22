@@ -1,11 +1,18 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import {
+  EntityManager,
+  ObjectLiteral,
+  Repository,
+  SelectQueryBuilder,
+} from 'typeorm';
 import { Course } from '../courses/entities/course.entity';
 import { User, UserRole } from '../users/entities/user.entity';
 import {
   InstructorBalanceHistoryItem,
   InstructorBalanceHistoryResponse,
+  InstructorRevenueReportResponse,
+  ListInstructorRevenueReportQueryDto,
   InstructorBalanceSummaryResponse,
   ListInstructorBalanceHistoryQueryDto,
 } from './dto/instructor-balance.dto';
@@ -13,7 +20,10 @@ import {
   InstructorBalanceLedger,
   InstructorBalanceLedgerType,
 } from './entities/instructor-balance-ledger.entity';
-import { PaymentTransaction } from './entities/payment-transaction.entity';
+import {
+  PaymentStatus,
+  PaymentTransaction,
+} from './entities/payment-transaction.entity';
 import { WithdrawRequest } from './entities/withdraw-request.entity';
 
 interface RecordEarningInput {
@@ -32,6 +42,8 @@ export class InstructorBalanceService {
   constructor(
     @InjectRepository(InstructorBalanceLedger)
     private readonly ledgerRepository: Repository<InstructorBalanceLedger>,
+    @InjectRepository(PaymentTransaction)
+    private readonly paymentRepository: Repository<PaymentTransaction>,
   ) {}
 
   async getSummary(
@@ -118,6 +130,123 @@ export class InstructorBalanceService {
     };
   }
 
+  async getRevenueReport(
+    currentUser: Pick<User, 'id' | 'role'>,
+    query: ListInstructorRevenueReportQueryDto,
+  ): Promise<InstructorRevenueReportResponse> {
+    this.assertInstructor(currentUser);
+
+    const dateRange = this.resolveDateRange(query);
+    const courseQuery = this.ledgerRepository
+      .createQueryBuilder('ledger')
+      .innerJoin('ledger.course', 'course')
+      .select('course.id', 'courseId')
+      .addSelect('course.title', 'courseTitle')
+      .addSelect('COUNT(ledger.id)', 'purchaseCount')
+      .addSelect('COALESCE(SUM(ledger.grossAmount), 0)', 'grossRevenue')
+      .addSelect('COALESCE(SUM(ledger.platformFeeAmount), 0)', 'platformFee')
+      .addSelect('COALESCE(SUM(ledger.netAmount), 0)', 'netRevenue')
+      .addSelect('COALESCE(MAX(ledger.currency), :currency)', 'currency')
+      .where('ledger.instructorId = :instructorId', {
+        instructorId: currentUser.id,
+      })
+      .andWhere('ledger.type = :earningType', {
+        earningType: InstructorBalanceLedgerType.EARNING_CREDIT,
+      })
+      .setParameter('currency', 'VND')
+      .groupBy('course.id')
+      .addGroupBy('course.title')
+      .orderBy('grossRevenue', 'DESC');
+
+    this.applyDateRange(courseQuery, 'ledger.createdAt', dateRange);
+
+    const courseRows = await courseQuery.getRawMany<{
+      courseId: string;
+      courseTitle: string;
+      purchaseCount: string;
+      grossRevenue: string;
+      platformFee: string;
+      netRevenue: string;
+      currency: string | null;
+    }>();
+
+    const paymentQuery = this.paymentRepository
+      .createQueryBuilder('transaction')
+      .innerJoin('transaction.order', 'order')
+      .innerJoin(
+        'order.items',
+        'orderItem',
+        'orderItem.instructorId = :instructorId',
+        { instructorId: currentUser.id },
+      )
+      .select('transaction.status', 'status')
+      .addSelect('COUNT(DISTINCT transaction.id)', 'transactionCount')
+      .addSelect('COALESCE(SUM(orderItem.unitPrice), 0)', 'amount')
+      .addSelect('COALESCE(MAX(transaction.currency), :currency)', 'currency')
+      .setParameter('currency', 'VND')
+      .groupBy('transaction.status')
+      .orderBy('transaction.status', 'ASC');
+
+    this.applyDateRange(paymentQuery, 'transaction.createdAt', dateRange);
+
+    const paymentRows = await paymentQuery.getRawMany<{
+      status: PaymentStatus;
+      transactionCount: string;
+      amount: string;
+      currency: string | null;
+    }>();
+
+    const courses = courseRows.map((row) => ({
+      courseId: row.courseId,
+      courseTitle: row.courseTitle,
+      purchaseCount: this.toNumber(row.purchaseCount),
+      grossRevenue: this.toNumber(row.grossRevenue),
+      platformFee: this.toNumber(row.platformFee),
+      netRevenue: this.toNumber(row.netRevenue),
+      currency: row.currency ?? 'VND',
+    }));
+
+    const paymentStatsByStatus = new Map(
+      paymentRows.map((row) => [row.status, row]),
+    );
+    const paymentStats = Object.values(PaymentStatus).map((status) => {
+      const row = paymentStatsByStatus.get(status);
+
+      return {
+        status,
+        transactionCount: this.toNumber(row?.transactionCount),
+        amount: this.toNumber(row?.amount),
+        currency: row?.currency ?? 'VND',
+      };
+    });
+
+    return {
+      dateFrom: query.dateFrom ?? null,
+      dateTo: query.dateTo ?? null,
+      summary: {
+        purchaseCount: courses.reduce(
+          (total, course) => total + course.purchaseCount,
+          0,
+        ),
+        grossRevenue: courses.reduce(
+          (total, course) => total + course.grossRevenue,
+          0,
+        ),
+        platformFee: courses.reduce(
+          (total, course) => total + course.platformFee,
+          0,
+        ),
+        netRevenue: courses.reduce(
+          (total, course) => total + course.netRevenue,
+          0,
+        ),
+        currency: courses[0]?.currency ?? paymentStats[0]?.currency ?? 'VND',
+      },
+      courses,
+      paymentStats,
+    };
+  }
+
   async recordEarningCredit(input: RecordEarningInput): Promise<void> {
     const repo = input.manager.getRepository(InstructorBalanceLedger);
     const existing = await repo.findOne({
@@ -177,6 +306,52 @@ export class InstructorBalanceService {
   private assertInstructor(currentUser: Pick<User, 'role'>): void {
     if (currentUser.role !== UserRole.INSTRUCTOR) {
       throw new BadRequestException('User is not an instructor');
+    }
+  }
+
+  private resolveDateRange(query: ListInstructorRevenueReportQueryDto): {
+    from?: Date;
+    to?: Date;
+  } {
+    const from = query.dateFrom ? new Date(query.dateFrom) : undefined;
+    const to = query.dateTo ? new Date(query.dateTo) : undefined;
+
+    if (from && Number.isNaN(from.getTime())) {
+      throw new BadRequestException('dateFrom is invalid');
+    }
+
+    if (to && Number.isNaN(to.getTime())) {
+      throw new BadRequestException('dateTo is invalid');
+    }
+
+    if (from && to && from > to) {
+      throw new BadRequestException(
+        'dateFrom must be before or equal to dateTo',
+      );
+    }
+
+    if (to && /^\d{4}-\d{2}-\d{2}$/.test(query.dateTo ?? '')) {
+      to.setUTCDate(to.getUTCDate() + 1);
+    }
+
+    return { from, to };
+  }
+
+  private applyDateRange(
+    queryBuilder: SelectQueryBuilder<ObjectLiteral>,
+    column: string,
+    dateRange: { from?: Date; to?: Date },
+  ): void {
+    if (dateRange.from) {
+      queryBuilder.andWhere(`${column} >= :dateFrom`, {
+        dateFrom: dateRange.from,
+      });
+    }
+
+    if (dateRange.to) {
+      queryBuilder.andWhere(`${column} < :dateTo`, {
+        dateTo: dateRange.to,
+      });
     }
   }
 
