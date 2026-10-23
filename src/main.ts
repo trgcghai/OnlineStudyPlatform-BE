@@ -8,6 +8,9 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const configService = app.get(ConfigService);
   const port = configService.getOrThrow<string>('PORT');
+  const frontendUrls = configService
+    .getOrThrow<string>('FRONTEND_URLS')
+    .split(',');
 
   app.use(cookieParser());
   app.useGlobalPipes(
@@ -18,10 +21,8 @@ async function bootstrap() {
     }),
   );
   app.enableCors({
-    origin: [
-      'http://localhost:3000', // Local frontend
-      'https://89rgm492-3000.asse.devtunnels.ms/', // Forwared frontend, this might change
-    ],
+    origin: frontendUrls,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
     credentials: true,
   });
 
