@@ -3,14 +3,16 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
+import { ConfiguredSocketIoAdapter } from './common/adapters/configured-socket-io.adapter';
+import { parseFrontendOrigins } from './common/config/frontend-origins';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const configService = app.get(ConfigService);
   const port = configService.getOrThrow<string>('PORT');
-  const frontendUrls = configService
-    .getOrThrow<string>('FRONTEND_URLS')
-    .split(',');
+  const frontendUrls = parseFrontendOrigins(
+    configService.get<string>('FRONTEND_URLS'),
+  );
 
   app.use(cookieParser());
   app.useGlobalPipes(
@@ -25,6 +27,7 @@ async function bootstrap() {
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
     credentials: true,
   });
+  app.useWebSocketAdapter(new ConfiguredSocketIoAdapter(app, frontendUrls));
 
   await app.listen(port);
 }
