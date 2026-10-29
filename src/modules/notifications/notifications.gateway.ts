@@ -34,13 +34,7 @@ interface NotificationServer {
   };
 }
 
-@WebSocketGateway({
-  cors: {
-    origin: 'http://localhost:3000',
-    credentials: true,
-    allowedHeaders: ['Authorization', 'Content-Type'],
-  },
-})
+@WebSocketGateway()
 export class NotificationsGateway
   implements OnGatewayConnection, OnGatewayDisconnect
 {
