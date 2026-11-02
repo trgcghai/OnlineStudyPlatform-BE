@@ -175,7 +175,11 @@ export class ZipService {
         filepath: path,
         targetPath: extractionPath,
         filenameTransform: (filename) =>
-          this.normalizePath(filename, filename.endsWith('/')),
+          this.normalizePath(
+            filename,
+            filename.endsWith('/') || filename.endsWith('\\'),
+            true,
+          ),
       });
       const fileList = extractor.getFileList();
       const entries = this.readRarEntries(
@@ -215,8 +219,8 @@ export class ZipService {
     const usedPaths = new Set<string>();
     let extractedSize = 0;
     for (const header of headers) {
-      const directory = header.flags.directory || header.name.endsWith('/');
-      const normalizedPath = this.normalizePath(header.name, directory);
+      const directory = header.flags.directory || /[\\/]$/.test(header.name);
+      const normalizedPath = this.normalizePath(header.name, directory, true);
       if (usedPaths.has(normalizedPath)) {
         details.push(`Duplicate RAR path: ${header.name}`);
         continue;
@@ -582,19 +586,28 @@ export class ZipService {
     });
   }
 
-  private normalizePath(path: string, directory: boolean): string {
-    const withoutSlash = directory ? path.slice(0, -1) : path;
+  private normalizePath(
+    path: string,
+    directory: boolean,
+    allowWindowsSeparators = false,
+  ): string {
+    const normalizedSeparators = allowWindowsSeparators
+      ? path.replaceAll('\\', '/')
+      : path;
+    const withoutSlash =
+      directory && normalizedSeparators.endsWith('/')
+        ? normalizedSeparators.slice(0, -1)
+        : normalizedSeparators;
     if (
       !withoutSlash ||
-      path.includes('\\') ||
-      path.startsWith('/') ||
-      /^[a-z]:/i.test(path) ||
+      normalizedSeparators.startsWith('/') ||
+      /^[a-z]:/i.test(normalizedSeparators) ||
       withoutSlash
         .split('/')
         .some((part) => !part || part === '.' || part === '..')
     ) {
       throw new ZipValidationError([
-        `Unsafe ZIP path: ${path || '(empty path)'}`,
+        `Unsafe archive path: ${path || '(empty path)'}`,
       ]);
     }
     return withoutSlash.toLowerCase();

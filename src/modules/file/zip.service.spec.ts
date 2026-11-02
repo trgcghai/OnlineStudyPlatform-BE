@@ -110,11 +110,33 @@ describe('ZipService', () => {
 
   it('rejects unsafe archive paths', () => {
     const internals = service as unknown as {
-      normalizePath(path: string, directory: boolean): string;
+      normalizePath(
+        path: string,
+        directory: boolean,
+        allowWindowsSeparators?: boolean,
+      ): string;
     };
 
     expect(() => internals.normalizePath('../lessons.xlsx', false)).toThrow(
       ZipValidationError,
     );
+  });
+
+  it('normalizes Windows separators for RAR entries without allowing traversal', () => {
+    const internals = service as unknown as {
+      normalizePath(
+        path: string,
+        directory: boolean,
+        allowWindowsSeparators?: boolean,
+      ): string;
+    };
+
+    expect(internals.normalizePath('videos\\lesson1.mp4', false, true)).toBe(
+      'videos/lesson1.mp4',
+    );
+    expect(internals.normalizePath('videos', true, true)).toBe('videos');
+    expect(() =>
+      internals.normalizePath('videos\\..\\lesson1.mp4', false, true),
+    ).toThrow(ZipValidationError);
   });
 });
