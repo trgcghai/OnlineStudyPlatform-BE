@@ -1,8 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { Workbook, Worksheet } from 'exceljs';
-import { open } from 'node:fs/promises';
-import { extname } from 'node:path';
+import { createReadStream } from 'node:fs';
+import { mkdir, open, readFile, rm } from 'node:fs/promises';
+import { extname, join } from 'node:path';
 import { Readable } from 'node:stream';
+import {
+  createExtractorFromFile,
+  type Extractor,
+  type FileHeader,
+} from 'node-unrar-js';
 import * as yauzl from 'yauzl';
 import {
   LESSON_IMPORT_EXCEL_MAX_SIZE_BYTES,
@@ -28,9 +34,36 @@ export interface LessonZipAsset {
   entry: yauzl.Entry;
 }
 
-interface ImportEntry extends LessonZipAsset {
+export interface LessonRarAsset {
+  path: string;
+  uncompressedSize: number;
+  entryName: string;
+}
+
+export type LessonImportAsset = LessonZipAsset | LessonRarAsset;
+
+interface ImportEntry {
+  path: string;
+  uncompressedSize: number;
   normalizedPath: string;
   directory: boolean;
+  encrypted: boolean;
+}
+
+interface ZipImportEntry extends ImportEntry {
+  entry: yauzl.Entry;
+}
+
+interface RarImportEntry extends ImportEntry {
+  entryName: string;
+}
+
+export interface LessonImportArchive {
+  readonly rows: LessonImportRow[];
+  readonly referencedFileCount: number;
+  getAsset(folder: 'videos' | 'materials', filename: string): LessonImportAsset;
+  openStream(asset: LessonImportAsset): Promise<Readable>;
+  close(): void | Promise<void>;
 }
 
 const HEADERS = [
@@ -43,15 +76,15 @@ const HEADERS = [
 
 export class ZipValidationError extends Error {
   constructor(readonly details: string[]) {
-    super('ZIP validation failed');
+    super('Lesson import archive validation failed');
   }
 }
 
-export class LessonZipArchive {
+export class LessonZipArchive implements LessonImportArchive {
   constructor(
     private readonly zip: yauzl.ZipFile,
     readonly rows: LessonImportRow[],
-    private readonly referenced: Map<string, ImportEntry>,
+    private readonly referenced: Map<string, ZipImportEntry>,
   ) {}
 
   get referencedFileCount(): number {
@@ -65,7 +98,10 @@ export class LessonZipArchive {
     return asset;
   }
 
-  openStream(asset: LessonZipAsset): Promise<Readable> {
+  openStream(asset: LessonImportAsset): Promise<Readable> {
+    if (!('entry' in asset)) {
+      throw new Error('ZIP archive received a RAR asset');
+    }
     return openEntryStream(this.zip, asset.entry);
   }
 
@@ -74,14 +110,50 @@ export class LessonZipArchive {
   }
 }
 
+class LessonRarArchive implements LessonImportArchive {
+  constructor(
+    private readonly extractor: Extractor,
+    private readonly extractionPath: string,
+    readonly rows: LessonImportRow[],
+    private readonly referenced: Map<string, RarImportEntry>,
+  ) {}
+
+  get referencedFileCount(): number {
+    return this.referenced.size;
+  }
+
+  getAsset(folder: 'videos' | 'materials', filename: string): LessonRarAsset {
+    const path = `${folder}/${filename}`.toLowerCase();
+    const asset = this.referenced.get(path);
+    if (!asset) throw new Error(`Validated RAR asset is missing: ${path}`);
+    return asset;
+  }
+
+  async openStream(asset: LessonImportAsset): Promise<Readable> {
+    if (!('entryName' in asset)) {
+      throw new Error('RAR archive received a ZIP asset');
+    }
+    await mkdir(this.extractionPath, { recursive: true });
+    Array.from(this.extractor.extract({ files: [asset.entryName] }).files);
+    return createReadStream(join(this.extractionPath, asset.path));
+  }
+
+  close(): Promise<void> {
+    return rm(this.extractionPath, { recursive: true, force: true });
+  }
+}
+
 @Injectable()
 export class ZipService {
-  async openLessonImport(path: string): Promise<LessonZipArchive> {
+  async openLessonImport(path: string): Promise<LessonImportArchive> {
+    if (extname(path).toLowerCase() === '.rar') {
+      return this.openRar(path);
+    }
     await this.assertNotZip64(path);
     const zip = await this.openZip(path);
     try {
       const entries = await this.readEntries(zip);
-      const workbookEntry = this.validateArchive(entries);
+      const workbookEntry = this.validateArchive(entries, 'ZIP');
       const workbookBuffer = await this.readEntryBuffer(
         zip,
         workbookEntry.entry,
@@ -96,19 +168,124 @@ export class ZipService {
     }
   }
 
-  private validateArchive(entries: ImportEntry[]): ImportEntry {
+  private async openRar(path: string): Promise<LessonRarArchive> {
+    const extractionPath = `${path}.extract`;
+    try {
+      const extractor = await createExtractorFromFile({
+        filepath: path,
+        targetPath: extractionPath,
+        filenameTransform: (filename) =>
+          this.normalizePath(
+            filename,
+            filename.endsWith('/') || filename.endsWith('\\'),
+            true,
+          ),
+      });
+      const fileList = extractor.getFileList();
+      const entries = this.readRarEntries(
+        fileList.arcHeader.flags,
+        fileList.fileHeaders,
+      );
+      const workbookEntry = this.validateArchive(entries, 'RAR');
+      const workbookBuffer = await this.readRarEntryBuffer(
+        extractor,
+        extractionPath,
+        workbookEntry,
+      );
+      const rows = await this.parseLessonWorkbook(workbookBuffer);
+      const referenced = this.validateReferences(rows, entries);
+      return new LessonRarArchive(extractor, extractionPath, rows, referenced);
+    } catch (error) {
+      await rm(extractionPath, { recursive: true, force: true });
+      if (error instanceof ZipValidationError) throw error;
+      throw new ZipValidationError([
+        error instanceof Error ? error.message : 'Invalid RAR archive',
+      ]);
+    }
+  }
+
+  private readRarEntries(
+    archiveFlags: { headerEncrypted: boolean; volume: boolean },
+    headers: Generator<FileHeader>,
+  ): RarImportEntry[] {
+    const details: string[] = [];
+    if (archiveFlags.headerEncrypted) {
+      details.push('RAR archive headers must not be encrypted');
+    }
+    if (archiveFlags.volume) {
+      details.push('RAR multi-volume archives are not supported');
+    }
+    const entries: RarImportEntry[] = [];
+    const usedPaths = new Set<string>();
+    let extractedSize = 0;
+    for (const header of headers) {
+      const directory = header.flags.directory || /[\\/]$/.test(header.name);
+      const normalizedPath = this.normalizePath(header.name, directory, true);
+      if (usedPaths.has(normalizedPath)) {
+        details.push(`Duplicate RAR path: ${header.name}`);
+        continue;
+      }
+      usedPaths.add(normalizedPath);
+      if (header.flags.encrypted) {
+        details.push(`${header.name} must not be encrypted`);
+      }
+      const uncompressedSize = Number(header.unpSize);
+      entries.push({
+        entryName: header.name,
+        path: normalizedPath,
+        normalizedPath,
+        directory,
+        encrypted: header.flags.encrypted,
+        uncompressedSize,
+      });
+      extractedSize += uncompressedSize;
+      if (entries.length > LESSON_IMPORT_MAX_ENTRIES) {
+        details.push(
+          `RAR archive must contain at most ${LESSON_IMPORT_MAX_ENTRIES} entries`,
+        );
+        break;
+      }
+      if (extractedSize > LESSON_IMPORT_MAX_EXTRACTED_SIZE_BYTES) {
+        details.push('Extracted RAR content must be at most 2 GB');
+        break;
+      }
+    }
+    this.throwIfInvalid(details);
+    if (!entries.length) {
+      throw new ZipValidationError(['RAR archive must not be empty']);
+    }
+    return entries;
+  }
+
+  private async readRarEntryBuffer(
+    extractor: Extractor,
+    extractionPath: string,
+    entry: RarImportEntry,
+  ): Promise<Buffer> {
+    Array.from(extractor.extract({ files: [entry.entryName] }).files);
+    const buffer = await readFile(join(extractionPath, entry.normalizedPath));
+    if (buffer.length > LESSON_IMPORT_EXCEL_MAX_SIZE_BYTES) {
+      throw new ZipValidationError(['lessons.xlsx must be at most 2 MB']);
+    }
+    return buffer;
+  }
+
+  private validateArchive<T extends ImportEntry>(
+    entries: T[],
+    archiveType: 'ZIP' | 'RAR',
+  ): T {
     const details: string[] = [];
     const files = entries.filter((entry) => !entry.directory);
     const workbooks = files.filter((entry) =>
       entry.normalizedPath.endsWith('.xlsx'),
     );
     if (workbooks.length !== 1) {
-      details.push('ZIP must contain exactly one .xlsx workbook');
+      details.push(`${archiveType} must contain exactly one .xlsx workbook`);
     } else if (workbooks[0].normalizedPath !== 'lessons.xlsx') {
       details.push('The workbook must be named lessons.xlsx at the ZIP root');
     }
     for (const item of entries) {
-      if ((item.entry.generalPurposeBitFlag & 0x1) !== 0) {
+      if (item.encrypted) {
         details.push(`${item.path} must not be encrypted`);
       }
       if (item.directory) {
@@ -122,14 +299,19 @@ export class ZipService {
       ) {
         details.push(`Unexpected file path: ${item.path}`);
       }
-      if (!item.directory && item.normalizedPath.endsWith('.zip')) {
-        details.push(`Nested ZIP files are not supported: ${item.path}`);
+      if (
+        !item.directory &&
+        ['.zip', '.rar'].some((extension) =>
+          item.normalizedPath.endsWith(extension),
+        )
+      ) {
+        details.push(`Nested archives are not supported: ${item.path}`);
       }
     }
     const workbook = workbooks[0];
     if (
       workbook &&
-      workbook.entry.uncompressedSize > LESSON_IMPORT_EXCEL_MAX_SIZE_BYTES
+      workbook.uncompressedSize > LESSON_IMPORT_EXCEL_MAX_SIZE_BYTES
     ) {
       details.push('lessons.xlsx must be at most 2 MB');
     }
@@ -137,21 +319,21 @@ export class ZipService {
     return workbook;
   }
 
-  private validateReferences(
+  private validateReferences<T extends ImportEntry>(
     rows: LessonImportRow[],
-    entries: ImportEntry[],
-  ): Map<string, ImportEntry> {
+    entries: T[],
+  ): Map<string, T> {
     const details: string[] = [];
-    const byPath = new Map(
+    const byPath = new Map<string, T>(
       entries.map((entry) => [entry.normalizedPath, entry]),
     );
-    const referenced = new Map<string, ImportEntry>();
+    const referenced = new Map<string, T>();
     for (const row of rows) {
       this.validateReference(
         row,
         'videos',
         row.videoFilename,
-        ['.mp4', '.webm'],
+        ['.mp4', '.webm', '.mkv'],
         LESSON_VIDEO_MAX_SIZE_BYTES,
         byPath,
         referenced,
@@ -181,14 +363,14 @@ export class ZipService {
     return referenced;
   }
 
-  private validateReference(
+  private validateReference<T extends ImportEntry>(
     row: LessonImportRow,
     folder: 'videos' | 'materials',
     filename: string | null,
     extensions: string[],
     maxSize: number,
-    entries: Map<string, ImportEntry>,
-    referenced: Map<string, ImportEntry>,
+    entries: Map<string, T>,
+    referenced: Map<string, T>,
     details: string[],
   ): void {
     if (!filename) return;
@@ -203,7 +385,7 @@ export class ZipService {
       details.push(`${label} references missing file: ${folder}/${filename}`);
       return;
     }
-    if (entry.entry.uncompressedSize > maxSize) {
+    if (entry.uncompressedSize > maxSize) {
       details.push(
         `${label} exceeds the ${folder === 'videos' ? '200 MB' : '20 MB'} size limit`,
       );
@@ -317,9 +499,9 @@ export class ZipService {
     }
   }
 
-  private readEntries(zip: yauzl.ZipFile): Promise<ImportEntry[]> {
+  private readEntries(zip: yauzl.ZipFile): Promise<ZipImportEntry[]> {
     return new Promise((resolve, reject) => {
-      const entries: ImportEntry[] = [];
+      const entries: ZipImportEntry[] = [];
       const usedPaths = new Set<string>();
       let extractedSize = 0;
       let settled = false;
@@ -346,6 +528,7 @@ export class ZipService {
             path: entry.fileName,
             normalizedPath: normalized,
             directory,
+            encrypted: (entry.generalPurposeBitFlag & 0x1) !== 0,
             uncompressedSize: entry.uncompressedSize,
           });
           extractedSize += entry.uncompressedSize;
@@ -403,19 +586,28 @@ export class ZipService {
     });
   }
 
-  private normalizePath(path: string, directory: boolean): string {
-    const withoutSlash = directory ? path.slice(0, -1) : path;
+  private normalizePath(
+    path: string,
+    directory: boolean,
+    allowWindowsSeparators = false,
+  ): string {
+    const normalizedSeparators = allowWindowsSeparators
+      ? path.replaceAll('\\', '/')
+      : path;
+    const withoutSlash =
+      directory && normalizedSeparators.endsWith('/')
+        ? normalizedSeparators.slice(0, -1)
+        : normalizedSeparators;
     if (
       !withoutSlash ||
-      path.includes('\\') ||
-      path.startsWith('/') ||
-      /^[a-z]:/i.test(path) ||
+      normalizedSeparators.startsWith('/') ||
+      /^[a-z]:/i.test(normalizedSeparators) ||
       withoutSlash
         .split('/')
         .some((part) => !part || part === '.' || part === '..')
     ) {
       throw new ZipValidationError([
-        `Unsafe ZIP path: ${path || '(empty path)'}`,
+        `Unsafe archive path: ${path || '(empty path)'}`,
       ]);
     }
     return withoutSlash.toLowerCase();

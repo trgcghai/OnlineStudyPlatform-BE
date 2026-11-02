@@ -484,6 +484,7 @@ export class LessonsService {
     const mimeExtensions: Record<string, string> = {
       'video/mp4': '.mp4',
       'video/webm': '.webm',
+      'video/x-matroska': '.mkv',
       'application/pdf': '.pdf',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
         '.docx',

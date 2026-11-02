@@ -52,7 +52,7 @@ export function lessonFileFilter(
   if (file.fieldname === LESSON_VIDEO_FIELD_NAME) {
     if (!LESSON_VIDEO_ALLOWED_MIME_TYPES.includes(file.mimetype)) {
       callback(
-        new BadRequestException('Video must be an MP4 or WebM file'),
+        new BadRequestException('Video must be an MP4, WebM or MKV file'),
         false,
       );
       return;

@@ -72,20 +72,71 @@ describe('ZipService', () => {
     } catch (error) {
       expect((error as ZipValidationError).details).toEqual(
         expect.arrayContaining([
-          expect.stringContaining('must use one of: .mp4, .webm'),
+          expect.stringContaining('must use one of: .mp4, .webm, .mkv'),
           expect.stringContaining('references missing file'),
         ]),
       );
     }
   });
 
+  it('accepts MKV videos within the import archive', () => {
+    const internals = service as unknown as {
+      validateReferences(
+        rows: LessonImportRow[],
+        entries: object[],
+      ): Map<string, object>;
+    };
+    const rows: LessonImportRow[] = [
+      {
+        rowNumber: 2,
+        order: 1,
+        title: 'Lesson',
+        description: '',
+        videoFilename: 'lecture.mkv',
+        materialFilename: null,
+      },
+    ];
+
+    expect(
+      internals.validateReferences(rows, [
+        {
+          normalizedPath: 'videos/lecture.mkv',
+          directory: false,
+          uncompressedSize: 1,
+        },
+      ]),
+    ).toHaveProperty('size', 1);
+  });
+
   it('rejects unsafe archive paths', () => {
     const internals = service as unknown as {
-      normalizePath(path: string, directory: boolean): string;
+      normalizePath(
+        path: string,
+        directory: boolean,
+        allowWindowsSeparators?: boolean,
+      ): string;
     };
 
     expect(() => internals.normalizePath('../lessons.xlsx', false)).toThrow(
       ZipValidationError,
     );
+  });
+
+  it('normalizes Windows separators for RAR entries without allowing traversal', () => {
+    const internals = service as unknown as {
+      normalizePath(
+        path: string,
+        directory: boolean,
+        allowWindowsSeparators?: boolean,
+      ): string;
+    };
+
+    expect(internals.normalizePath('videos\\lesson1.mp4', false, true)).toBe(
+      'videos/lesson1.mp4',
+    );
+    expect(internals.normalizePath('videos', true, true)).toBe('videos');
+    expect(() =>
+      internals.normalizePath('videos\\..\\lesson1.mp4', false, true),
+    ).toThrow(ZipValidationError);
   });
 });

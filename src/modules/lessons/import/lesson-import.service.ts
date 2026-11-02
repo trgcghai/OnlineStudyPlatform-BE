@@ -19,9 +19,11 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'node:crypto';
+import { extname } from 'node:path';
 import { Repository } from 'typeorm';
 import {
   LESSON_IMPORT_PART_SIZE_BYTES,
+  LESSON_IMPORT_EXTENSIONS,
   LESSON_IMPORT_PRESIGNED_TTL_SECONDS,
   LESSON_IMPORT_SESSION_TTL_MS,
   MINIO_PUBLIC_S3_CLIENT,
@@ -73,11 +75,16 @@ export class LessonImportService {
     const bucket = this.configService.getOrThrow<string>('MINIO_BUCKET');
     const importId = randomUUID();
     const key = `lesson-imports/${importId}/source/${this.safeFilename(dto.fileName)}`;
+    const extension = extname(dto.fileName).toLowerCase();
+    if (!(LESSON_IMPORT_EXTENSIONS as readonly string[]).includes(extension)) {
+      throw new ConflictException('Import file must be a ZIP or RAR archive');
+    }
     const multipart = await this.s3Client.send(
       new CreateMultipartUploadCommand({
         Bucket: bucket,
         Key: key,
-        ContentType: 'application/zip',
+        ContentType:
+          extension === '.rar' ? 'application/vnd.rar' : 'application/zip',
       }),
     );
     if (!multipart.UploadId) {
@@ -196,9 +203,13 @@ export class LessonImportService {
         }),
       );
       lessonImport.status = LessonImportStatus.FAILED;
-      lessonImport.errorDetails = ['Uploaded ZIP size does not match fileSize'];
+      lessonImport.errorDetails = [
+        'Uploaded archive size does not match fileSize',
+      ];
       await this.importsRepository.save(lessonImport);
-      throw new ConflictException('Uploaded ZIP size does not match fileSize');
+      throw new ConflictException(
+        'Uploaded archive size does not match fileSize',
+      );
     }
 
     lessonImport.status = LessonImportStatus.QUEUED;
@@ -259,7 +270,7 @@ export class LessonImportService {
     truncated: boolean,
   ): void {
     if (truncated || parts.length !== lessonImport.expectedPartCount) {
-      throw new ConflictException('Not all ZIP parts have been uploaded');
+      throw new ConflictException('Not all archive parts have been uploaded');
     }
     parts.forEach((part, index) => {
       const partNumber = index + 1;
@@ -273,7 +284,7 @@ export class LessonImportService {
         part.Size !== expectedSize ||
         !part.ETag
       ) {
-        throw new ConflictException(`ZIP part ${partNumber} is invalid`);
+        throw new ConflictException(`Archive part ${partNumber} is invalid`);
       }
     });
   }

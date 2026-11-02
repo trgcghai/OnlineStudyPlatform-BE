@@ -26,9 +26,9 @@ import {
 import { LessonAudioService } from '../../ai-summary/lesson-audio.service';
 import { Course, CourseStatus } from '../../courses/entities/course.entity';
 import {
+  LessonImportArchive,
+  LessonImportAsset,
   LessonImportRow,
-  LessonZipArchive,
-  LessonZipAsset,
   ZipService,
   ZipValidationError,
 } from '../../file/zip.service';
@@ -54,6 +54,7 @@ interface PreparedLesson {
 const MIME_TYPES: Record<string, string> = {
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska',
   '.pdf': 'application/pdf',
   '.docx':
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -97,7 +98,13 @@ export class LessonImportProcessorService {
     const temporaryDirectory =
       this.configService.get<string>('LESSON_IMPORT_TEMP_DIR') ??
       join(tmpdir(), 'lesson-imports');
-    const temporaryPath = join(temporaryDirectory, `${importId}.zip`);
+    const sourceExtension = lessonImport.sourceFilename
+      ? extname(lessonImport.sourceFilename).toLowerCase()
+      : '.zip';
+    const temporaryPath = join(
+      temporaryDirectory,
+      `${importId}${sourceExtension || '.archive'}`,
+    );
 
     try {
       await mkdir(temporaryDirectory, { recursive: true });
@@ -226,7 +233,7 @@ export class LessonImportProcessorService {
       }
       await this.persistLessons(lessonImport, prepared);
     } finally {
-      archive.close();
+      await archive.close();
     }
   }
 
@@ -341,8 +348,8 @@ export class LessonImportProcessorService {
   }
 
   private async uploadReferencedEntry(
-    archive: LessonZipArchive,
-    asset: LessonZipAsset,
+    archive: LessonImportArchive,
+    asset: LessonImportAsset,
     importId: string,
     lessonId: string,
     folder: 'videos' | 'materials',
@@ -363,8 +370,8 @@ export class LessonImportProcessorService {
   }
 
   private async createSummaryAudioQuietly(
-    archive: LessonZipArchive,
-    asset: LessonZipAsset,
+    archive: LessonImportArchive,
+    asset: LessonImportAsset,
     importId: string,
     lessonId: string,
   ): Promise<string | null> {
