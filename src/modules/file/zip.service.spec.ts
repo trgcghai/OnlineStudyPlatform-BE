@@ -72,11 +72,40 @@ describe('ZipService', () => {
     } catch (error) {
       expect((error as ZipValidationError).details).toEqual(
         expect.arrayContaining([
-          expect.stringContaining('must use one of: .mp4, .webm'),
+          expect.stringContaining('must use one of: .mp4, .webm, .mkv'),
           expect.stringContaining('references missing file'),
         ]),
       );
     }
+  });
+
+  it('accepts MKV videos within the import archive', () => {
+    const internals = service as unknown as {
+      validateReferences(
+        rows: LessonImportRow[],
+        entries: object[],
+      ): Map<string, object>;
+    };
+    const rows: LessonImportRow[] = [
+      {
+        rowNumber: 2,
+        order: 1,
+        title: 'Lesson',
+        description: '',
+        videoFilename: 'lecture.mkv',
+        materialFilename: null,
+      },
+    ];
+
+    expect(
+      internals.validateReferences(rows, [
+        {
+          normalizedPath: 'videos/lecture.mkv',
+          directory: false,
+          uncompressedSize: 1,
+        },
+      ]),
+    ).toHaveProperty('size', 1);
   });
 
   it('rejects unsafe archive paths', () => {

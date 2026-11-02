@@ -88,6 +88,17 @@ describe('LessonImportService', () => {
     );
   });
 
+  it('creates a RAR multipart session with the RAR content type', async () => {
+    await service.initiate(courseId, instructorId, {
+      fileName: 'lessons.rar',
+      fileSize: 1024,
+    });
+
+    expect(internalS3.send.mock.calls[0][0]).toMatchObject({
+      input: { ContentType: 'application/vnd.rar' },
+    });
+  });
+
   it('rejects a second active import for the same course', async () => {
     importsRepository.findOne.mockResolvedValue({
       id: importId,
