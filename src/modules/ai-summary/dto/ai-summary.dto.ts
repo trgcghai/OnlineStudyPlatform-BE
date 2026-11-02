@@ -22,5 +22,5 @@ export interface AiSummarizeRequest {
 
 export interface AiSummarizeResponse {
   summary: string;
-  provider: 'gemini';
+  provider: '9router';
 }
