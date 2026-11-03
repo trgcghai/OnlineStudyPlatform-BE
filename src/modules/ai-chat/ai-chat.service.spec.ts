@@ -117,7 +117,7 @@ describe('AiChatService', () => {
       similarity: null,
       citations: [],
       createdAt: now,
-    } as ChatMessage;
+    };
     messagesRepository.find.mockResolvedValue([previousMessage]);
 
     const result = await service.sendMessage(
@@ -156,7 +156,7 @@ describe('AiChatService', () => {
     );
 
     expect(result.isAiAvailable).toBe(false);
-    expect(result.reply.content).toContain('khong kha dung');
+    expect(result.reply.content).toContain('Chatbot hiện tại không khả dụng');
     expect(messagesRepository.save).toHaveBeenLastCalledWith(
       expect.objectContaining({
         role: ChatMessageRole.ASSISTANT,

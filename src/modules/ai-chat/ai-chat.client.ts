@@ -3,7 +3,7 @@ import { AiHttpClientService } from '../ai-client/ai-http-client.service';
 import { AiChatRequest, AiChatResponse } from './dto/ai-chat.dto';
 
 export const AI_UNAVAILABLE_MESSAGE =
-  'AI chatbot tam thoi khong kha dung. Vui long thu lai sau.';
+  'Chatbot hiện tại không khả dụng. Vui lòng thử lại sau.';
 const CHAT_REQUEST_TIMEOUT_MS = 150_000;
 
 @Injectable()
