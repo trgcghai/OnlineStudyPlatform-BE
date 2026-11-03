@@ -9,7 +9,7 @@ export class InitiateLessonImportDto {
   )
   @IsString()
   @Length(1, 255)
-  @Matches(/\.zip$/i, { message: 'fileName must end with .zip' })
+  @Matches(/\.(zip|rar)$/i, { message: 'fileName must end with .zip or .rar' })
   fileName!: string;
 
   @Type(() => Number)

@@ -80,7 +80,7 @@ describe('AiSummaryProcessor', () => {
       }),
       summarize: jest.fn().mockResolvedValue({
         summary: '## Tong quan\n\nDependency Injection.',
-        provider: 'gemini',
+        provider: '9router',
       }),
     };
     processor = new AiSummaryProcessor(

@@ -77,7 +77,7 @@ export class AiSummaryClient {
     return (
       typeof response.summary === 'string' &&
       response.summary.trim().length > 0 &&
-      response.provider === 'gemini'
+      response.provider === '9router'
     );
   }
 }

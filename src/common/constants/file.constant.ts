@@ -21,7 +21,11 @@ export const COURSE_THUMBNAIL_ALLOWED_MIME_TYPES = [
 
 export const LESSON_VIDEO_FIELD_NAME = 'video';
 export const LESSON_VIDEO_MAX_SIZE_BYTES = 200 * 1024 * 1024;
-export const LESSON_VIDEO_ALLOWED_MIME_TYPES = ['video/mp4', 'video/webm'];
+export const LESSON_VIDEO_ALLOWED_MIME_TYPES = [
+  'video/mp4',
+  'video/webm',
+  'video/x-matroska',
+];
 
 export const LESSON_MATERIAL_FIELD_NAME = 'material';
 export const LESSON_MATERIAL_MAX_SIZE_BYTES = 20 * 1024 * 1024;
@@ -31,7 +35,7 @@ export const LESSON_MATERIAL_ALLOWED_MIME_TYPES = [
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 ];
 
-export const LESSON_IMPORT_EXTENSION = '.zip';
+export const LESSON_IMPORT_EXTENSIONS = ['.zip', '.rar'] as const;
 export const LESSON_IMPORT_MAX_SIZE_BYTES = 1024 * 1024 * 1024;
 export const LESSON_IMPORT_MAX_EXTRACTED_SIZE_BYTES = 2 * 1024 * 1024 * 1024;
 export const LESSON_IMPORT_MAX_ENTRIES = 102;

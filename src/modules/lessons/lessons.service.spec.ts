@@ -825,7 +825,7 @@ describe('LessonsService', () => {
   });
 
   describe('file whitelist validation', () => {
-    const validVideoMimes = ['video/mp4', 'video/webm'];
+    const validVideoMimes = ['video/mp4', 'video/webm', 'video/x-matroska'];
 
     const invalidVideoMimes = [
       'video/avi',
