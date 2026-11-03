@@ -25,12 +25,14 @@ describe('AiChatClient', () => {
     await expect(client.chat(request)).resolves.toEqual(
       expect.objectContaining({ answer: 'Tra loi' }),
     );
-    expect(post).toHaveBeenCalledWith('/chat', request);
+    expect(post).toHaveBeenCalledWith('/chat', request, { timeoutMs: 150_000 });
   });
 
   it('returns null when the AI HTTP client is unavailable', async () => {
     const client = new AiChatClient({
-      post: jest.fn().mockRejectedValue(new Error('AI service is not configured')),
+      post: jest
+        .fn()
+        .mockRejectedValue(new Error('AI service is not configured')),
     } as unknown as AiHttpClientService);
 
     await expect(client.chat(request)).resolves.toBeNull();
