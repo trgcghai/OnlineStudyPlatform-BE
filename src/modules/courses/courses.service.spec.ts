@@ -829,7 +829,7 @@ describe('CoursesService', () => {
       repo.save.mockImplementation((input: Course) => input);
       notificationsQueueService.enqueueCreateNotification.mockImplementation(
         () => {
-          throw new Error('rabbitmq down');
+          throw new Error('redis down');
         },
       );
 
@@ -1058,7 +1058,7 @@ describe('CoursesService', () => {
       repo.save.mockImplementation((input: Course) => input);
       notificationsQueueService.enqueueCreateNotification.mockImplementation(
         () => {
-          throw new Error('rabbitmq down');
+          throw new Error('redis down');
         },
       );
 
@@ -1287,11 +1287,11 @@ describe('CoursesService', () => {
         }),
       );
       courseAssetCleanupQueue.enqueue.mockRejectedValue(
-        new Error('rabbitmq down'),
+        new Error('redis down'),
       );
 
       await expect(service.remove(courseId, instructorId)).rejects.toThrow(
-        'rabbitmq down',
+        'redis down',
       );
 
       expect(repo.delete).not.toHaveBeenCalled();

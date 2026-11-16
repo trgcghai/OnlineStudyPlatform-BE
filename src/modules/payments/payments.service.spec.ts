@@ -1033,7 +1033,7 @@ describe('PaymentsService', () => {
       configureHappyPath();
       notificationsQueueService.enqueueCreateNotification.mockImplementationOnce(
         () => {
-          throw new Error('rabbitmq down');
+          throw new Error('redis down');
         },
       );
 
