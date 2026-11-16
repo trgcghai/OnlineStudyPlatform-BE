@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Enrollment } from '../enrollments/entities/enrollment.entity';
 import { Lesson } from '../lessons/entities/lesson.entity';
@@ -17,9 +18,11 @@ import { CourseAssetCleanupService } from './cleanup/course-asset-cleanup.servic
 import { AiSummaryModule } from '../ai-summary/ai-summary.module';
 import { LessonSummary } from '../ai-summary/entities/lesson-summary.entity';
 import { AiKnowledgeModule } from '../ai-knowledge/ai-knowledge.module';
+import { COURSE_ASSET_CLEANUP_QUEUE } from './cleanup/queue/course-asset-cleanup-queue.constants';
 
 @Module({
   imports: [
+    BullModule.registerQueue({ name: COURSE_ASSET_CLEANUP_QUEUE }),
     TypeOrmModule.forFeature([
       Course,
       Enrollment,
