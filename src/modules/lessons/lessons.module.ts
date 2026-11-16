@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Course } from '../courses/entities/course.entity';
 import { LearningModule } from '../learning/learning.module';
@@ -13,6 +14,7 @@ import { LessonImportCleanupService } from './import/lesson-import-cleanup.servi
 import { LessonImportProcessorService } from './import/lesson-import-processor.service';
 import { LessonImportQueueConsumer } from './import/queue/lesson-import-queue.consumer';
 import { LessonImportQueuePublisher } from './import/queue/lesson-import-queue.publisher';
+import { LESSON_IMPORT_QUEUE } from './import/queue/lesson-import-queue.constants';
 import { LessonsService } from './lessons.service';
 import { AiSummaryModule } from '../ai-summary/ai-summary.module';
 import { LessonSummary } from '../ai-summary/entities/lesson-summary.entity';
@@ -21,6 +23,7 @@ import { LessonVideoMetadataService } from './lesson-video-metadata.service';
 
 @Module({
   imports: [
+    BullModule.registerQueue({ name: LESSON_IMPORT_QUEUE }),
     TypeOrmModule.forFeature([Lesson, LessonImport, Course, LessonSummary]),
     LearningModule,
     AiSummaryModule,
